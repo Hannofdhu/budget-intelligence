@@ -1,0 +1,67 @@
+{
+  "schema_version": "phase1-rebalancing-golden-v1",
+  "case_id": "FY27-REBALANCING-GOLDEN-001",
+  "description": "入口与比例精确不可行后，显式解锁折扣并形成去重候选；应用后可生成不可变撤销修订。",
+  "source_component_manifest": {
+    "schema_version": "1.0",
+    "target_set_version_id": "target-fy27-v1",
+    "entry_total_version_id": "entry-total-fy27-v1",
+    "entry_detail_set_version_id": "entry-detail-fy27-v1",
+    "rate_parameter_version_id": "rates-fy27-v1",
+    "discount_parameter_version_id": "discount-fy27-v1",
+    "headcount_result_version_id": "headcount-fy27-v1",
+    "revenue_result_version_id": "revenue-fy27-v1",
+    "target_closure_result_version_id": "closure-fy27-v1",
+    "optimization_run_id": "run-fy27-v1",
+    "discount_unlock_id": "unlock-fy27-v1",
+    "formal_confirmation_id": "formal-fy27-v1",
+    "scenario_application_id": "application-fy27-v1"
+  },
+  "candidate_decisions": {
+    "shared": {
+      "entry_values": [["campus-a", 100]],
+      "discount_values": [["discount-a", 889000]]
+    },
+    "retention": {
+      "entry_values": [["campus-a", 100]],
+      "discount_values": [["discount-a", 888000]]
+    }
+  },
+  "expected": {
+    "before_discount_unlock": {
+      "status": "INFEASIBLE",
+      "terminal_stage": "ENTRY_AND_RATES",
+      "reason_code": "DISCOUNT_UNLOCK_REQUIRED",
+      "candidate_count": 0,
+      "discount_unlock_required": true
+    },
+    "after_discount_unlock": {
+      "status": "OPTIMAL",
+      "terminal_stage": "ENTRY_RATES_AND_DISCOUNT",
+      "candidate_count": 2,
+      "profile_groups": [
+        ["ACQUISITION_WEIGHTED", "BALANCED"],
+        ["RETENTION_WEIGHTED"]
+      ]
+    },
+    "revert": {
+      "restored_component_keys": [
+        "discount_parameter_version_id",
+        "entry_detail_set_version_id",
+        "entry_total_version_id",
+        "rate_parameter_version_id",
+        "target_set_version_id"
+      ],
+      "invalidated_result_keys": [
+        "class_size_result_version_id",
+        "discount_unlock_id",
+        "formal_confirmation_id",
+        "headcount_result_version_id",
+        "optimization_run_id",
+        "revenue_result_version_id",
+        "scenario_application_id",
+        "target_closure_result_version_id"
+      ]
+    }
+  }
+}

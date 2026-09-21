@@ -1,0 +1,1 @@
+"""Class-size feasibility rules."""

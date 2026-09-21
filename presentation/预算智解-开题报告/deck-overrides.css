@@ -1,0 +1,35 @@
+  /* Deck-specific Swiss layout helpers. */
+  .budget-statement{
+    font-family:var(--sans),var(--sans-zh);font-weight:200;
+    font-size:min(7.2vw,12vh);line-height:1.02;letter-spacing:-.035em;
+    max-width:13ch;margin-left:18vw;align-self:center
+  }
+  .budget-statement span{display:inline-block}
+  .stmt-anchor{font-family:var(--mono);font-size:14px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--text-helper);align-self:flex-end;margin-top:auto;padding-bottom:var(--nav-safe-bottom)}
+  .four-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:0;flex:1;margin-top:5vh;min-height:0}
+  .fc-col{display:flex;flex-direction:column;padding:2.4vh 1.6vw;border-left:1px solid var(--border-subtle);min-width:0}
+  .fc-col:first-child{border-left:none;padding-left:0}.fc-col:last-child{padding-right:0}
+  .fc-title{font-family:var(--sans),var(--sans-zh);font-size:min(3vw,5.2vh);font-weight:300;line-height:1.08;letter-spacing:-.025em;margin:2.4vh 0 2vh}
+  .fc-desc{font-family:var(--sans),var(--sans-zh);font-size:max(16px,.96vw);line-height:1.6;font-weight:400;color:var(--text-secondary);margin-top:auto;padding-top:2vh;border-top:1px solid var(--border-subtle)}
+  .brief-grid{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:1.4vh 1vw;flex:1;min-height:0}
+  .brief-card{background:var(--grey-1);padding:1.2vh .9vw 1vh;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .brief-card .brief-shot{height:18vh;flex:0 0 18vh;background:var(--paper);overflow:hidden}
+  .brief-card .brief-shot img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
+  .brief-card .brief-copy{display:flex;justify-content:space-between;gap:1vw;align-items:end;margin-top:1vh}
+  .brief-card .brief-title{font-family:var(--sans),var(--sans-zh);font-size:max(16px,1.05vw);font-weight:500;line-height:1.25}
+  .brief-card .brief-num{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--accent)}
+  .timeline-six .tl-row{grid-template-columns:repeat(6,1fr)}
+  .slide.dark .timeline-h .th-node .dot{background:var(--paper)}
+  .slide.dark .timeline-h .th-node.accent .dot{background:var(--accent-bright)}
+  .slide.dark .timeline-h .th-node .yr,.slide.dark .timeline-h .th-node .desc{color:rgba(255,255,255,.62)}
+  .slide.dark .timeline-h .th-node .name{color:var(--paper)}
+  .slide.dark .timeline-h .th-node.accent .yr,.slide.dark .timeline-h .th-node.accent .name{color:var(--accent-bright)}
+  .slide.dark .timeline-h::before{color:var(--paper)}
+  .slide.dark .duo-compare .vrule,.slide.dark .duo-compare .col-list{border-color:rgba(255,255,255,.2)}
+  .scope-note{font-family:var(--mono);font-size:14px;font-weight:500;letter-spacing:.1em;color:var(--text-helper)}
+  .hero-evidence{object-fit:cover!important;object-position:center center!important}
+  .micro-disclaimer{font-family:var(--sans),var(--sans-zh);font-size:16px;font-weight:500;line-height:1.45;color:var(--text-secondary)}
+  .timeline-v.compact{margin-top:0}
+  .timeline-v.compact .tl-node{padding:2.1vh 0}
+  .timeline-v.compact .tl-node .multi{font-size:clamp(26px,2.5vw,48px)}
+

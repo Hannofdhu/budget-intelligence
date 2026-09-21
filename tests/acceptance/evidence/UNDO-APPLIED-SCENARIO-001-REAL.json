@@ -1,0 +1,23 @@
+{
+  "schema_version": "phase1-ui-evidence-v1",
+  "capability_id": "UNDO-APPLIED-SCENARIO-001",
+  "observed_date": "2026-09-06",
+  "surface": "/budget/rebalancing",
+  "environment": "local API + dedicated PostgreSQL budget_acceptance_20260905_real",
+  "source_kind": "SYNTHETIC",
+  "response_mocking": false,
+  "observations": [
+    "真实 CP-SAT 生成候选，浏览器点击应用后修订地址发生变化。",
+    "刷新应用修订页面后，重新从真实 API 读取应用记录，撤销按钮仍可用。",
+    "浏览器点击撤销，真实 API 返回 202 并创建新的不可变修订。",
+    "页面展示撤销完成态及进入恢复修订的链接。",
+    "只领取撤销对应的指定作业，四阶段均 SUCCEEDED；闭合状态恢复为 GAP_PENDING_REBALANCE。"
+  ],
+  "browser_coverage": "应用 -> 刷新 -> 排队状态撤销；无模拟接口。",
+  "backend_coverage": "复算完成后撤销、运行中撤销、人工修改保护、并发与正式确认阻断，见执行报告绑定的数据库自动化测试。",
+  "known_console_events": "缺少最近求解或应用记录的合法 404 被页面处理为空状态；无运行时脚本异常。",
+  "applied_revision_id": "01a07523-91f6-7044-931b-847d6356a89c",
+  "reverted_revision_id": "01a07524-99cc-7d68-b1d2-062661377131",
+  "reverted_calculation_final_revision_id": "01a07525-b31f-7009-82c6-a1a89545d0b7",
+  "screenshot": "output/playwright/rebalancing-real-revert-complete.png"
+}

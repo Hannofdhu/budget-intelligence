@@ -1,0 +1,13 @@
+{
+  "schema_version": "phase1-ui-evidence-v1",
+  "acceptance_id": "AB-050",
+  "observed_at": "2026-09-05T23:28:36+08:00",
+  "surface": "/budget/rebalancing",
+  "observations": [
+    "读取真实本地预算修订与候选时，浏览、展开候选均未生成新修订。",
+    "只有候选明细中的显式‘应用到草稿’按钮进入应用回执。",
+    "应用回执明确说明生成新草稿和完整复算，不自动正式确认或发布。"
+  ],
+  "screenshot": "output/playwright/rebalancing-revert-complete.png",
+  "data_note": "页面初始读取使用本地测试数据库；应用与撤销成功响应使用 Playwright 固定回执，避免重复写入已应用的测试候选。"
+}

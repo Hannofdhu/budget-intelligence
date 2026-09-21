@@ -1,0 +1,1 @@
+"""Revenue calculation domain package."""

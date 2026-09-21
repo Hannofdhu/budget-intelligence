@@ -1,0 +1,16 @@
+{
+  "schema_version": "phase1-ui-evidence-v1",
+  "capability_id": "UNDO-APPLIED-SCENARIO-001",
+  "observed_at": "2026-09-05T23:28:36+08:00",
+  "surface": "/budget/rebalancing",
+  "observations": [
+    "应用成功回执展示‘一键撤销本次应用’按钮。",
+    "点击后展示‘已生成撤销修订’完成态。",
+    "完成态明确说明恢复应用前输入、清除下游结果并登记完整复算。",
+    "完成态提供进入撤销后新修订的链接。",
+    "真实本地 API 调用已生成新的撤销修订和 QUEUED 完整复算作业。",
+    "对 scenario_application_revert 的 UPDATE 被数据库不可变触发器拒绝。"
+  ],
+  "screenshot": "output/playwright/rebalancing-revert-complete.png",
+  "data_note": "UI 状态转换使用固定成功回执；后端另以本地测试预算真实调用，恢复 12 个应用前组件并失效 8 个下游、解锁、确认及应用标识。"
+}

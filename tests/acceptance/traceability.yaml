@@ -1,0 +1,133 @@
+{
+  "schema_version": "phase1-acceptance-trace-v1",
+  "scope": "AB-050..AB-061",
+  "acceptance_cases": [
+    {
+      "id": "AB-050",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-050",
+      "level": "integration",
+      "automated_tests": [
+        "tests/integration/test_source_snapshot_builder.py::test_entry_planning_vertical_slice_requires_confirmation_and_balances_total"
+      ],
+      "ui_evidence": "tests/acceptance/evidence/AB-050.json"
+    },
+    {
+      "id": "AB-051",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-051",
+      "level": "unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_parallel_rate_water_levels_keep_families_parallel_and_deterministic",
+        "tests/unit/test_optimization_engine.py::test_symmetric_contribution_is_exact_and_order_neutral",
+        "tests/unit/test_cp_sat_rates.py::test_rate_cp_sat_exhausts_space_and_selects_the_exact_profile_winner"
+      ]
+    },
+    {
+      "id": "AB-052",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-052",
+      "level": "unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_equal_percentage_point_water_level_uses_100_ppm_and_boundary_exit",
+        "tests/unit/test_cp_sat_rates.py::test_rate_water_level_tables_encode_equal_points_and_boundary_exit"
+      ]
+    },
+    {
+      "id": "AB-053",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-053",
+      "level": "unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_equal_percentage_point_water_level_uses_100_ppm_and_boundary_exit"
+      ]
+    },
+    {
+      "id": "AB-054",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-054",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish"
+      ]
+    },
+    {
+      "id": "AB-055",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-055",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_converged_profiles_are_deduplicated_and_labels_accumulate",
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish"
+      ]
+    },
+    {
+      "id": "AB-056",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-056",
+      "level": "property",
+      "automated_tests": [
+        "tests/unit/test_cp_sat_adapter.py::test_cp_sat_is_deterministic_and_locks_lexicographic_tiers",
+        "tests/property/test_cp_sat_small_exhaustive_oracle.py::test_cp_sat_matches_independent_exhaustive_oracle_for_small_models"
+      ]
+    },
+    {
+      "id": "AB-057",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-057",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_exact_rate_infeasibility_is_the_only_discount_unlock_gate",
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish"
+      ]
+    },
+    {
+      "id": "AB-058",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-058",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/integration/test_source_snapshot_builder.py::test_entry_planning_vertical_slice_requires_confirmation_and_balances_total",
+        "tests/unit/test_scenario_application_revert.py::test_revert_restores_only_pre_application_inputs_and_invalidates_results",
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish",
+        "tests/integration/test_rebalancing_real_journey.py::test_revert_handles_pending_worker_but_preserves_manual_work"
+      ]
+    },
+    {
+      "id": "AB-059",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-059",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/unit/test_optimization_engine.py::test_over_target_gap_uses_the_same_exact_engine_and_adjusts_downward",
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish"
+      ]
+    },
+    {
+      "id": "AB-060",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-060",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/integration/test_versioning_api.py::test_source_parameter_and_revision_vertical_slice",
+        "tests/integration/test_rebalancing_real_journey.py::test_revert_handles_pending_worker_but_preserves_manual_work"
+      ]
+    },
+    {
+      "id": "AB-061",
+      "spec_anchor": "docs/product/phase-1-acceptance-cases.md#AB-061",
+      "level": "integration+unit",
+      "automated_tests": [
+        "tests/unit/test_target_closure.py::test_one_cent_outside_boundary_fails_without_track_offsetting",
+        "tests/unit/test_optimization_timeout.py::test_hard_timeout_is_incomplete_and_never_returns_a_candidate",
+        "tests/unit/test_optimization_process.py::test_real_cpu_hard_timeout_keeps_loop_responsive_and_reaps_child",
+        "tests/integration/test_rebalancing_real_journey.py::test_hard_timeout_persists_incomplete_without_candidates_or_unlock_proofs"
+      ]
+    }
+  ],
+  "closure_capabilities": [
+    {
+      "id": "UNDO-APPLIED-SCENARIO-001",
+      "description": "一键撤销应用或其纯计算后续修订，恢复应用前输入；不覆盖人工修改、正式确认或发布。",
+      "automated_tests": [
+        "tests/unit/test_versioning_contracts.py::test_scenario_application_revert_requires_a_non_blank_audit_reason",
+        "tests/unit/test_scenario_application_revert.py::test_revert_restores_only_pre_application_inputs_and_invalidates_results",
+        "tests/integration/test_rebalancing_real_journey.py::test_real_solver_apply_recalculate_undo_reconfirm_publish",
+        "tests/integration/test_rebalancing_real_journey.py::test_revert_handles_pending_worker_but_preserves_manual_work"
+      ],
+      "ui_evidence": "tests/acceptance/evidence/UNDO-APPLIED-SCENARIO-001-REAL.json",
+      "level": "integration+unit"
+    }
+  ],
+  "execution_report": "output/acceptance/report.json",
+  "execution_command": "pytest --junitxml=output/acceptance/pytest.xml -o junit_family=xunit1"
+}

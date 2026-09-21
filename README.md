@@ -1,0 +1,176 @@
+# 预算智解
+
+一期只实现“年度预算基线”。自然滚动预测和滚动补缺保持在后续阶段，不进入当前数据库、接口或页面。
+
+## 当前状态
+
+2026-09-10 已提供本机年度预算流程试用：统一工作区、上游参数表单、期初维护、完整计算、调平与发布审计导航已接通。直接打开 [本机试用](http://127.0.0.1:5188)，或双击 `启动本机试用.command`；操作及边界见 [本机试用说明](./本机试用说明.md)。仅使用预置 FY28 合成预算，不访问真实 BI，不修改 FY27。尚不是生产正式版；新财年及真实来源准备页面、正式身份、真实数据验收、部署及备份恢复仍有上线阻断。
+
+当前操作路径、上线阻断与条件交付日期统一见 [正式版收口计划](./docs/technical/release-readiness.md)。不再以历史纵切数量衡量正式交付；下方功能清单描述已有能力，不表示全部已有用户页面。
+
+当前纵切已经具备：
+
+- 来源组件批次、分区、抽取时间、行数、字段映射版本和内容哈希登记；
+- 通过 `guancli` 只读抽取花名册与最新 `dtdate` 指标汇总宽表，不修改线上数据集或 ETL；
+- 按“季节财年＋季度＋赛道＋产品＋年级＋科目＋校区”先汇总分子分母再逐键对账；
+- 固化续班率和新生占比字段映射，生成七年级首季度入口历史汇总；
+- 对账一致自动进入 `FROZEN`，明细键不一致保留 `DRAFT`，宽表批次未跟上时进入 `WAITING_FOR_SUMMARY`；
+- 抽取按季节及维度值动态分块，每块先获取服务端行数再校验返回行数；超过 60,000 行单次上限或任一块不完整即明确失败，绝不使用样本；
+- 维度不完整且五个预算相关分子分母均为 0 的行可计数排除；任一有效人次行维度缺失则阻断快照；
+- 从冻结快照生成不可变比例参考版本：先跨科目汇总，再按“精确历史→去校区同类汇总→人工必填”回退；
+- 续班率和新生占比共用可配置最小样本门槛（默认 30），保留精确分子分母、实际参考分子分母、回退原因和 ppm 系统初值；
+- 生成正式历史参考前必须完整声明上一财年四季成熟，并把成熟证据引用写入版本内容哈希和审计；
+- 由四类明确组件引用构成的不可变参数版本；
+- 部门财年预算链、首个修订及基于 `If-Match` 的新修订派生；
+- 从历史招生汇总生成不可变预算组合，七年级按默认入口范围标记，并由部门预算负责人确认；
+- 数据维护人员可整套维护组合草稿；人工新增组合必须填写原因和班均参数引用，关闭或重新启用既有组合必须填写原因；
+- 数据维护人员录入、说明并锁定非负整数财年入口总值；
+- 在组合已确认后，以校区为第一分配维度，先预留无历史校区，再按历史业务新生人次占比分配并用稳定键执行最大余数取整；
+- 校区确定值允许保存未调平草稿但不自动补偿；只有全量依据完整、偏离建议有原因且合计严格调平时才能由部门预算负责人整套确认；
+- 现有校区内部组合变化保留已确认校区总值，新增或关闭整个校区则从新修订清单移除校区确认输入；
+- 入口范围例外必须填写财年和全部五个业务维度，按“人工排除＞人工纳入＞七年级默认规则”形成并保存每个组合的判定证据；
+- 入口明细只读取已确认校区入口确定值；新产品人工比例先预留，剩余额度按上一财年业务新生人次占比下拆，两段均用稳定组合键执行最大余数取整；
+- 入口初始值大于 0 时生成 80%–120% 整数软边界；初始值为 0 时不伪造边界，并阻止其进入后续候选调平；
+- 续班率、新生占比按 0.01 个百分点保存和校验；反推型新生占比最高为 99.99%；
+- 比例边界必须由部门预算负责人按明确参数键确认，确认只绑定稳定键及上下界，不把当前值误当成边界本身；
+- 数据维护人员和部门预算负责人均可整批锁定、修改并锁定或解锁比例；整批先校验后入库，任一明细失败时不创建新版本或新修订；
+- 同财年派生精确继承锁定值和边界；跨财年只按去财年的完整键复制已锁定值，不做模糊匹配，未匹配或越界项进入不可发布的复制例外；
+- 计划新生人次按“季节＋赛道＋产品＋入口属性＋年级＋科目＋校区”完整键维护，只接受非负整数和必填原因；
+- 数据维护人员和部门预算负责人均可修改并锁定或解锁；显式锁定 0 与空值严格区分，正数只读派生为 100% 新生占比结果；
+- 已有大于 0 的入口新生绝对量时整批拒绝人工计划；计划新生不参与自动调平或最大余数法，修改或解锁会失效人数起的全部下游结果；
+- 按财年四个季节顺序推演人数：第一季从入口绝对量或锁定人工计划起步，后续季使用上一季取整总人次乘续班率得到老生，并用新生占比反推新生理论值；
+- 老生和新生分别在“赛道＋校区＋季节”内使用精确分数和最大余数法取整；入口及锁定人工计划先保留，只有反推型新生参与尾差排序；
+- 结果保存理论分数、九位解释值、整数值、实际续班率/新生占比和完整取整轨迹；缺少人工计划或比例时保存稳定阻断而不默认补零，结果不可发布；
+- 班均、学费原价、预算含税转换系数和结转节奏作为一个完整不可变参数版本保存；数据维护人员整套替换草稿，部门预算负责人独立确认；
+- 参数完整性从当前已启用组合反推：班均覆盖每个“赛道＋产品”，价格与结转覆盖对应四季，来源证据、变更原因和客户端整批哈希缺一即整批拒绝；
+- 班均只在完整季节明细上消费取整后总人次：0 人为未计划开班，1 至班均减 1 为不可成班，达标为通过；不跨科目或校区合并，不自动补人；
+- 已启用组合四季全零会生成发布阻断；人数未完成时不把空值当 0，而是保存“人数不可用”校验证据；
+- 期初结转按“财季＋赛道＋产品＋年级＋科目＋校区”完整财务适用键逐条必填；旧的产品级期初结转不再被计算消费；
+- 明细折扣按 0.1 个百分点步长保存，综合折扣在部门/赛道的年度/季度层级以原价收入加权；完整折扣版本必须由部门预算负责人独立确认，分母为 0 时为 N/A，绝对差超过 0.05 个百分点则阻止发布；
+- 明细预算收入先按版本化含税转换系数转为不含税基数，再按当季/跨季比例结转；已是不含税的实际值使用独立类型，不做二次除税；
+- 第一季加上上财年期初结转，第 2 至 4 季加上一季跨季结转；第四季甩出只作为下财年期初，不重复计入本财年；
+- 学校版目标由数据维护人员按“一个部门合计＋全部具体赛道”整套导入并锁定，目标、来源证据和变更原因缺一即整批拒绝；目标范围与当前预算组合或年度收入汇总不一致时阻断计算；
+- 部门及各赛道分别用完整元级精度计算“收入－目标”，绝对差恰好等于 10,000 元通过，超过一分钱即失败；赛道缺口与超额不得跨赛道抵消；
+- 目标闭合状态区分容差内、缺口待调平、超目标待调平和混合待调平；目标闭合与整体可发布分开保存，上游班均或综合折扣阻断不会被目标达标掩盖；
+- 组合、入口总值、校区建议、入口范围和入口明细均绑定新预算修订，可按精确版本 ID 查询完整内容；
+- 命令幂等、部门隔离、角色校验、审计事件和数据库不可变触发器。
+
+业务规格见 [产品文档](./docs/product/README.md)，实现约束见[详细技术设计](./docs/technical/README.md)。
+
+## 本地启动
+
+要求：Python 3.12、uv、Node 24+、npm、Docker。
+
+```bash
+cp .env.example .env
+UV_CACHE_DIR=.cache/uv uv sync --extra dev
+cd apps/web && npm install && cd ../..
+docker compose up -d postgres
+UV_CACHE_DIR=.cache/uv uv run alembic upgrade head
+UV_CACHE_DIR=.cache/uv uv run budget-api
+```
+
+另一个终端运行：
+
+```bash
+UV_CACHE_DIR=.cache/uv uv run budget-worker
+cd apps/web && npm run dev
+```
+
+访问：
+
+- Web：`http://127.0.0.1:5173`
+- API 文档：`http://127.0.0.1:8000/api/docs`
+- 存活检查：`http://127.0.0.1:8000/api/v1/health/live`
+- 就绪检查：`http://127.0.0.1:8000/api/v1/health/ready`
+
+版本化 API：
+
+- `POST /api/v1/source-snapshots:build`（异步读取真实来源）
+- `GET /api/v1/jobs/{id}`
+- `POST /api/v1/source-snapshots`
+- `POST /api/v1/source-snapshots/{id}:reconcile`
+- `POST /api/v1/source-snapshots/{id}:freeze`
+- `POST /api/v1/source-snapshots/{id}/rate-reference-versions`
+- `GET /api/v1/rate-reference-versions/{id}`
+- `GET /api/v1/rate-reference-versions/{id}/references?limit=&cursor=`
+- `POST /api/v1/parameter-versions`
+- `POST /api/v1/annual-budgets`
+- `POST /api/v1/revisions/{id}:derive`
+- `POST /api/v1/revisions/{id}/targets:replace-and-lock`
+- `GET /api/v1/target-set-versions/{id}`
+- `POST /api/v1/revisions/{id}/combinations:generate-draft`
+- `GET /api/v1/combination-set-versions/{id}`
+- `POST /api/v1/revisions/{id}/combinations:replace-draft`
+- `POST /api/v1/revisions/{id}/combinations:confirm`
+- `POST /api/v1/revisions/{id}/entry-total:save-and-lock`
+- `GET /api/v1/entry-total-versions/{id}`
+- `POST /api/v1/revisions/{id}/campus-entry:generate-suggestions`
+- `GET /api/v1/campus-entry-suggestion-versions/{id}`
+- `POST /api/v1/revisions/{id}/campus-entry:replace-draft`
+- `GET /api/v1/campus-entry-set-versions/{id}`
+- `POST /api/v1/revisions/{id}/campus-entry:confirm`
+- `POST /api/v1/revisions/{id}/entry-scope:replace-draft`
+- `GET /api/v1/entry-scope-versions/{id}`
+- `POST /api/v1/revisions/{id}/entry-scope:confirm`
+- `POST /api/v1/revisions/{id}/entry-detail:calculate`
+- `GET /api/v1/entry-detail-set-versions/{id}`
+- `POST /api/v1/revisions/{id}/rate-parameters:replace-draft`
+- `GET /api/v1/rate-parameter-versions/{id}`
+- `POST /api/v1/revisions/{id}/rate-boundaries:confirm`
+- `POST /api/v1/revisions/{id}/rate-parameters:lock`
+- `POST /api/v1/revisions/{id}/rate-parameters:change-and-lock`
+- `POST /api/v1/revisions/{id}/rate-parameters:unlock`
+- `POST /api/v1/revisions/{id}/rate-parameters:copy-cross-year-locks`
+- `POST /api/v1/revisions/{id}/planned-new-students:change-and-lock`
+- `POST /api/v1/revisions/{id}/planned-new-students:unlock`
+- `GET /api/v1/planned-new-student-versions/{id}`
+- `POST /api/v1/revisions/{id}/headcounts:calculate`
+- `GET /api/v1/headcount-result-versions/{id}`
+- `POST /api/v1/revisions/{id}/resource-finance:replace-draft`
+- `POST /api/v1/revisions/{id}/resource-finance:confirm`
+- `GET /api/v1/resource-finance-parameter-versions/{id}`
+- `POST /api/v1/revisions/{id}/class-sizes:validate`
+- `GET /api/v1/class-size-result-versions/{id}`
+- `POST /api/v1/revisions/{id}/discount-parameters:replace-draft`
+- `POST /api/v1/revisions/{id}/discount-parameters:confirm`
+- `GET /api/v1/discount-parameter-versions/{id}`
+- `POST /api/v1/revisions/{id}/revenues:calculate`
+- `GET /api/v1/revenue-result-versions/{id}`
+- `POST /api/v1/revisions/{id}/target-closures:validate`
+- `GET /api/v1/target-closure-result-versions/{id}`
+- 对应来源快照、参数版本、预算链和修订的精确 ID 查询接口
+
+所有写命令必须携带 `Idempotency-Key`。修订派生还必须携带值为父修订 UUID 的 `If-Match`。本地开发身份头为 `X-User-ID`、`X-Department-ID` 和 `X-Roles`。
+
+也可以构建并运行全部容器：
+
+```bash
+make container-build
+docker compose --profile app up --no-build
+```
+
+容器构建命令会使用临时英文路径作为构建上下文，以兼容 macOS 上 Docker/OrbStack 对中文项目路径的限制；源文件仍只从当前项目读取。
+
+Worker 镜像固定包含 `@guandata/guanskill@0.1.14`（其固定的 `guancli` 组件为 `1.0.40`）。观远 profile 和访问凭据不进入镜像、作业载荷、审计或日志，部署时必须以只读密钥挂载到 Worker 运行环境。
+
+## 验证
+
+```bash
+make check
+make migrate-check
+make test-db
+make audit
+node analysis/validate_documentation.mjs
+```
+
+AB-050～AB-061 与候选撤销的执行验收（先迁移独立测试库，并设置 `BUDGET_DATABASE_URL`）：
+
+```bash
+BUDGET_RUN_DB_TESTS=1 .venv/bin/pytest --junitxml=output/acceptance/pytest.xml -o junit_family=xunit1
+.venv/bin/python analysis/report_acceptance.py --junit output/acceptance/pytest.xml
+```
+
+追踪清单只保存测试绑定；报告由真实执行结果生成，缺失、跳过或失败不得显示通过。真实合成预算的端到端测试位于 `tests/integration/test_rebalancing_real_journey.py`；不代表已完成 FY27 Excel 影子核验或全部 96 项业务验收。
+
+本地 `dev_headers` 身份模式仅供开发。生产环境启动时会拒绝该模式，必须接入统一 OIDC 身份适配器。
