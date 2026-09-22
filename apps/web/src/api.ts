@@ -10,6 +10,21 @@ export interface ApiIdentity {
   roles: string[];
 }
 
+/** Generate an idempotency key in HTTPS, localhost, and ordinary LAN browser contexts. */
+export function newRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(value => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
 export interface RevisionResponse {
   budget_revision_id: string;
   annual_budget_id: string;
@@ -128,6 +143,52 @@ export interface TargetClosureVersion {
   input_fingerprint: string;
   created_at: string;
   items: TargetClosureItem[];
+}
+
+export interface SeasonRevenueResult {
+  fiscal_season: number;
+  quarter_name: string;
+  track: string;
+  product: string;
+  entry_attribute: string;
+  grade: string;
+  subject: string;
+  campus: string;
+  integer_total_students: number | null;
+  list_price_yuan: string;
+  detail_discount_rate_ppm: number;
+  list_price_revenue_yuan: string | null;
+  business_quarter_revenue_yuan: string | null;
+  quarter_recognized_revenue_yuan: string | null;
+  calculation_status: string;
+}
+
+export interface RevenueAggregateResult {
+  scope_level: string;
+  track: string | null;
+  period_type: string;
+  fiscal_season: number | null;
+  list_price_revenue_yuan: string;
+  discounted_revenue_yuan: string;
+  business_revenue_yuan: string;
+  recognized_revenue_yuan: string;
+  composite_discount_rate_ppm: string | null;
+  target_rate_ppm: number | null;
+  variance_ppm: string | null;
+  target_status: string;
+}
+
+export interface RevenueResultVersion {
+  revenue_result_version_id: string;
+  budget_revision_id: string;
+  fiscal_year: number;
+  status: string;
+  publishable: boolean;
+  record_count: number;
+  aggregate_count: number;
+  created_at: string;
+  items: SeasonRevenueResult[];
+  aggregates: RevenueAggregateResult[];
 }
 
 export interface ScenarioChange {
@@ -539,6 +600,18 @@ export async function fetchTargetClosureVersion(
   return parseResponse<TargetClosureVersion>(response);
 }
 
+export async function fetchRevenueResultVersion(
+  versionId: string,
+  identity: ApiIdentity,
+  signal?: AbortSignal,
+): Promise<RevenueResultVersion> {
+  const response = await fetch(
+    `/api/v1/revenue-result-versions/${encodeURIComponent(versionId)}`,
+    { headers: identityHeaders(identity), signal },
+  );
+  return parseResponse<RevenueResultVersion>(response);
+}
+
 export async function fetchLatestOptimizationRun(
   revisionId: string,
   identity: ApiIdentity,
@@ -563,7 +636,7 @@ export async function createOptimizationRun(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
       },
       body: JSON.stringify({ solver_adapter: "CP_SAT_ENTRY_AND_RATES" }),
     },
@@ -600,7 +673,7 @@ export async function requestDiscountUnlock(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
         "If-Match": `"${revisionId}"`,
       },
       body: JSON.stringify({
@@ -625,7 +698,7 @@ export async function confirmDiscountUnlock(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
         "If-Match": `"${revisionId}"`,
       },
       body: JSON.stringify({ discount_unlock_request_id: requestId }),
@@ -647,7 +720,7 @@ export async function applyRebalancingScenario(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
         "If-Match": `"${revisionId}"`,
       },
       body: JSON.stringify({ reason }),
@@ -687,7 +760,7 @@ export async function revertScenarioApplication(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
         "If-Match": `"${revisionId}"`,
       },
       body: JSON.stringify({ reason }),
@@ -708,7 +781,7 @@ export async function confirmFormalPlan(
       headers: {
         ...identityHeaders(identity),
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": newRequestId(),
         "If-Match": `"${revisionId}"`,
       },
       body: JSON.stringify({ reason }),
@@ -739,7 +812,7 @@ export async function exportAuditArchive(
     headers: {
       ...identityHeaders(identity),
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": newRequestId(),
     },
     body: JSON.stringify({ reason }),
   });
@@ -773,7 +846,7 @@ export async function publishBudget(
     headers: {
       ...identityHeaders(identity),
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": newRequestId(),
       "If-Match": `"${revisionId}"`,
     },
     body: JSON.stringify({ publication_note: publicationNote.trim() || null }),

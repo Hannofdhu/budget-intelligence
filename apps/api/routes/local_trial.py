@@ -26,5 +26,5 @@ async def trial_session(request: Request) -> dict[str, object]:
         "mode": "SYNTHETIC_LOCAL_TRIAL",
         "userId": "local-budget-owner",
         "departmentId": settings.local_trial_department_id,
-        "roles": ["DATA_MAINTAINER", "DEPARTMENT_BUDGET_OWNER"],
+        "roles": ["DATA_MAINTAINER", "DEPARTMENT_BUDGET_OWNER", "PERMISSION_ADMIN"],
     }

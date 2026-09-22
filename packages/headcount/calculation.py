@@ -51,6 +51,7 @@ class ManualPlanInput:
     fiscal_season: int
     value: int
     locked: bool
+    manual_renewal_rate_ppm: int | None = None
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,8 @@ def _build_theory_row(
 ) -> SeasonHeadcount:
     old_theory: Fraction | None
     renewal: RateInput | None = None
+    renewal_rate_id: str | None = None
+    renewal_rate_ppm: int | None = None
     if season_index == 1:
         old_theory = opening_old
     elif previous is None or previous.integer_total_students is None:
@@ -279,7 +282,10 @@ def _build_theory_row(
         )
     else:
         renewal = rate_by_key.get(_rate_key("RENEWAL_RATE", fiscal_season, combination))
-        if renewal is None:
+        if plan is not None and plan.locked and plan.manual_renewal_rate_ppm is not None:
+            renewal_rate_ppm = plan.manual_renewal_rate_ppm
+            old_theory = Fraction(previous.integer_total_students * renewal_rate_ppm, PPM)
+        elif renewal is None:
             old_theory = None
             validations.append(
                 _issue(
@@ -290,6 +296,8 @@ def _build_theory_row(
                 )
             )
         else:
+            renewal_rate_id = renewal.rate_id
+            renewal_rate_ppm = renewal.value_ppm
             old_theory = Fraction(previous.integer_total_students * renewal.value_ppm, PPM)
 
     source: NewStudentSource | None = None
@@ -301,6 +309,11 @@ def _build_theory_row(
         source = "ENTRY_ALLOCATION"
         eligibility = "ENTRY_ABSOLUTE"
         new_theory = Fraction(combination.entry_initial_value)
+    elif plan is not None and plan.locked:
+        source = "LOCKED_MANUAL_PLAN"
+        eligibility = "APPLICABLE_LOCKED"
+        planned_input_id = plan.plan_id
+        new_theory = Fraction(plan.value)
     elif old_theory is not None and old_theory > 0:
         source = "RATE_INFERRED"
         eligibility = "NOT_APPLICABLE"
@@ -348,8 +361,8 @@ def _build_theory_row(
         integer_total_students=None,
         new_student_source=source,
         planned_eligibility_status=eligibility,
-        renewal_rate_id=renewal.rate_id if renewal else None,
-        renewal_rate_ppm=renewal.value_ppm if renewal else None,
+        renewal_rate_id=renewal_rate_id,
+        renewal_rate_ppm=renewal_rate_ppm,
         new_student_share_rate_id=share.rate_id if share else None,
         new_student_share_input_ppm=share.value_ppm if share else None,
         planned_input_id=planned_input_id,

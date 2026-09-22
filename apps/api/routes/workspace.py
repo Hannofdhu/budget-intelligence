@@ -12,8 +12,14 @@ from sqlalchemy import select
 
 from apps.api.routes import versioning as v
 from packages.contracts import versioning as c
+from packages.persistence.entry_detail import get_entry_detail_set_version
 from packages.persistence.entry_planning import _assert_version_access
-from packages.persistence.models import AnnualBudget
+from packages.persistence.models import (
+    AnnualBudget,
+    CampusEntryConfirmation,
+    CombinationSetConfirmation,
+    EntryScopeConfirmation,
+)
 from packages.persistence.resource_finance import resource_finance_batch_content_hash
 from packages.persistence.revenue import discount_parameter_batch_content_hash
 from packages.persistence.target_closure import target_set_batch_content_hash
@@ -97,6 +103,24 @@ CONFIRMS = {
     "discount": "/discount-parameters:confirm",
 }
 
+CONFIRMATION_MODELS = {
+    "combinations": (
+        CombinationSetConfirmation,
+        CombinationSetConfirmation.combination_set_version_id,
+        "combination_set_confirmation_id",
+    ),
+    "campus": (
+        CampusEntryConfirmation,
+        CampusEntryConfirmation.campus_entry_set_version_id,
+        "campus_entry_confirmation_id",
+    ),
+    "entry-scope": (
+        EntryScopeConfirmation,
+        EntryScopeConfirmation.entry_scope_version_id,
+        "entry_scope_confirmation_id",
+    ),
+}
+
 
 def resolve(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
     if "$ref" in schema:
@@ -128,6 +152,108 @@ def project(value: Any, schema: dict[str, Any], root: dict[str, Any]) -> Any:
     if schema.get("type") == "array":
         return [project(item, schema["items"], root) for item in value]
     return value
+
+
+def entry_detail_form_value(data: dict[str, Any]) -> dict[str, Any]:
+    """Project persisted manual reservations back into the calculation form."""
+    return {
+        "manual_reservations": [
+            {
+                "track": row["track"],
+                "product": row["product"],
+                "grade": row["grade"],
+                "subject": row["subject"],
+                "campus": row["campus"],
+                "reservation_ratio_ppm": row["manual_reservation_ratio_ppm"],
+                "reason": row["manual_reservation_reason"],
+            }
+            for row in data.get("items", [])
+            if row.get("manual_reservation_ratio_ppm") is not None
+        ]
+    }
+
+
+def planned_new_student_form_value(data: dict[str, Any]) -> dict[str, Any]:
+    """Restore editable fields that have different names in the immutable response."""
+    return {
+        "items": [
+            {
+                "fiscal_season": row["fiscal_season"],
+                "track": row["track"],
+                "product": row["product"],
+                "entry_attribute": row["entry_attribute"],
+                "grade": row["grade"],
+                "subject": row["subject"],
+                "campus": row["campus"],
+                "planned_new_students": row["planned_new_students"],
+                "manual_renewal_rate_ppm": row.get("lock_origin", {}).get(
+                    "manual_renewal_rate_ppm"
+                ),
+                "reason": row["manual_reason"],
+            }
+            for row in data.get("items", [])
+            if row.get("locked")
+        ]
+    }
+
+
+def resource_finance_form_seed(combinations: list[dict[str, Any]], fiscal_year: int) -> dict[str, Any]:
+    """Create dimension-complete blank rows without inventing business parameter values."""
+    enabled = [row for row in combinations if row.get("enabled") is True]
+    products = sorted({(str(row["track"]), str(row["product"])) for row in enabled})
+    first_season = fiscal_year * 10 + 1
+    evidence = {"reference": ""}
+    common = {"source_evidence": evidence, "change_reason": ""}
+    return {
+        "budget_tax_conversion_factor": "",
+        "tax_factor_source_evidence": evidence,
+        "tax_factor_change_reason": "",
+        "class_size_items": [
+            {
+                "track": track,
+                "product": product,
+                "system_value": "",
+                "final_value": "",
+                **common,
+            }
+            for track, product in products
+        ],
+        "revenue_items": [
+            {
+                "fiscal_season": fiscal_year * 10 + season,
+                "track": track,
+                "product": product,
+                "list_price_yuan": "",
+                "current_season_recognition_rate_ppm": "",
+                "opening_carryover_revenue_yuan": "0",
+                **common,
+            }
+            for season in range(1, 5)
+            for track, product in products
+        ],
+        "opening_carryover_items": [
+            {
+                "fiscal_season": first_season,
+                "track": str(row["track"]),
+                "product": str(row["product"]),
+                "grade": str(row["grade"]),
+                "subject": str(row["subject"]),
+                "campus": str(row["campus"]),
+                "amount_yuan": "",
+                **common,
+            }
+            for row in sorted(
+                enabled,
+                key=lambda item: (
+                    str(item["track"]),
+                    str(item["product"]),
+                    str(item["grade"]),
+                    str(item["subject"]),
+                    str(item["campus"]),
+                ),
+            )
+        ],
+    }
 
 
 @router.get("/workspace/budgets")
@@ -165,11 +291,28 @@ async def workspace(revision_id: uuid.UUID, session: v.Session, actor: v.Current
                 session, actor=actor, **{pointer: uuid.UUID(str(manifest[pointer]))}
             )
             data = response.model_dump(mode="json")
+            if key in CONFIRMATION_MODELS:
+                model_class, version_column, confirmation_id_field = CONFIRMATION_MODELS[key]
+                confirmation_model: Any = model_class
+                confirmation: Any = await session.scalar(
+                    select(confirmation_model).where(
+                        version_column == uuid.UUID(str(manifest[pointer])),
+                        confirmation_model.input_fingerprint == data["content_hash"],
+                    )
+                )
+                if confirmation is not None:
+                    data["confirmed"] = True
+                    data["confirmation_id"] = str(getattr(confirmation, confirmation_id_field))
+                    data["confirmed_at"] = confirmation.confirmed_at.isoformat()
         all_data[key] = data
         schema = model.model_json_schema()
         value = project(data, schema, schema)
         if key == "planned":
-            value = project({"items": [r for r in data.get("items", []) if r.get("locked")]}, schema, schema)
+            value = planned_new_student_form_value(data)
+        if key == "resources" and not data:
+            value = resource_finance_form_seed(
+                all_data.get("combinations", {}).get("items", []), budget.fiscal_year
+            )
         confirm: dict[str, Any] | None = (
             {"path": CONFIRMS[key], "body": {pointer: manifest[pointer]}}
             if key in CONFIRMS and manifest.get(pointer)
@@ -191,6 +334,18 @@ async def workspace(revision_id: uuid.UUID, session: v.Session, actor: v.Current
             }
         )
     # Actions use the same typed forms as the existing commands; no arbitrary URL dispatch.
+    # Entry-detail is a calculation action rather than a draft form. Rebuild its editable
+    # manual reservations from the immutable result so a successful calculation survives reload.
+    entry_detail_data: dict[str, Any] = {}
+    entry_detail_value: dict[str, Any] = {"manual_reservations": []}
+    if manifest.get("entry_detail_set_version_id"):
+        entry_detail_response = await get_entry_detail_set_version(
+            session,
+            actor=actor,
+            entry_detail_set_version_id=uuid.UUID(str(manifest["entry_detail_set_version_id"])),
+        )
+        entry_detail_data = entry_detail_response.model_dump(mode="json")
+        entry_detail_value = entry_detail_form_value(entry_detail_data)
     combos = all_data["combinations"].get("items", [])
     extras: list[tuple[str, str, type[BaseModel], str, dict[str, Any]]] = [
         (
@@ -210,7 +365,7 @@ async def workspace(revision_id: uuid.UUID, session: v.Session, actor: v.Current
             "分配入口明细",
             c.EntryDetailCalculateRequest,
             "/entry-detail:calculate",
-            {"manual_reservations": []},
+            entry_detail_value,
         ),
         ("rate-lock", "锁定选定比例", c.RateParameterLockRequest, "/rate-parameters:lock", {"items": []}),
         (
@@ -242,7 +397,7 @@ async def workspace(revision_id: uuid.UUID, session: v.Session, actor: v.Current
                 "label": label,
                 "schema": model.model_json_schema(),
                 "value": value,
-                "data": {},
+                "data": entry_detail_data if key == "entry-detail" else {},
                 "path": path,
                 "confirm": None,
             }

@@ -1335,6 +1335,7 @@ class PlannedNewStudentKeyInput(BaseModel):
 
 class PlannedNewStudentChangeAndLockItem(PlannedNewStudentKeyInput):
     planned_new_students: int = Field(strict=True, ge=0)
+    manual_renewal_rate_ppm: int | None = Field(default=None, strict=True, ge=0, le=1_000_000)
     reason: str = Field(min_length=1, max_length=500)
 
 

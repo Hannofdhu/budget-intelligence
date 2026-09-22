@@ -22,6 +22,15 @@ async def test_workspace_roundtrips_existing_forms_and_enforces_department() -> 
         assert data["source"]["status"] == "FROZEN"
         assert data["is_current_draft"] is True
         assert len(data["sections"]) == 15
+        sections = {section["key"]: section for section in data["sections"]}
+        assert sections["entry-total"]["data"]["fiscal_year_entry_total"] == 10
+        assert "record_count" not in sections["entry-total"]["data"]
+        assert sections["combinations"]["data"]["confirmed"] is True
+        assert sections["campus"]["data"]["confirmed"] is True
+        assert sections["entry-scope"]["data"]["confirmed"] is True
+        assert sections["entry-scope"]["data"]["record_count"] == 0
+        assert sections["entry-detail"]["data"]["record_count"] > 0
+        assert sections["entry-detail"]["value"] == {"manual_reservations": []}
         for section in data["sections"]:
             key = section["key"]
             if key not in FORMS or key == "planned":

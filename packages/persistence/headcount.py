@@ -466,6 +466,11 @@ async def _load_basis(
             fiscal_season=row.fiscal_season,
             value=row.planned_new_students,
             locked=row.locked,
+            manual_renewal_rate_ppm=(
+                int(row.lock_origin["manual_renewal_rate_ppm"])
+                if row.lock_origin.get("manual_renewal_rate_ppm") is not None
+                else None
+            ),
         )
         for row in plans
     ]

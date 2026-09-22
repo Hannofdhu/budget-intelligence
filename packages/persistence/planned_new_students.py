@@ -123,6 +123,7 @@ async def change_and_lock_planned_new_students(
                     "schema_version": "1.0",
                     "action": "CHANGE_AND_LOCK",
                     "reason": item.reason.strip(),
+                    "manual_renewal_rate_ppm": item.manual_renewal_rate_ppm,
                     "actor_id": actor.user_id,
                     "role_snapshot": _role_snapshot(actor),
                     "occurred_at": occurred_at.isoformat(),

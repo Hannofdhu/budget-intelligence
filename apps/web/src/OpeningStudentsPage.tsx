@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchOpeningWorkspace, saveOpening, type OpeningDimension, type OpeningWorkspace, type ApiIdentity } from "./api";
+import { fetchOpeningWorkspace, newRequestId, saveOpening, type OpeningDimension, type OpeningWorkspace, type ApiIdentity } from "./api";
 
 const dimensionKey = (r: OpeningDimension) => JSON.stringify([r.track, r.product, r.grade, r.subject, r.campus]);
 function target(r: OpeningDimension): OpeningDimension | null {
@@ -38,7 +38,7 @@ export function OpeningStudentsPage() {
     if (!source || !data) return;
     const body = { source_component_id: sourceId, source_fiscal_season: data.source_fiscal_season, rows: source.rows.map(({ renewal_rate_ppm: _rate, ...r }) => r), zero_combination_ids: zeros, reason: reason.trim() };
     const serialized = JSON.stringify([revision, identity, body]);
-    if (attempt.current?.body !== serialized) attempt.current = { body: serialized, key: crypto.randomUUID() };
+    if (attempt.current?.body !== serialized) attempt.current = { body: serialized, key: newRequestId() };
     setBusy(true); setError("");
     try {
       const result = await saveOpening(revision, identity, body, attempt.current.key);

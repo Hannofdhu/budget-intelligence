@@ -34,3 +34,9 @@ async def test_trial_bootstrap_is_explicitly_gated(
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/local-trial/session")
             assert response.status_code == expected
+            if expected == 200:
+                assert response.json()["roles"] == [
+                    "DATA_MAINTAINER",
+                    "DEPARTMENT_BUDGET_OWNER",
+                    "PERMISSION_ADMIN",
+                ]

@@ -221,6 +221,28 @@ def test_locked_positive_plan_yields_one_hundred_percent_result_and_locked_zero_
     assert first_rows[zero.stable_id].realized_new_student_share_ppm is None
 
 
+def test_locked_plan_can_supply_manual_renewal_and_overrides_share_inference() -> None:
+    item = _combination("a" * 64, entry=True, entry_value=100)
+    rates = _rates([item])
+    plans = [
+        ManualPlanInput("manual-q2", item.stable_id, 20272, 7, True, 800_000),
+    ]
+    result = calculate_headcounts(
+        fiscal_year=2027,
+        combinations=[item],
+        rates=rates,
+        plans=plans,
+    )
+    second = next(row for row in result.rows if row.fiscal_season == 20272)
+    assert second.theoretical_old_students == Fraction(80)
+    assert second.theoretical_new_students == Fraction(7)
+    assert second.new_student_source == "LOCKED_MANUAL_PLAN"
+    assert second.renewal_rate_id is None
+    assert second.renewal_rate_ppm == 800_000
+    assert second.planned_input_id == "manual-q2"
+    assert second.new_student_share_rate_id is None
+
+
 def test_same_inputs_are_deterministic_across_one_hundred_runs() -> None:
     item = _combination("a" * 64, entry=True, entry_value=100)
     results = {

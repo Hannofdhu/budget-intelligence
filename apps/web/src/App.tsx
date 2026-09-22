@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { VersionAuditPage } from "./VersionAuditPage";
 import { RebalancingPage } from "./RebalancingPage";
+import { BudgetResultsPage } from "./BudgetResultsPage";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type CheckFilter = "all" | "blocked";
@@ -66,6 +67,42 @@ const ACTUAL_LABELS: Record<string, string> = {
   track_count: "赛道目标数",
   failed_targets: "未闭合目标",
 };
+
+const PUBLICATION_STAGES = [
+  { no: "01", label: "来源与范围", section: "source", groups: ["SOURCE", "COMBINATION"] },
+  { no: "02", label: "入口拆解", section: "entry-total", groups: ["ENTRY"] },
+  { no: "03", label: "比例参数", section: "rates", groups: ["RATE"] },
+  { no: "04", label: "资源与财务", section: "resources", groups: ["RESOURCE_FINANCE", "DISCOUNT"] },
+  { no: "05", label: "计算与调平", section: "results", groups: ["HEADCOUNT", "CALCULATION", "REVENUE", "TARGET"] },
+] as const;
+
+const REPAIR_SECTIONS: Record<string, string> = {
+  CURRENT_DRAFT_REVISION: "source",
+  REQUIRED_COMPONENTS_PRESENT: "resources",
+  SOURCE_SNAPSHOT_FROZEN: "source",
+  BUDGET_COMBINATIONS_CONFIRMED: "combinations",
+  BUDGET_COMBINATION_KEYS_EXACT: "combinations",
+  CAMPUS_ENTRY_CONFIRMED_AND_BALANCED: "campus",
+  ENTRY_SCOPE_CONFIRMED: "entry-scope",
+  RATE_BOUNDARIES_CONFIRMED: "rates",
+  PLANNED_NEW_STUDENTS_LOCKED: "planned",
+  RESOURCE_FINANCE_CONFIRMED: "resources",
+  DISCOUNT_PARAMETERS_CONFIRMED: "discount",
+  CALCULATION_RESULT_CHAIN_CURRENT: "results",
+  HEADCOUNT_AND_CLASS_SIZE_PUBLISHABLE: "results",
+  REVENUE_AND_DISCOUNT_PUBLISHABLE: "results",
+  ALL_TARGETS_WITHIN_TOLERANCE: "results",
+};
+
+function repairUrl(check: PublicationCheck, revisionId: string): string {
+  if (check.code === "OPENING_CALCULATION_READY") {
+    return `/budget/opening?revision=${encodeURIComponent(revisionId)}`;
+  }
+  const section = REPAIR_SECTIONS[check.code]
+    ?? ({ SOURCE: "source", COMBINATION: "combinations", ENTRY: "entry-total", RATE: "rates", RESOURCE_FINANCE: "resources", DISCOUNT: "discount", HEADCOUNT: "results", CALCULATION: "results", REVENUE: "results", TARGET: "results" } as Record<string, string>)[check.group]
+    ?? "source";
+  return `/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=${encodeURIComponent(section)}`;
+}
 
 function readSetting(key: string, fallback: string): string {
   const stored = window.localStorage.getItem(key)?.trim();
@@ -129,9 +166,7 @@ function RefreshGlyph() {
 }
 
 function CheckRow({ check, revisionId }: { check: PublicationCheck; revisionId: string }) {
-  const repairUrl = check.repair_route.startsWith("/budget/")
-    ? `${check.repair_route}?revision=${encodeURIComponent(revisionId)}`
-    : check.repair_route;
+  const repairHref = repairUrl(check, revisionId);
 
   return (
     <article className={`check-row ${check.passed ? "check-row--passed" : "check-row--blocked"}`}>
@@ -154,7 +189,7 @@ function CheckRow({ check, revisionId }: { check: PublicationCheck; revisionId: 
         <div className="check-row__foot">
           <code>{check.code}</code>
           {!check.passed && (
-            <a href={repairUrl} aria-label={`前往处理：${check.rule}`}>
+            <a href={repairHref} aria-label={`前往处理：${check.rule}`}>
               前往处理 <span aria-hidden="true">↗</span>
             </a>
           )}
@@ -242,6 +277,7 @@ export function App() {
   if (window.location.pathname.startsWith("/budget/audit")) {
     return <VersionAuditPage />;
   }
+  if (window.location.pathname.startsWith("/budget/results")) return <BudgetResultsPage />;
   if (path === "/budget/publication") return <PublicationPage />;
   const section = ({ "/budget/targets": "targets", "/budget/combinations": "combinations", "/budget/entry": "entry-total", "/budget/entry-allocation": "campus", "/budget/entry-scope": "entry-scope", "/budget/rates": "rates", "/budget/resources": "resources", "/budget/resource-finance": "resources", "/budget/discounts": "discount", "/budget/headcount": "results", "/budget/class-size": "results", "/budget/revenue": "results" } as Record<string, string>)[path];
   if (section) { const url = new URL(location.href); url.pathname = "/budget/workspace"; url.searchParams.set("section", section); history.replaceState({}, "", url); return <WorkspacePage />; }
@@ -419,29 +455,31 @@ function PublicationPage() {
       ? "published"
       : readiness.status === "BLOCKED"
         ? "blocked"
-        : "ready";
+      : "ready";
+  const stageDone = (groups: readonly string[]) => readiness.checks
+    .filter(check => groups.includes(check.group))
+    .every(check => check.passed);
 
   return (
-    <div className="app-frame">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="预算智解首页">
-          <span className="brand__seal">智</span>
-          <span>预算智解</span>
-        </a>
-        <nav aria-label="主要导航">
-          <a href={`/budget/opening?revision=${encodeURIComponent(activeRevisionId)}`}>期初老生</a>
-          <a href="/budget/workspace">年度预算</a>
-          <a href={`/budget/rebalancing?revision=${encodeURIComponent(activeRevisionId)}`}>调平方案</a>
-          <a href={`/budget/revisions?revision=${encodeURIComponent(activeRevisionId)}`}>预算版本</a>
-          <a className="is-current" href={`/budget/publication?revision=${encodeURIComponent(activeRevisionId)}`}>发布检查</a>
+    <div className="app-frame publication-app budget-shell">
+      <header className="budget-topbar">
+        <a className="budget-brand" href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=source`} aria-label="返回年度预算工作区"><span>智</span><strong>预算智解</strong></a>
+        <div className="budget-mode">FY{String(annualBudget.fiscal_year).slice(-2)} 学校版预算 · R{revision.revision_no}</div>
+        <nav aria-label="辅助导航">
+          <a href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=source`}>返回预算工作区</a>
+          <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>版本记录</a>
         </nav>
-        <div className="topbar__identity">
-          <span>{health === "ok" ? "系统在线" : "本地模式"}</span>
-          <strong>{identity.userId}</strong>
-        </div>
+        <span className="budget-local">{health === "ok" ? "系统在线" : "本地模式"} · {identity.userId}</span>
       </header>
 
       <main className="workspace">
+        <nav className="stage-rail publication-stage-rail" aria-label="预算流程阶段">
+          {PUBLICATION_STAGES.map(stage => {
+            const done = stageDone(stage.groups);
+            return <a key={stage.no} className={`stage-item is-${done ? "done" : "todo"}`} href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=${stage.section}`}><span className="stage-number">{done ? "✓" : stage.no}</span><span><strong>{stage.label}</strong><small>{done ? "已完成" : "待处理"}</small></span></a>;
+          })}
+          <a className={`stage-item is-active is-${isPublished ? "done" : "active"}`} aria-current="page" href={`/budget/publication?revision=${encodeURIComponent(activeRevisionId)}`}><span className="stage-number">{isPublished ? "✓" : "06"}</span><span><strong>确认与发布</strong><small>当前阶段</small></span></a>
+        </nav>
         <div className="page-heading">
           <div>
             <p className="breadcrumb">年度预算工作区 <span>/</span> 发布检查</p>
@@ -580,6 +618,7 @@ function PublicationPage() {
                   ? `该正式版本按当前门禁复核存在 ${readiness.blocker_count} 项异常，仅可查看并进入审计处理。`
                   : "该修订已成为当前年度预算正式基线，仅可查看或派生新草稿。"}</p>
                 {published && <small>发布于 {formatDate(published.published_at)} · {published.published_by}</small>}
+                <a className="button button--primary published-result-link" href={`/budget/results?revision=${encodeURIComponent(revision.budget_revision_id)}`}>查看 FY{String(annualBudget.fiscal_year).slice(-2)} 预算结果</a>
               </div>
             )}
 
