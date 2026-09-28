@@ -5,6 +5,7 @@ import {
   applyRebalancingScenario,
   confirmDiscountUnlock,
   createOptimizationRun,
+  fetchAnnualBudget,
   fetchCurrentDiscountUnlock,
   fetchLatestOptimizationRun,
   fetchRevision,
@@ -13,6 +14,7 @@ import {
   revertScenarioApplication,
   fetchScenarioApplicationStatus,
   type ApiIdentity,
+  type AnnualBudgetResponse,
   type DiscountUnlock,
   type InfeasibilityProof,
   type OptimizationRun,
@@ -23,6 +25,7 @@ import {
   type ScenarioChange,
   type TargetClosureVersion,
 } from "./api";
+import { BudgetContextHeader } from "./BudgetContextHeader";
 
 type PageState = "idle" | "loading" | "ready" | "working" | "error";
 
@@ -219,17 +222,14 @@ function CandidateCard({
           </div>
           <em>{selected ? "正在比较" : "选择"}</em>
         </div>
-        <ContributionBar scenario={scenario} />
         <dl className="candidate-card__metrics">
-          <div><dt>参数变更</dt><dd>{scenario.changes.length}</dd><small>条</small></div>
-          <div><dt>入口调整</dt><dd>{counts.ENTRY ?? 0}</dd><small>条</small></div>
-          <div><dt>最大比例变化</dt><dd>{maxRate.toFixed(2)}</dd><small>百分点</small></div>
-          <div><dt>最大折扣变化</dt><dd>{maxDiscount.toFixed(1)}</dd><small>百分点</small></div>
+          <div><dt>调整明细</dt><dd>{scenario.changes.length}</dd><small>条</small></div>
+          <div><dt>触及边界</dt><dd>{boundaryHits.length}</dd><small>项</small></div>
         </dl>
         <div className="candidate-card__result">
-          <span>部门目标差额</span>
+          <span>应用后目标差额</span>
           <strong>{formatMoney(departmentVariance?.variance_yuan ?? 0, true)}</strong>
-          <small>{boundaryHits.length ? `${boundaryHits.length} 项触及确认边界` : "未触及确认边界"}</small>
+          <small>{counts.ENTRY ?? 0} 条入口调整 · 最大比例变化 {maxRate.toFixed(2)} 个百分点 · 最大折扣变化 {maxDiscount.toFixed(1)} 个百分点</small>
         </div>
       </button>
     </article>
@@ -278,13 +278,14 @@ function ProofPanel({ proofs }: { proofs: InfeasibilityProof[] }) {
 
 export function RebalancingPage() {
   const [revisionInput, setRevisionInput] = useState(initialRevisionId);
-  const [identity, setIdentity] = useState<ApiIdentity>(() => ({
+  const [identity] = useState<ApiIdentity>(() => ({
     userId: readSetting("budget.userId", "budget-maintainer"),
     departmentId: readSetting("budget.departmentId", "zhihui-learning"),
     roles: [MAINTAINER_ROLE, OWNER_ROLE],
   }));
   const [state, setState] = useState<PageState>("idle");
   const [revision, setRevision] = useState<RevisionResponse | null>(null);
+  const [budget, setBudget] = useState<AnnualBudgetResponse | null>(null);
   const [closure, setClosure] = useState<TargetClosureVersion | null>(null);
   const [run, setRun] = useState<OptimizationRun | null>(null);
   const [unlock, setUnlock] = useState<DiscountUnlock | null>(null);
@@ -306,6 +307,7 @@ export function RebalancingPage() {
     setApplicationRevert(null);
     try {
       const nextRevision = await fetchRevision(revisionId, nextIdentity);
+      const nextBudget = await fetchAnnualBudget(nextRevision.annual_budget_id, nextIdentity);
       const closureId = nextRevision.component_manifest.target_closure_result_version_id;
       const [nextRun, nextClosure, applicationStatus] = await Promise.all([
         fetchLatestOptimizationRun(revisionId, nextIdentity),
@@ -318,6 +320,7 @@ export function RebalancingPage() {
         ? await fetchCurrentDiscountUnlock(revisionId, nextRun.input_fingerprint, nextIdentity)
         : null;
       setRevision(nextRevision);
+      setBudget(nextBudget);
       setApplication(applicationStatus?.application ?? null);
       setCanRevertApplication(applicationStatus?.can_revert ?? false);
       setClosure(nextClosure);
@@ -402,7 +405,7 @@ export function RebalancingPage() {
   }
 
   async function applySelected() {
-    if (!revision || !selected || !applyReason.trim() || run?.status !== "OPTIMAL") return;
+    if (!revision || budget?.current_draft_revision_id !== revision.budget_revision_id || budget.current_published_revision_id === revision.budget_revision_id || !selected || !applyReason.trim() || run?.status !== "OPTIMAL") return;
     setState("working");
     setError(null);
     setApplicationRevert(null);
@@ -415,8 +418,7 @@ export function RebalancingPage() {
       );
       setApplication(applied);
       setCanRevertApplication(true);
-      window.history.replaceState(null, "", `/budget/rebalancing?revision=${encodeURIComponent(applied.applied_revision_id)}`);
-      setState("ready");
+      await load(applied.applied_revision_id);
     } catch (nextError) {
       setError(errorMessage(nextError));
       setState("ready");
@@ -445,76 +447,56 @@ export function RebalancingPage() {
     }
   }
 
-  if (!revision) {
+  if (!revision || !budget) {
+    if (revisionInput && state !== "error") return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取预算缺口…</p></main></div>;
     return (
-      <main className="rebalance-connect">
-        <section>
-          <p className="kicker">P10 · 确定性自动调平</p>
-          <h1>先看证据，<br />再动预算。</h1>
-          <p>连接一个完成目标闭合校验的预算修订，生成可比较、不静默应用的候选方案。</p>
-        </section>
-        <form onSubmit={(event) => { event.preventDefault(); void load(revisionInput); }}>
-          <span className="section-index">CONTROL DESK / FY27</span>
-          <label><span>预算修订 ID</span><input value={revisionInput} onChange={(event) => setRevisionInput(event.target.value.trim())} autoComplete="off" /></label>
-          <div>
-            <label><span>当前用户</span><input value={identity.userId} onChange={(event) => setIdentity({ ...identity, userId: event.target.value })} /></label>
-            <label><span>部门 ID</span><input value={identity.departmentId} onChange={(event) => setIdentity({ ...identity, departmentId: event.target.value })} /></label>
-          </div>
-          <small>当前开发身份同时具备数据维护人员与部门预算负责人角色；解锁申请与确认仍是两个独立动作。</small>
-          <button className="button button--primary" disabled={!revisionInput || state === "loading"}>{state === "loading" ? "读取中…" : "进入调平桌"}</button>
-          {error && <p className="global-error" role="alert">{error}</p>}
-        </form>
-      </main>
+      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 处理缺口</p><h1>{error ? "预算缺口读取失败" : "请先打开年度预算"}</h1><p>{error ?? "从预算结果进入，系统会自动带入需要处理的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void load(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 
-  return (
-    <div className="app-frame rebalance-app">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="预算智解首页"><span className="brand__seal">智</span><span>预算智解</span></a>
-        <nav aria-label="主要导航">
-          <a href="/budget/workspace">年度预算</a>
-          <a className="is-current" href={`/budget/rebalancing?revision=${revision.budget_revision_id}`}>调平方案</a>
-          <a href={`/budget/publication?revision=${revision.budget_revision_id}`}>发布检查</a>
-          <a href={`/budget/audit?revision=${revision.budget_revision_id}`}>版本与审计</a>
-        </nav>
-        <div className="topbar__identity"><span>双角色受控操作</span><strong>{identity.userId}</strong></div>
-      </header>
+  const isPublished = budget.current_published_revision_id === revision.budget_revision_id;
+  const isCurrentDraft = !isPublished && budget.current_draft_revision_id === revision.budget_revision_id;
+  const tolerance = departmentClosure ? Number(departmentClosure.tolerance_yuan) : 0;
+  const needsBalancing = gap !== null && Math.abs(gap) > tolerance;
+  const canGenerate = isCurrentDraft && needsBalancing && Boolean(closure);
+  const resultHref = `/budget/results?revision=${encodeURIComponent(revision.budget_revision_id)}`;
+  const workspaceHref = `/budget/workspace?revision=${encodeURIComponent(revision.budget_revision_id)}&section=results`;
+  const title = isPublished ? "这版预算已定版" : !isCurrentDraft ? "这是历史修订" : !closure ? "先完成预算计算" : needsBalancing ? gap !== null && gap < 0 ? "预算还有缺口" : "预算超出目标" : "无需调平";
 
-      <main className="rebalance-workspace">
+  return (
+    <div className="app-frame rebalance-app decision-shell">
+      <a className="skip-link" href="#rebalance-main">跳到缺口处理</a>
+      <BudgetContextHeader fiscalYear={budget.fiscal_year} revisionNo={revision.revision_no} revisionId={revision.budget_revision_id} status={isPublished ? "已定版" : "草稿"} />
+
+      <main className="rebalance-workspace" id="rebalance-main">
+        <div className="context-return"><a href={isPublished ? resultHref : workspaceHref}>返回{isPublished ? "预算结果" : "计算结果"}</a><span>缺口处理</span></div>
         <section className="rebalance-hero">
           <div>
-            <p className="breadcrumb">年度预算工作区 <span>/</span> 调平方案</p>
-            <h1>调平决策台</h1>
-            <p>固定入口总值内先调结构，再并列推进续班率与新生占比；折扣始终是最后的次级杠杆。</p>
+            <p className="decision-kicker">FY{String(budget.fiscal_year).slice(-2)} / 预算结果</p>
+            <h1>{title}</h1>
+            <p>{isPublished ? "正式版本仅可查看。需要调整时，请从年度预算派生新草稿。" : !isCurrentDraft ? "历史修订仅可查看。需要继续调整，请先创建新草稿。" : !closure ? "完成人数、班均和收入计算后，系统才能判断是否需要调平。" : needsBalancing ? "先看可调整空间，再决定是否应用方案。" : "当前收入与目标的差异在确认容差内，可以继续确认预算。"}</p>
           </div>
-          <div className={`gap-ledger ${gap !== null && Math.abs(gap) <= 10_000 ? "gap-ledger--closed" : ""}`}>
-            <span>{gap === null ? "当前修订" : gap < 0 ? "部门预算缺口" : gap > 0 ? "部门预算超额" : "部门目标"}</span>
+          <div className={`gap-ledger ${gap !== null && !needsBalancing ? "gap-ledger--closed" : ""}`}>
+            <span>{gap === null ? "当前修订" : gap < 0 ? "部门预算缺口" : gap > 0 ? "部门预算超额" : "与目标差异"}</span>
             <strong>{gap === null ? `R${revision.revision_no}` : formatCompactMoney(Math.abs(gap))}</strong>
-            <small>{gap !== null && Math.abs(gap) <= 10_000 ? "无显著缺口" : `目标容差 ±${formatCompactMoney(departmentClosure?.tolerance_yuan ?? 10_000)}`}</small>
+            <small>{gap !== null && !needsBalancing ? "在确认容差内" : `目标容差 ±${formatCompactMoney(tolerance)}`}</small>
           </div>
         </section>
 
         <section className="control-strip">
-          <div className="control-strip__meta">
-            <span>修订 R{revision.revision_no}</span>
-            <code>{revision.budget_revision_id}</code>
-            <span>{run ? `${STATUS_LABELS[run.status]} · ${run.evaluated_state_count.toLocaleString("zh-CN")} 状态` : "尚未求解"}</span>
-          </div>
-          <button className="button button--primary" onClick={() => void generate()} disabled={state === "working" || !closure}>
-            {state === "working" ? "正在处理…" : run ? "重新生成候选" : "生成候选方案"}
-          </button>
+          <div className="control-strip__meta"><span>{isPublished ? "本次无需生成方案" : !isCurrentDraft ? "历史修订只读" : run ? STATUS_LABELS[run.status] : needsBalancing ? "等待生成方案" : "本次无需生成方案"}</span></div>
+          {canGenerate ? <button className="decision-primary" onClick={() => void generate()} disabled={state === "working"}>{state === "working" ? "正在生成…" : run ? "重新生成方案" : "生成方案"}</button> : <a className="decision-primary" href={isPublished ? resultHref : !isCurrentDraft || !closure ? workspaceHref : `/budget/publication?revision=${encodeURIComponent(revision.budget_revision_id)}`}>{isPublished ? "查看预算结果" : !isCurrentDraft ? "返回年度预算" : !closure ? "继续预算计算" : "继续确认预算"}</a>}
         </section>
 
         {!closure && <div className="rebalance-notice rebalance-notice--blocked">当前修订缺少目标闭合结果，请先完成人数、班均、收入与目标校验。</div>}
         {error && <div className="global-error" role="alert">{error}</div>}
         {application && !applicationRevert && (
-          <section className="application-receipt" aria-live="polite">
-            <span>{canRevertApplication ? "已应用到新草稿" : "历史候选应用记录"}</span>
+          <details className="application-receipt" key={canRevertApplication ? "reversible" : "historic"} open={canRevertApplication}>
+            <summary>{canRevertApplication ? "已应用到新草稿" : "查看历史候选应用"}</summary>
             <strong>{canRevertApplication ? `${application.change_count} 条参数差异已写入，完整复算作业已登记` : "后续输入或正式状态已变化，该历史应用不可直接撤销"}</strong>
-            <button className="application-receipt__revert" onClick={() => void revertApplied()} disabled={state === "working" || !canRevertApplication}>一键撤销本次应用</button>
-            <a href={`/budget/rebalancing?revision=${application.applied_revision_id}`}>查看应用时修订 →</a>
-          </section>
+            {canRevertApplication && <button className="application-receipt__revert" onClick={() => void revertApplied()} disabled={state === "working"}>撤销本次应用</button>}
+            <a href={`/budget/workspace?revision=${encodeURIComponent(application.applied_revision_id)}&section=results`}>查看应用后的预算 →</a>
+          </details>
         )}
         {applicationRevert && (
           <section className="application-receipt application-receipt--reverted" aria-live="polite">
@@ -524,9 +506,9 @@ export function RebalancingPage() {
           </section>
         )}
 
-        <StageRail run={run} unlock={unlock} />
+        {(needsBalancing || run) && <details className="rebalance-evidence"><summary>调整顺序与求解依据</summary><StageRail run={run} unlock={unlock} /><p>入口总量固定；续班率与新生占比并列、等百分点推进；折扣只在满足解锁条件后使用。</p><ProofPanel proofs={run?.infeasibility_proofs ?? []} /></details>}
 
-        {run?.status !== "OPTIMAL" && run?.discount_unlock_required && (
+        {isCurrentDraft && needsBalancing && run?.status !== "OPTIMAL" && run?.discount_unlock_required && (
           <section className="unlock-desk">
             <div><span>03 / 折扣门禁</span><h2>前两级已精确穷尽</h2><p>不可行证明只能开启当前修订、当前输入指纹的折扣候选。上游变化后解锁立即失效。</p></div>
             <div className="unlock-desk__actions">
@@ -537,21 +519,21 @@ export function RebalancingPage() {
           </section>
         )}
 
-        <section className="candidate-section">
+        {isCurrentDraft && needsBalancing && <section className="candidate-section">
           <header>
-            <div><span>CANDIDATE LEDGER</span><h2>候选对比</h2></div>
-            <p>{run?.scenarios.length ? `${run.scenarios.length} 个去重后结果；相同结果的收敛标签合并展示。` : "只有 OPTIMAL 运行会产生可应用候选。"}</p>
+            <div><span>可选方案</span><h2>先比较，再应用</h2></div>
+            <p>{run?.scenarios.length ? `${run.scenarios.length} 个不同结果，选择一个查看明细。` : "生成方案不会修改当前预算。"}</p>
           </header>
           {run?.scenarios.length ? (
             <div className="candidate-grid">
               {run.scenarios.map((scenario, index) => <CandidateCard key={scenario.rebalancing_scenario_id} scenario={scenario} index={index} selected={selectedId === scenario.rebalancing_scenario_id} onSelect={() => { setSelectedId(scenario.rebalancing_scenario_id); setShowDetails(true); }} />)}
             </div>
           ) : (
-            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3>{run?.status === "INFEASIBLE" ? "在已确认边界和步长内暂无可行方案" : "等待一次确定性求解"}</h3><p>{run?.reason_code ?? "求解不会直接改动当前草稿。"}</p></div>
+            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3>{run?.status === "INFEASIBLE" ? "当前约束下没有可行方案" : run?.status === "INCOMPLETE" ? "尚未求出结论" : run?.status === "FAILED" ? "方案生成失败" : "等待生成方案"}</h3><p>{run?.status === "INFEASIBLE" ? "可查看上方的调整顺序与不可行依据，不会自动放宽边界。" : run?.status === "INCOMPLETE" ? "这不代表方案不可行，请重试或查看求解依据。" : run?.reason_code ?? "生成方案不会修改当前预算。"}</p></div>
           )}
-        </section>
+        </section>}
 
-        {selected && showDetails && (
+        {isCurrentDraft && selected && showDetails && (
           <section className="scenario-detail">
             <header><div><span>差异明细</span><h2>{scenarioName(selected.scenario_types, run?.scenarios.indexOf(selected) ?? 0)}</h2></div><button onClick={() => setShowDetails(false)} aria-label="关闭明细">×</button></header>
             <div className="scenario-detail__summary">
@@ -567,11 +549,11 @@ export function RebalancingPage() {
                 <small>将生成新的不可变预算修订；不会自动正式确认或发布。</small>
               </div>
             </div>
+            <ContributionBar scenario={selected} />
             <ChangeTable changes={selected.changes} />
           </section>
         )}
 
-        <ProofPanel proofs={run?.infeasibility_proofs ?? []} />
       </main>
     </div>
   );

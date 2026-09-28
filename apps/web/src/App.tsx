@@ -6,6 +6,7 @@ import {
   ApiError,
   confirmFormalPlan,
   fetchAnnualBudget,
+  fetchAuditEvents,
   fetchJob,
   fetchLiveness,
   fetchPublicationReadiness,
@@ -22,7 +23,7 @@ import {
 } from "./api";
 import { VersionAuditPage } from "./VersionAuditPage";
 import { RebalancingPage } from "./RebalancingPage";
-import { BudgetResultsPage } from "./BudgetResultsPage";
+import { BudgetContextHeader } from "./BudgetContextHeader";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type CheckFilter = "all" | "blocked";
@@ -68,12 +69,11 @@ const ACTUAL_LABELS: Record<string, string> = {
   failed_targets: "未闭合目标",
 };
 
-const PUBLICATION_STAGES = [
-  { no: "01", label: "来源与范围", section: "source", groups: ["SOURCE", "COMBINATION"] },
-  { no: "02", label: "入口拆解", section: "entry-total", groups: ["ENTRY"] },
-  { no: "03", label: "比例参数", section: "rates", groups: ["RATE"] },
-  { no: "04", label: "资源与财务", section: "resources", groups: ["RESOURCE_FINANCE", "DISCOUNT"] },
-  { no: "05", label: "计算与调平", section: "results", groups: ["HEADCOUNT", "CALCULATION", "REVENUE", "TARGET"] },
+const PUBLICATION_TASKS = [
+  { no: "1", label: "目标与范围", short: "目标", section: "source", groups: ["SOURCE", "COMBINATION"] },
+  { no: "2", label: "入口人数", short: "入口", section: "entry-total", groups: ["ENTRY"] },
+  { no: "3", label: "招生参数", short: "参数", section: "rates", groups: ["RATE"] },
+  { no: "4", label: "资源与财务", short: "财务", section: "resources", groups: ["RESOURCE_FINANCE", "DISCOUNT"] },
 ] as const;
 
 const REPAIR_SECTIONS: Record<string, string> = {
@@ -178,92 +178,42 @@ function CheckRow({ check, revisionId }: { check: PublicationCheck; revisionId: 
           <h3>{check.rule}</h3>
           <span>{check.passed ? "通过" : "需处理"}</span>
         </div>
-        <dl className="actual-values">
-          {Object.entries(check.actual).map(([key, value]) => (
-            <div key={key}>
-              <dt>{ACTUAL_LABELS[key] ?? key}</dt>
-              <dd title={readableValue(value)}>{readableValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
         <div className="check-row__foot">
-          <code>{check.code}</code>
           {!check.passed && (
             <a href={repairHref} aria-label={`前往处理：${check.rule}`}>
-              前往处理 <span aria-hidden="true">↗</span>
+              去处理 <span aria-hidden="true">↗</span>
             </a>
           )}
         </div>
+        <details className="check-row__evidence">
+          <summary>查看检查依据</summary>
+          <dl className="actual-values">
+            {Object.entries(check.actual).map(([key, value]) => (
+              <div key={key}>
+                <dt>{ACTUAL_LABELS[key] ?? key}</dt>
+                <dd title={readableValue(value)}>{readableValue(value)}</dd>
+              </div>
+            ))}
+          </dl>
+          <code>{check.code}</code>
+        </details>
       </div>
     </article>
   );
 }
 
-function EmptyConnection({
-  revisionId,
-  identity,
-  onRevisionChange,
-  onIdentityChange,
-  onConnect,
-  loadState,
-}: {
-  revisionId: string;
-  identity: ApiIdentity;
-  onRevisionChange: (value: string) => void;
-  onIdentityChange: (value: ApiIdentity) => void;
-  onConnect: () => void;
-  loadState: LoadState;
-}) {
-  return (
-    <main className="connect-shell">
-      <div className="connect-copy">
-        <p className="kicker">FY27 · 年度预算基线</p>
-        <h1>把发布条件<br />摊在桌面上。</h1>
-        <p>连接一个预算修订，逐项核对硬约束，再完成正式方案确认与发布。</p>
-      </div>
-      <section className="connect-form" aria-labelledby="connect-title">
-        <p className="section-index">P11</p>
-        <h2 id="connect-title">进入发布检查</h2>
-        <label>
-          <span>预算修订 ID</span>
-          <input
-            value={revisionId}
-            onChange={(event) => onRevisionChange(event.target.value.trim())}
-            placeholder="粘贴 budget_revision_id"
-            autoComplete="off"
-          />
-        </label>
-        <div className="connect-form__row">
-          <label>
-            <span>部门 ID</span>
-            <input
-              value={identity.departmentId}
-              onChange={(event) => onIdentityChange({ ...identity, departmentId: event.target.value })}
-              placeholder="zhihui-learning"
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            <span>当前用户</span>
-            <input
-              value={identity.userId}
-              onChange={(event) => onIdentityChange({ ...identity, userId: event.target.value })}
-              placeholder="budget-owner"
-              autoComplete="off"
-            />
-          </label>
-        </div>
-        <p className="connect-note">以“部门预算负责人”角色进入；身份来自本地开发环境请求头。</p>
-        <button
-          className="button button--primary button--wide"
-          onClick={onConnect}
-          disabled={!revisionId || !identity.departmentId.trim() || !identity.userId.trim() || loadState === "loading"}
-        >
-          {loadState === "loading" ? "正在读取…" : "读取当前修订"}
-        </button>
-      </section>
-    </main>
-  );
+function BudgetOverviewRedirect() {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.pathname = "/budget/workspace";
+    url.searchParams.set("section", "results");
+    if (!url.searchParams.has("revision")) {
+      const activeRevision = localStorage.getItem("budget.activeRevision");
+      if (activeRevision) url.searchParams.set("revision", activeRevision);
+    }
+    window.location.replace(url);
+  }, []);
+  return <main className="decision-workspace" role="status">正在打开预算概览…</main>;
 }
 
 export function App() {
@@ -277,7 +227,7 @@ export function App() {
   if (window.location.pathname.startsWith("/budget/audit")) {
     return <VersionAuditPage />;
   }
-  if (window.location.pathname.startsWith("/budget/results")) return <BudgetResultsPage />;
+  if (window.location.pathname.startsWith("/budget/results")) return <BudgetOverviewRedirect />;
   if (path === "/budget/publication") return <PublicationPage />;
   const section = ({ "/budget/targets": "targets", "/budget/combinations": "combinations", "/budget/entry": "entry-total", "/budget/entry-allocation": "campus", "/budget/entry-scope": "entry-scope", "/budget/rates": "rates", "/budget/resources": "resources", "/budget/resource-finance": "resources", "/budget/discounts": "discount", "/budget/headcount": "results", "/budget/class-size": "results", "/budget/revenue": "results" } as Record<string, string>)[path];
   if (section) { const url = new URL(location.href); url.pathname = "/budget/workspace"; url.searchParams.set("section", section); history.replaceState({}, "", url); return <WorkspacePage />; }
@@ -288,7 +238,7 @@ function PublicationPage() {
   const [health, setHealth] = useState<HealthStatus | "loading" | "error">("loading");
   const [revisionInput, setRevisionInput] = useState(initialRevisionId);
   const [activeRevisionId, setActiveRevisionId] = useState("");
-  const [identity, setIdentity] = useState<ApiIdentity>(() => ({
+  const [identity] = useState<ApiIdentity>(() => ({
     userId: readSetting("budget.userId", "budget-owner"),
     departmentId: readSetting("budget.departmentId", "zhihui-learning"),
     roles: [OWNER_ROLE],
@@ -300,11 +250,12 @@ function PublicationPage() {
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [actionState, setActionState] = useState<"idle" | "confirming" | "publishing">("idle");
   const [job, setJob] = useState<JobResponse | null>(null);
-  const [filter, setFilter] = useState<CheckFilter>("all");
+  const [filter, setFilter] = useState<CheckFilter>("blocked");
   const [formalReason, setFormalReason] = useState("确认当前完整预算方案并进入发布检查");
   const [publicationNote, setPublicationNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const requestCounter = useRef(0);
+  const pageTitleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -319,11 +270,18 @@ function PublicationPage() {
     setLoadState("loading");
     setError(null);
     try {
-      const [nextRevision, nextReadiness] = await Promise.all([
-        fetchRevision(revisionId, nextIdentity),
-        fetchPublicationReadiness(revisionId, nextIdentity),
-      ]);
+      const nextRevision = await fetchRevision(revisionId, nextIdentity);
       const nextBudget = await fetchAnnualBudget(nextRevision.annual_budget_id, nextIdentity);
+      if (requestId !== requestCounter.current) return;
+      const wasPublished = nextBudget.current_published_revision_id === revisionId
+        || (typeof nextRevision.component_manifest.formal_confirmation_id === "string"
+          && (await fetchAuditEvents(nextBudget.annual_budget_id, { revisionId, eventType: "PUBLISHED" }, nextIdentity)).items.length > 0);
+      if (requestId !== requestCounter.current) return;
+      if (wasPublished) {
+        window.location.replace(`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=results&view=record`);
+        return;
+      }
+      const nextReadiness = await fetchPublicationReadiness(revisionId, nextIdentity);
       if (requestId !== requestCounter.current) return;
       setRevision(nextRevision);
       setReadiness(nextReadiness);
@@ -336,6 +294,10 @@ function PublicationPage() {
       const url = new URL(window.location.href);
       url.searchParams.set("revision", revisionId);
       window.history.replaceState({}, "", url);
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "auto" });
+        pageTitleRef.current?.focus({ preventScroll: true });
+      });
     } catch (nextError) {
       if (requestId !== requestCounter.current) return;
       setLoadState("error");
@@ -397,7 +359,7 @@ function PublicationPage() {
     try {
       const result = await publishBudget(revision.budget_revision_id, publicationNote, identity);
       setPublished(result);
-      await loadRevision(result.published_revision_id);
+      window.location.replace(`/budget/workspace?revision=${encodeURIComponent(result.published_revision_id)}&section=results`);
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -416,18 +378,11 @@ function PublicationPage() {
   }, [filter, readiness]);
 
   if (!revision || !readiness || !annualBudget) {
+    if (revisionInput && loadState !== "error") {
+      return <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取发布状态…</p></main></div>;
+    }
     return (
-      <>
-        <EmptyConnection
-          revisionId={revisionInput}
-          identity={identity}
-          onRevisionChange={setRevisionInput}
-          onIdentityChange={setIdentity}
-          onConnect={() => void loadRevision(revisionInput, identity)}
-          loadState={loadState}
-        />
-        {error && <div className="global-error" role="alert">{error}</div>}
-      </>
+      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1>{error ? "发布状态读取失败" : "请先打开年度预算"}</h1><p>{error ?? "选择预算后，系统会带你回到需要确认的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
     );
   }
 
@@ -461,35 +416,25 @@ function PublicationPage() {
     .every(check => check.passed);
 
   return (
-    <div className="app-frame publication-app budget-shell">
-      <header className="budget-topbar">
-        <a className="budget-brand" href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=source`} aria-label="返回年度预算工作区"><span>智</span><strong>预算智解</strong></a>
-        <div className="budget-mode">FY{String(annualBudget.fiscal_year).slice(-2)} 学校版预算 · R{revision.revision_no}</div>
-        <nav aria-label="辅助导航">
-          <a href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=source`}>返回预算工作区</a>
-          <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>版本记录</a>
-        </nav>
-        <span className="budget-local">{health === "ok" ? "系统在线" : "本地模式"} · {identity.userId}</span>
-      </header>
+    <div className="app-frame publication-app publication-app--decision budget-shell">
+      <a className="skip-link" href="#publication-main">跳到发布内容</a>
+      <BudgetContextHeader fiscalYear={annualBudget.fiscal_year} revisionNo={revision.revision_no} revisionId={activeRevisionId} status={isPublished ? "已定版" : health === "ok" ? "待发布" : "本地模式"} />
 
-      <main className="workspace">
-        <nav className="stage-rail publication-stage-rail" aria-label="预算流程阶段">
-          {PUBLICATION_STAGES.map(stage => {
-            const done = stageDone(stage.groups);
-            return <a key={stage.no} className={`stage-item is-${done ? "done" : "todo"}`} href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=${stage.section}`}><span className="stage-number">{done ? "✓" : stage.no}</span><span><strong>{stage.label}</strong><small>{done ? "已完成" : "待处理"}</small></span></a>;
+      <main className="decision-workspace publication-decision-workspace" id="publication-main">
+        <nav className="decision-progress" aria-label="预算任务进度">
+          {PUBLICATION_TASKS.map(task => {
+            const done = stageDone(task.groups);
+            return <a key={task.no} className={done ? "is-done" : "is-todo"} href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=${task.section}`} aria-label={`任务 ${task.no}：${task.label}，${done ? "已完成" : "待处理"}`}><span>{task.no}</span><strong>{task.label}</strong><em className="decision-progress-short">{task.short}</em></a>;
           })}
-          <a className={`stage-item is-active is-${isPublished ? "done" : "active"}`} aria-current="page" href={`/budget/publication?revision=${encodeURIComponent(activeRevisionId)}`}><span className="stage-number">{isPublished ? "✓" : "06"}</span><span><strong>确认与发布</strong><small>当前阶段</small></span></a>
+          <a className={`is-active ${isPublished ? "is-done" : "is-active"}`} aria-current="page" href={`/budget/publication?revision=${encodeURIComponent(activeRevisionId)}`} aria-label={`任务 5：审阅与发布，${isPublished ? "已完成" : "正在处理"}`}><span>5</span><strong>审阅与发布</strong><em className="decision-progress-short">发布</em></a>
         </nav>
-        <div className="page-heading">
-          <div>
-            <p className="breadcrumb">年度预算工作区 <span>/</span> 发布检查</p>
-            <h1>发布检查</h1>
-            <p className="page-heading__intro">所有硬约束在这里逐项落章。没有忽略异常，也没有强制发布。</p>
-          </div>
-          <button className="icon-button" onClick={refresh} disabled={loadState === "loading"} aria-label="刷新检查结果">
-            <RefreshGlyph />
-            <span>{loadState === "loading" ? "刷新中" : "刷新"}</span>
-          </button>
+        <header className="publication-focus__bar">
+          <div><a href={`/budget/workspace?revision=${encodeURIComponent(activeRevisionId)}&section=home`}>返回年度预算</a><strong>确认与发布</strong></div>
+          <button className="publication-refresh" onClick={refresh} disabled={loadState === "loading"} aria-label="刷新检查结果"><RefreshGlyph /><span>{loadState === "loading" ? "刷新中" : "刷新"}</span></button>
+        </header>
+        <div className="publication-heading">
+          <div><p>任务 5 / 5</p><h1 ref={pageTitleRef} tabIndex={-1}>确认并定版</h1><span>{isPublished ? "这版预算已定版，可以直接查看结果。" : readiness.status === "BLOCKED" ? "先处理阻断项，再回来确认。" : isFormallyConfirmed ? "正式方案已确认，接下来由你决定是否发布。" : "检查已通过，确认前系统会完整复算。"}</span></div>
+          <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>查看变化记录</a>
         </div>
 
         <section className={`declaration declaration--${declarationTone}`} aria-live="polite">
@@ -507,6 +452,8 @@ function PublicationPage() {
           </dl>
         </section>
 
+        {isPublished && !publishedWithAuditMismatch && <div className="publication-complete"><a className="decision-primary" href={`/budget/results?revision=${encodeURIComponent(activeRevisionId)}`}>查看预算结果</a><span>已定版版本仅可查看；后续修改需派生新草稿。</span></div>}
+
         {error && (
           <div className="inline-error" role="alert">
             <strong>操作未完成</strong>
@@ -523,7 +470,9 @@ function PublicationPage() {
           </section>
         )}
 
-        <div className="work-grid">
+        <details className="publication-deep" key={isPublished ? "published" : "editing"} open={!isPublished || publishedWithAuditMismatch}>
+          <summary>{isPublished && !publishedWithAuditMismatch ? "查看完整检查与确认记录" : "当前检查与操作"}</summary>
+        <div className="work-grid publication-work-grid">
           <section className="ledger" aria-labelledby="ledger-title">
             <div className="ledger__toolbar">
               <div>
@@ -531,14 +480,14 @@ function PublicationPage() {
                 <h2 id="ledger-title">逐项核验</h2>
               </div>
               <div className="segmented" aria-label="筛选检查项">
+                <button className={filter === "blocked" ? "is-active" : ""} onClick={() => setFilter("blocked")}>阻断 {readiness.blocker_count}</button>
                 <button className={filter === "all" ? "is-active" : ""} onClick={() => setFilter("all")}>全部 {readiness.checks.length}</button>
-                <button className={filter === "blocked" ? "is-active" : ""} onClick={() => setFilter("blocked")}>仅看阻断 {readiness.blocker_count}</button>
               </div>
             </div>
 
             <div className="ledger__body">
               {groupedChecks.length === 0 ? (
-                <div className="empty-blockers"><StatusGlyph passed /><p>当前没有发布阻断。</p></div>
+                <div className="empty-blockers"><StatusGlyph passed /><div><strong>没有发布阻断</strong><p>全部硬约束均已通过。需要核对技术明细时再查看全部检查。</p></div><button className="button" onClick={() => setFilter("all")}>查看全部 {readiness.checks.length} 项</button></div>
               ) : groupedChecks.map(([group, checks]) => (
                 <section className="check-group" key={group} aria-labelledby={`group-${group}`}>
                   <div className="check-group__title">
@@ -559,7 +508,8 @@ function PublicationPage() {
               <h2 id="docket-title">正式方案与发布</h2>
             </div>
 
-            <section className="revision-ticket">
+            <details className="revision-ticket publication-technical">
+              <summary>查看修订与规则依据</summary>
               <div>
                 <span>当前修订</span>
                 <strong>R{revision.revision_no}</strong>
@@ -570,7 +520,7 @@ function PublicationPage() {
                 <div><dt>规则版本</dt><dd>{readiness.gate_rule_version}</dd></div>
                 <div><dt>生成时间</dt><dd>{formatDate(revision.created_at)}</dd></div>
               </dl>
-            </section>
+            </details>
 
             <ol className="approval-steps">
               <li className={readiness.status === "READY" ? "is-done" : "is-current"}>
@@ -586,14 +536,14 @@ function PublicationPage() {
 
             {!isFormallyConfirmed && !isPublished && (
               <div className="action-panel">
+                <div className="confirmation-consequence"><strong>确认会重新计算整套预算</strong><span>人数、班均、收入和目标闭合将重新生成；任一阻断都会停止确认。</span></div>
                 <label>
                   <span>正式确认原因 <b>必填</b></span>
                   <textarea value={formalReason} onChange={(event) => setFormalReason(event.target.value)} maxLength={500} rows={3} />
                 </label>
                 <button className="button button--primary button--wide" onClick={() => void handleFormalConfirmation()} disabled={!canConfirm}>
-                  {actionState === "confirming" ? "正在复算并确认…" : "正式方案确认"}
+                  {actionState === "confirming" ? "正在复算并确认…" : "重新计算并正式确认"}
                 </button>
-                <p>点击后将基于当前修订重新执行四阶段计算。任一阻断都会终止确认。</p>
               </div>
             )}
 
@@ -650,6 +600,7 @@ function PublicationPage() {
             }}>切换预算修订</button>
           </aside>
         </div>
+        </details>
       </main>
     </div>
   );

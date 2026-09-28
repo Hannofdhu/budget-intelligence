@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAnnualBudget,
+  fetchAuditEvents,
   fetchRevenueResultVersion,
   fetchRevision,
   fetchTargetClosureVersion,
@@ -10,6 +11,7 @@ import {
   type SeasonRevenueResult,
   type TargetClosureVersion,
 } from "./api";
+import { PublishedBudgetRecord } from "./PublishedBudgetRecord";
 
 type DimensionKey = "track" | "campus" | "product" | "grade" | "subject";
 type Filters = { fiscalSeason: string; track: string; campus: string; product: string; grade: string; subject: string };
@@ -47,16 +49,17 @@ function downloadCsv(rows: GroupRow[], dimension: DimensionKey, fiscalYear: numb
   URL.revokeObjectURL(link.href);
 }
 
-export function BudgetResultsPage() {
+export function BudgetResultsPage({ revisionId, active }: { revisionId: string; active: boolean }) {
   const [identity, setIdentity] = useState<ApiIdentity | null>(null);
-  const [revisionNo, setRevisionNo] = useState<number | null>(null);
-  const [revisionId, setRevisionId] = useState(new URLSearchParams(location.search).get("revision") ?? localStorage.getItem("budget.activeRevision") ?? "");
+  const [budgetContext, setBudgetContext] = useState<{ annualBudgetId: string; fiscalYear: number } | null>(null);
+  const [view, setView] = useState(() => new URLSearchParams(location.search).get("view") === "record" ? "record" : "results");
   const [result, setResult] = useState<RevenueResultVersion | null>(null);
   const [closure, setClosure] = useState<TargetClosureVersion | null>(null);
   const [dimension, setDimension] = useState<DimensionKey>("track");
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const pageTitleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,17 +68,15 @@ export function BudgetResultsPage() {
       try {
         const who = await parseResponse<ApiIdentity>(await fetch("/api/v1/local-trial/session", { signal: controller.signal }));
         setIdentity(who);
-        let activeId = revisionId;
+        const activeId = revisionId;
         if (!activeId) throw new Error("没有找到要查看的预算版本。");
-        let revision = await fetchRevision(activeId, who, controller.signal);
+        const revision = await fetchRevision(activeId, who, controller.signal);
         const budget = await fetchAnnualBudget(revision.annual_budget_id, who, controller.signal);
-        if (budget.current_published_revision_id && activeId !== budget.current_published_revision_id) {
-          activeId = budget.current_published_revision_id;
-          revision = await fetchRevision(activeId, who, controller.signal);
-          setRevisionId(activeId);
-          history.replaceState({}, "", `/budget/results?revision=${encodeURIComponent(activeId)}`);
+        if (activeId !== budget.current_published_revision_id) {
+          const publication = await fetchAuditEvents(budget.annual_budget_id, { revisionId: activeId, eventType: "PUBLISHED" }, who, controller.signal);
+          if (publication.items.length === 0) throw new Error("这版预算尚未定版，请返回年度预算继续审阅。");
         }
-        setRevisionNo(revision.revision_no);
+        setBudgetContext({ annualBudgetId: budget.annual_budget_id, fiscalYear: budget.fiscal_year });
         const revenueId = revision.component_manifest.revenue_result_version_id;
         if (typeof revenueId !== "string") throw new Error("该预算版本还没有收入计算结果。");
         const nextResult = await fetchRevenueResultVersion(revenueId, who, controller.signal);
@@ -90,6 +91,28 @@ export function BudgetResultsPage() {
     })();
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    const restoreView = () => setView(new URLSearchParams(location.search).get("view") === "record" ? "record" : "results");
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, []);
+  const changeView = (next: string) => {
+    if (next === view) return;
+    const url = new URL(location.href);
+    if (next === "record") url.searchParams.set("view", "record"); else url.searchParams.delete("view");
+    history.pushState({}, "", url);
+    setView(next);
+  };
+
+  useEffect(() => {
+    if (!active || !result || loading) return;
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      pageTitleRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, loading, result]);
 
   const rows = result?.items ?? [];
   const filtered = useMemo(() => rows.filter(row =>
@@ -136,22 +159,18 @@ export function BudgetResultsPage() {
     { key: "grade", label: "年级", source: "grade" }, { key: "subject", label: "科目", source: "subject" },
   ];
 
-  return <div className="result-app">
-    <a className="skip-link" href="#result-main">跳到预算结果</a>
-    <header className="result-topbar">
-      <a className="budget-brand" href={`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=results`}><span>智</span><strong>预算智解</strong></a>
-      <nav aria-label="结果页导航"><a className="is-current" href={`/budget/results?revision=${encodeURIComponent(revisionId)}`}>预算结果</a><a href={`/budget/publication?revision=${encodeURIComponent(revisionId)}`}>定版记录</a><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>版本审计</a></nav>
-      <span className="result-user">{identity?.userId ?? "读取中"}</span>
-    </header>
-    <main className="result-main" id="result-main">
+  return <section className="result-app budget-overview budget-overview--embedded" aria-label="第五步：预算概览">
+    <div className="result-main" id="result-main">
       {loading && <section className="result-state"><span className="result-loader" /><h1>正在汇总定版预算</h1><p>读取人数、收入和目标结果。</p></section>}
-      {error && <section className="result-state result-state--error"><h1>预算结果暂时无法读取</h1><p>{error}</p><a href={`/budget/publication?revision=${encodeURIComponent(revisionId)}`}>返回定版记录</a></section>}
-      {result && !loading && <>
+      {error && <section className="result-state result-state--error" role="alert"><h1>预算结果暂时无法读取</h1><p>{error}</p><a href={`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=home`}>返回年度预算</a></section>}
+      {result && !loading && !error && <>
+        <div className="overview-context"><span>任务 5 / 5</span><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>变化记录</a></div>
         <header className="result-hero">
-          <div><p>FY{String(result.fiscal_year).slice(-2)} · 学校版年度预算</p><h1>预算结果</h1><span>按当前定版数据查看各季度和业务维度的收入构成。</span></div>
-          <div className="result-version"><span>正式基线</span><strong>已定版</strong><small>R{revisionNo ?? "—"} · {result.record_count} 条收入明细</small></div>
+          <div><p>FY{String(result.fiscal_year).slice(-2)} · 学校版</p><h1 ref={pageTitleRef} tabIndex={-1}>预算概览</h1><span>预算已定版，查看结果或追溯定版记录。</span></div>
         </header>
-
+        <nav className="overview-tabs" aria-label="预算概览"><button aria-pressed={view === "results"} onClick={() => changeView("results")}>预算结果</button><button aria-pressed={view === "record"} onClick={() => changeView("record")}>定版记录</button></nav>
+        {view === "record" && identity && budgetContext && <section aria-label="定版记录"><PublishedBudgetRecord revisionId={revisionId} annualBudgetId={budgetContext.annualBudgetId} identity={identity} /></section>}
+        <div hidden={view !== "results"} aria-label="预算结果">
         <section className="result-filters" aria-label="预算结果筛选">
           {filterFields.map(field => <label key={field.key}><span>{field.label}</span><select value={filters[field.key]} onChange={event => setFilter(field.key, event.target.value)}><option value="">全部</option>{values(rows, field.source).map(value => <option key={value} value={value}>{field.key === "fiscalSeason" ? rows.find(row => String(row.fiscal_season) === value)?.quarter_name : value}</option>)}</select></label>)}
           {Object.values(filters).some(Boolean) && <button onClick={() => setFilters(emptyFilters)}>清空筛选</button>}
@@ -171,9 +190,10 @@ export function BudgetResultsPage() {
 
         <section className="result-breakdown">
           <header><div><p>02 / 维度汇总</p><h2>收入构成</h2></div><div className="dimension-tabs" role="tablist">{(Object.keys(dimensionLabels) as DimensionKey[]).map(key => <button role="tab" aria-selected={dimension === key} className={dimension === key ? "is-active" : ""} key={key} onClick={() => setDimension(key)}>按{dimensionLabels[key]}</button>)}</div><button className="result-export" onClick={() => downloadCsv(grouped, dimension, result.fiscal_year)}>导出当前汇总</button></header>
-          {grouped.length === 0 ? <div className="result-empty"><strong>当前筛选下没有结果</strong><span>请减少筛选条件后再查看。</span></div> : <div className="result-table-wrap"><table><thead><tr><th>{dimensionLabels[dimension]}</th><th>确认收入</th><th>收入占比</th><th>业务收入</th><th>原价收入</th><th>人次</th><th>综合折扣</th></tr></thead><tbody>{grouped.map(row => <tr key={row.name}><th>{row.name}</th><td>{money(row.revenue, true)}</td><td><span className="share-cell"><i><b style={{ transform: `scaleX(${totalRevenue ? row.revenue / totalRevenue : 0})` }} /></i>{percent(totalRevenue ? row.revenue / totalRevenue * 100 : 0)}</span></td><td>{money(row.businessRevenue, true)}</td><td>{money(row.listRevenue, true)}</td><td>{new Intl.NumberFormat("zh-CN").format(row.students)}</td><td>{percent(row.listRevenue ? row.businessRevenue / row.listRevenue * 100 : null)}</td></tr>)}</tbody><tfoot><tr><th>合计</th><td>{money(totalRevenue, true)}</td><td>100.0%</td><td>{money(businessRevenue, true)}</td><td>{money(listRevenue, true)}</td><td>{new Intl.NumberFormat("zh-CN").format(totalStudents)}</td><td>{percent(compositeDiscount)}</td></tr></tfoot></table></div>}
+          {grouped.length === 0 ? <div className="result-empty"><strong>当前筛选下没有结果</strong><span>请减少筛选条件后再查看。</span></div> : <><p className="result-table-hint">可横向滑动查看全部指标</p><div className="result-table-wrap" tabIndex={0} aria-label={`${dimensionLabels[dimension]}收入汇总表，可横向滚动`}><table><thead><tr><th>{dimensionLabels[dimension]}</th><th>确认收入</th><th>收入占比</th><th>业务收入</th><th>原价收入</th><th>人次</th><th>综合折扣</th></tr></thead><tbody>{grouped.map(row => <tr key={row.name}><th>{row.name}</th><td>{money(row.revenue, true)}</td><td><span className="share-cell"><i><b style={{ transform: `scaleX(${totalRevenue ? row.revenue / totalRevenue : 0})` }} /></i>{percent(totalRevenue ? row.revenue / totalRevenue * 100 : 0)}</span></td><td>{money(row.businessRevenue, true)}</td><td>{money(row.listRevenue, true)}</td><td>{new Intl.NumberFormat("zh-CN").format(row.students)}</td><td>{percent(row.listRevenue ? row.businessRevenue / row.listRevenue * 100 : null)}</td></tr>)}</tbody><tfoot><tr><th>合计</th><td>{money(totalRevenue, true)}</td><td>100.0%</td><td>{money(businessRevenue, true)}</td><td>{money(listRevenue, true)}</td><td>{new Intl.NumberFormat("zh-CN").format(totalStudents)}</td><td>{percent(compositeDiscount)}</td></tr></tfoot></table></div></>}
         </section>
+        </div>
       </>}
-    </main>
-  </div>;
+    </div>
+  </section>;
 }

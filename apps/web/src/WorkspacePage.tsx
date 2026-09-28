@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BusinessForm, ReadTable, meanings, type Schema, type Value } from "./BusinessForm";
-import { identityHeaders, newRequestId, parseResponse, fetchJob, type ApiIdentity } from "./api";
+import { identityHeaders, newRequestId, parseResponse, fetchJob, fetchRevision, fetchAuditEvents, type ApiIdentity } from "./api";
 import { RateTableEditor } from "./RateTableEditor";
+import { BudgetResultsPage } from "./BudgetResultsPage";
 
 type RecordValue = Record<string, Value>;
 type Section = { key: string; label: string; schema: Schema; value: Value; data: RecordValue; path: string; confirm: { path: string; body: RecordValue } | null };
@@ -15,6 +16,14 @@ const stages = [
   { key: "finance", no: "04", label: "资源与财务", sections: ["resources", "discount"] },
   { key: "calculate", no: "05", label: "计算与调平", sections: ["results"] },
   { key: "publish", no: "06", label: "确认与发布", sections: [] },
+] as const;
+
+const tasks = [
+  { key: "foundation", no: "1", label: "目标与范围", short: "目标", primary: "source", sections: ["source", "targets", "combinations"] },
+  { key: "entry", no: "2", label: "入口人数", short: "入口", primary: "entry-total", sections: ["entry-total", "campus-suggestions", "campus", "entry-scope", "entry-detail"] },
+  { key: "rates", no: "3", label: "招生参数", short: "参数", primary: "rates", sections: ["rates", "planned", "planned-unlock"] },
+  { key: "finance", no: "4", label: "资源与财务", short: "财务", primary: "resources", sections: ["resources", "discount"] },
+  { key: "review", no: "5", label: "审阅与发布", short: "发布", primary: "results", sections: ["results"] },
 ] as const;
 
 const sectionNames: Record<string, string> = {
@@ -41,7 +50,11 @@ const pageCopy: Record<string, { title: string; intro: string; primary?: string 
 
 const resultRoutes: Record<string, string> = { "入口分配": "entry-detail-set", "人数": "headcount-result", "班均": "class-size-result", "收入": "revenue-result", "目标差额": "target-closure-result" };
 
-function stageFor(section: string) { return stages.find(stage => stage.sections.some(key => key === section)) ?? stages[0]; }
+function taskFor(section: string) { return tasks.find(task => task.sections.some(key => key === section)) ?? tasks[0]; }
+function taskTarget(workspace: Workspace, task: typeof tasks[number], next: ReturnType<typeof nextStep> | null): string {
+  if (taskState(workspace, task.key) !== "done" && next?.section && task.sections.some(key => key === next.section)) return next.section;
+  return task.primary;
+}
 function sectionData(workspace: Workspace, key: string): RecordValue { return workspace.sections.find(section => section.key === key)?.data ?? {}; }
 const sectionPointers: Record<string, string> = {
   targets: "target_set_version_id", combinations: "combination_set_version_id", "entry-total": "entry_total_version_id",
@@ -138,6 +151,13 @@ function stageState(workspace: Workspace, stageKey: string): "done" | "active" |
   if (stageKey === "calculate") return workspace.manifest.target_closure_result_version_id ? "done" : "todo";
   return workspace.is_published ? "done" : "todo";
 }
+function taskState(workspace: Workspace, taskKey: string): "done" | "active" | "todo" {
+  if (taskKey === "review") {
+    if (workspace.is_published) return "done";
+    return workspace.manifest.target_closure_result_version_id ? "active" : "todo";
+  }
+  return stageState(workspace, taskKey);
+}
 function nextStep(workspace: Workspace): { section?: string; href?: string; label: string } {
   if (!hasSavedSection(workspace, "targets")) return { section: "targets", label: "填写收入目标" };
   if (!isConfirmed(workspace, "combinations")) return { section: "combinations", label: hasSavedSection(workspace, "combinations") ? "确认业务范围" : "填写业务范围" };
@@ -175,7 +195,7 @@ export function WorkspacePage() {
   const [identity, setIdentity] = useState<ApiIdentity | null>(null);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [selected, setSelected] = useState("source");
+  const [selected, setSelected] = useState("home");
   const [draft, setDraft] = useState<Value>({});
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -187,14 +207,43 @@ export function WorkspacePage() {
   const [confirmArmed, setConfirmArmed] = useState(false);
   const attempt = useRef<{ serialized: string; key: string } | null>(null);
   const sequence = useRef(0);
+  const pageTitleRef = useRef<HTMLHeadingElement>(null);
   const section = workspace?.sections.find(item => item.key === selected);
 
+  useEffect(() => {
+    if (!workspace?.is_published) return;
+    const restoreSection = () => {
+      const key = new URLSearchParams(location.search).get("section") ?? "results";
+      setSelected(key === "home" ? "results" : key);
+      setDraft(workspace.sections.find(item => item.key === key)?.value ?? {});
+    };
+    window.addEventListener("popstate", restoreSection);
+    return () => window.removeEventListener("popstate", restoreSection);
+  }, [workspace]);
+
   useEffect(() => { if (!dirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
+  useEffect(() => {
+    if (!workspace) return;
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      pageTitleRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected, workspace?.revision_id]);
   const request = async <T,>(path: string, who: ApiIdentity, body?: unknown, key?: string): Promise<T> => parseResponse(await fetch(`/api/v1${path}`, { method: body === undefined ? "GET" : "POST", headers: { ...identityHeaders(who), ...(body === undefined ? {} : { "Content-Type": "application/json", "Idempotency-Key": key ?? newRequestId(), "If-Match": `"${workspace?.revision_id ?? ""}"` }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
-  const load = async (revision: string, who: ApiIdentity, active = selected) => {
-    const seq = ++sequence.current; const data = await request<Workspace>(`/revisions/${encodeURIComponent(revision)}/workspace`, who); if (seq !== sequence.current) return;
-    setWorkspace(data); setDraft(data.sections.find(item => item.key === active)?.value ?? {}); setDirty(false); setResult(null); setConfirmArmed(false);
-    localStorage.setItem("budget.activeRevision", revision); history.replaceState({}, "", `/budget/workspace?revision=${encodeURIComponent(revision)}&section=${encodeURIComponent(active)}`);
+  const load = async (revision: string, who: ApiIdentity, active = selected): Promise<Workspace | null> => {
+    const seq = ++sequence.current; const data = await request<Workspace>(`/revisions/${encodeURIComponent(revision)}/workspace`, who); if (seq !== sequence.current) return null;
+    if (!data.is_published && data.manifest.formal_confirmation_id) {
+      const detail = await fetchRevision(revision, who);
+      data.is_published = (await fetchAuditEvents(detail.annual_budget_id, { revisionId: revision, eventType: "PUBLISHED" }, who)).items.length > 0;
+      if (seq !== sequence.current) return null;
+    }
+    if (data.is_published && active === "home") active = "results";
+    setWorkspace(data); setSelected(active); setDraft(data.sections.find(item => item.key === active)?.value ?? {}); setDirty(false); setResult(null); setConfirmArmed(false);
+    localStorage.setItem("budget.activeRevision", revision);
+    const url = new URL(location.href); url.pathname = "/budget/workspace"; url.searchParams.set("revision", revision); url.searchParams.set("section", active);
+    history.replaceState({}, "", url);
+    return data;
   };
   useEffect(() => {
     let stopped = false;
@@ -202,16 +251,17 @@ export function WorkspacePage() {
       const who = await parseResponse<ApiIdentity>(await fetch("/api/v1/local-trial/session")); if (stopped) return;
       setIdentity(who); localStorage.setItem("budget.userId", who.userId); localStorage.setItem("budget.departmentId", who.departmentId);
       const list = await request<Budget[]>("/workspace/budgets", who); if (stopped) return; setBudgets(list);
-      const params = new URLSearchParams(location.search); const active = params.get("section") ?? "source";
-      const allowed = ["source", ...stages.flatMap(stage => [...stage.sections])]; const safeActive = allowed.includes(active) ? active : "source"; setSelected(safeActive);
+      const params = new URLSearchParams(location.search); const active = params.get("section") ?? "home";
+      const allowed = ["home", "source", ...stages.flatMap(stage => [...stage.sections])]; const safeActive = allowed.includes(active) ? active : "home"; setSelected(safeActive);
       const id = params.get("revision") ?? list[0]?.draft_revision_id; if (id) await load(id, who, safeActive);
     } catch (nextError) { if (!stopped) setError(nextError instanceof Error ? nextError.message : String(nextError)); } finally { if (!stopped) setBusy(false); } })();
     return () => { stopped = true; sequence.current += 1; };
   }, []);
   const changeSection = (key: string) => {
     if (dirty && !window.confirm("当前修改尚未保存。离开后将放弃这些修改，是否继续？")) return;
+    if (workspace?.is_published && key === "home") key = "results";
     setSelected(key); setDraft(workspace?.sections.find(item => item.key === key)?.value ?? {}); setDirty(false); setError(""); setNotice(""); setResult(null); setConfirmArmed(false);
-    if (workspace) history.replaceState({}, "", `/budget/workspace?revision=${workspace.revision_id}&section=${key}`);
+    if (workspace) { const url = new URL(location.href); url.searchParams.set("revision", workspace.revision_id); url.searchParams.set("section", key); history.replaceState({}, "", url); }
   };
   const execute = async (path: string, body: unknown, prepare = false, success = "已保存。") => {
     if (!identity || !workspace) return; setBusy(true); setError(""); setNotice(""); setJobStatus("");
@@ -229,7 +279,21 @@ export function WorkspacePage() {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      await load(String(id), identity); setBudgets(await request<Budget[]>("/workspace/budgets", identity)); setNotice(response.job_id ? "预算计算已完成，请检查结果和目标差额。" : success);
+      const loaded = await load(String(id), identity, selected);
+      if (loaded) {
+        const following = nextStep(loaded);
+        if (following.section && following.section !== selected) {
+          const staysInTask = taskFor(following.section).key === taskFor(selected).key;
+          const destination = staysInTask ? following.section : "home";
+          setSelected(destination); setDraft(loaded.sections.find(item => item.key === destination)?.value ?? {});
+          history.replaceState({}, "", `/budget/workspace?revision=${encodeURIComponent(loaded.revision_id)}&section=${encodeURIComponent(destination)}`);
+          if (!staysInTask) success = `${success} 下一步：${following.label}。`;
+        } else if (response.job_id && following.href) {
+          location.assign(following.href);
+          return;
+        }
+      }
+      setBudgets(await request<Budget[]>("/workspace/budgets", identity)); setNotice(response.job_id ? "预算计算已完成，请检查结果和目标差额。" : success);
     } catch (nextError) { setError(nextError instanceof Error ? nextError.message : String(nextError)); } finally { setBusy(false); }
   };
   const queryJob = async () => {
@@ -245,36 +309,49 @@ export function WorkspacePage() {
   }
   const activeBudget = budgets.find(budget => budget.fiscal_year === workspace?.fiscal_year); const latest = activeBudget?.draft_revision_id;
   const sourceRows = workspace?.source.components as RecordValue[] | undefined;
-  const activeStage = stageFor(selected); const next = workspace ? nextStep(workspace) : null; const help = errorHelp(error); const copy = pageCopy[selected];
+  const next = workspace ? nextStep(workspace) : null; const help = errorHelp(error); const copy = pageCopy[selected];
+  const activeTask = taskFor(selected === "home" ? next?.section ?? "results" : selected);
+  const completedTasks = workspace ? tasks.filter(task => taskState(workspace, task.key) === "done").length : 0;
   const isReadOnly = Boolean(busy || !workspace?.is_current_draft || workspace?.is_published); const confirmed = section && workspace ? isConfirmed(workspace, selected) : false;
   const blocker = workspace ? sectionBlocker(workspace, selected) : null;
   const confirmIssues = workspace ? confirmationIssues(workspace, selected) : [];
   const inputIssues = selected === "resources" ? resourceDraftIssues(draft) : [];
+  const repeatableAction = ["campus-suggestions", "entry-detail", "planned-unlock"].includes(selected);
+  const noChangesToSave = Boolean(section && hasSavedSection(workspace!, selected) && !dirty && !repeatableAction);
   const sourceSummary = useMemo(() => sourceRows?.map(row => ({ name: String(row.dataset_name ?? "数据来源"), date: formatDateTime(row.extracted_at ?? row.cutoff_at), rows: row.row_count })) ?? [], [sourceRows]);
 
-  return <div className="budget-shell"><a className="skip-link" href="#workspace-content">跳到主要内容</a>
-    <header className="budget-topbar"><a className="budget-brand" href="/"><span>智</span><strong>预算智解</strong></a><div className="budget-mode">本机完整流程试用</div><nav aria-label="辅助导航"><a href={workspace ? `/budget/opening?revision=${workspace.revision_id}` : "/budget/opening"}>期初老生</a><a href={workspace ? `/budget/audit?revision=${workspace.revision_id}` : "/budget/audit"}>版本记录</a></nav><span className="budget-local">合成数据 · 仅本机访问</span></header>
-    <main className="budget-workspace" id="workspace-content">
-      <section className="workspace-hero"><div><p className="workspace-eyebrow">FY{String(workspace?.fiscal_year ?? "—").slice(-2)} · 学校版预算</p><h1>年度预算工作区</h1><p>按业务顺序完成预算。系统会保留每次修改和确认记录。</p></div><label className="budget-selector"><span>年度预算</span><select disabled={busy} value={workspace?.fiscal_year ?? ""} onChange={event => { if (dirty && !window.confirm("放弃尚未保存的修改？")) return; const budget = budgets.find(item => item.fiscal_year === Number(event.target.value)); if (budget?.draft_revision_id && identity) { setBusy(true); void load(budget.draft_revision_id, identity).catch(nextError => setError(String(nextError))).finally(() => setBusy(false)); } }}><option value="">请选择</option>{budgets.map(budget => <option value={budget.fiscal_year} key={budget.annual_budget_id}>FY{String(budget.fiscal_year).slice(-2)} 学校版预算</option>)}</select></label></section>
-      {workspace && <section className="workspace-statusbar" aria-label="当前预算状态"><div><span className={`status-dot ${workspace.is_published ? "is-published" : ""}`} /><strong>{workspace.is_published ? "已发布" : workspace.is_current_draft ? "编辑中" : "历史版本"}</strong><small>版本 R{workspace.revision_no}</small></div><div className="workspace-status-actions">{latest && latest !== workspace.revision_id && <button disabled={busy} onClick={() => identity && void load(latest, identity)}>返回最新草稿</button>}<button disabled={busy || !workspace.is_current_draft || dirty} onClick={() => void execute(":derive", { reason: "从当前版本创建试算版本" }, false, "试算版本已创建。")}>创建试算版本</button></div></section>}
-      {workspace && <nav className="stage-rail" aria-label="预算流程阶段">{stages.map(stage => { const state = stageState(workspace, stage.key); const active = activeStage.key === stage.key; const content = <><span className="stage-number">{state === "done" ? "✓" : stage.no}</span><span><strong>{stage.label}</strong><small>{active ? "当前阶段" : state === "done" ? "已完成" : "待处理"}</small></span></>; return stage.key === "publish" ? <a key={stage.key} className={`stage-item is-${state}`} href={`/budget/publication?revision=${workspace.revision_id}`}>{content}</a> : <button key={stage.key} className={`stage-item is-${state} ${active ? "is-active" : ""}`} onClick={() => changeSection(stage.sections[0])}>{content}</button>; })}</nav>}
-      {workspace && next && <section className="next-action"><div><span>建议下一步</span><strong>{next.label}</strong></div>{next.href ? <a className="button button--primary" href={next.href}>继续</a> : <button className="button button--primary" onClick={() => next.section && changeSection(next.section)}>前往处理</button>}</section>}
-      {error && <div className="action-error" role="alert"><div><strong>当前操作未完成</strong><span>{help.text}</span><details><summary>查看技术信息</summary><code>{error}</code></details></div>{help.section && <button onClick={() => changeSection(help.section!)}>去处理</button>}<button className="action-error-close" aria-label="关闭提示" onClick={() => setError("")}>×</button></div>}
-      {notice && <div className="action-notice" role="status"><span>✓</span>{notice}<button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
-      {!workspace && !busy && <section className="workspace-empty"><h2>尚未读取到预算</h2><p>请使用项目中的“启动本机试用”重新启动本地服务。</p></section>}
-      {workspace && <div className={`stage-layout ${selected === "rates" ? "stage-layout--wide" : ""}`}><aside className="stage-menu"><p>{activeStage.no} / {activeStage.label}</p><nav aria-label={`${activeStage.label}内的步骤`}>{activeStage.sections.map(key => <button key={key} disabled={busy} className={selected === key ? "is-active" : ""} onClick={() => changeSection(key)}><span>{sectionNames[key] ?? key}</span>{key !== "source" && isSectionComplete(workspace, key) && <i aria-label="已完成">✓</i>}</button>)}</nav>{activeStage.key === "calculate" && <a href={`/budget/rebalancing?revision=${workspace.revision_id}`}>查看自动调平方案 <span>↗</span></a>}</aside>
-        <section className="stage-content" aria-busy={busy}>
-          {selected === "source" && <><header className="content-heading"><div><span className="content-kicker">来源与范围 · 第一步</span><h2>数据来源</h2><p>确认本次预算使用的数据范围和快照日期。</p></div><span className="content-status is-done">已冻结</span></header><div className="source-overview"><div><span>快照状态</span><strong>{meanings[String(workspace.source.status)] ?? "已冻结"}</strong></div><div><span>快照日期</span><strong>{formatDateTime(workspace.source.cutoff_at)}</strong></div><div><span>冻结时间</span><strong>{formatDateTime(workspace.source.frozen_at)}</strong></div></div><section className="source-list"><h3>本次使用的数据</h3>{sourceSummary.map((item, index) => <article key={`${item.name}-${index}`}><div><strong>{item.name}</strong><span>快照 {item.date}</span></div>{item.rows !== undefined && <em>{String(item.rows)} 条</em>}</article>)}</section><details className="rules-drawer"><summary>查看来源详情与口径</summary><div className="rules-drawer-body"><ReadTable rows={sourceRows ?? []} /><h3>来源核对</h3><ReadTable rows={(workspace.source.reconciliations as RecordValue[]) ?? []} /><p>期初老生使用上一财年春季普通招生人次；新生占比使用三分之二出勤口径作分母。</p></div></details></>}
-          {section && <><header className="content-heading"><div><span className="content-kicker">{activeStage.label}</span><h2>{copy?.title ?? sectionNames[selected] ?? section.label}</h2><p>{copy?.intro ?? "核对当前数据并完成本步骤。"}</p></div><span className={`content-status ${confirmed ? "is-done" : dirty ? "is-editing" : hasSavedSection(workspace, selected) ? "is-saved" : ""}`}>{sectionStatus(workspace, section, dirty, confirmed)}</span></header><fieldset disabled={isReadOnly} className="business-fieldset">
+  return <div className="budget-shell decision-shell"><a className="skip-link" href="#workspace-content">跳到主要内容</a>
+    <header className="decision-topbar">
+      <button className="decision-brand" onClick={() => changeSection("home")}><span aria-hidden="true">智</span><strong>预算智解</strong></button>
+      <label className="decision-budget-select"><span className="sr-only">年度预算</span><select disabled={busy} value={workspace?.fiscal_year ?? ""} onChange={event => { if (dirty && !window.confirm("放弃尚未保存的修改？")) return; const budget = budgets.find(item => item.fiscal_year === Number(event.target.value)); if (budget?.draft_revision_id && identity) { setBusy(true); void load(budget.draft_revision_id, identity, "home").catch(nextError => setError(String(nextError))).finally(() => setBusy(false)); } }}><option value="">选择预算</option>{budgets.map(budget => <option value={budget.fiscal_year} key={budget.annual_budget_id}>FY{String(budget.fiscal_year).slice(-2)} 学校版</option>)}</select></label>
+      {workspace && <div className="decision-version"><span className={`status-dot ${workspace.is_published ? "is-published" : ""}`} /><span>{workspace.is_published ? "已定版" : "编辑中"}</span><small>R{workspace.revision_no}</small></div>}
+    </header>
+    <main className="decision-workspace" id="workspace-content">
+      {workspace && <nav className="decision-progress" aria-label="预算任务进度">{tasks.map(task => { const state = taskState(workspace, task.key); const active = activeTask.key === task.key && selected !== "home"; const target = taskTarget(workspace, task, next); const taskLabel = workspace.is_published && task.key === "review" ? "预算概览" : task.label; const stateLabel = state === "done" ? "已完成" : active ? "正在处理" : "待处理"; return <button key={task.key} className={`is-${state} ${active ? "is-active" : ""}`} aria-current={active ? "step" : undefined} aria-label={`任务 ${task.no}：${taskLabel}，${stateLabel}`} onClick={() => changeSection(target)}><span>{task.no}</span><strong>{taskLabel}</strong><em className="decision-progress-short">{workspace.is_published && task.key === "review" ? "概览" : task.short}</em><small>{state === "done" ? "完成" : active ? "正在处理" : ""}</small></button>; })}</nav>}
+      {error && <div className="decision-question" role="alert"><div><strong>还差一步</strong><p>{help.text}</p><details><summary>技术信息</summary><code>{error}</code></details></div>{help.section && <button onClick={() => changeSection(help.section!)}>去处理</button>}<button className="decision-dismiss" aria-label="关闭提示" onClick={() => setError("")}>关闭</button></div>}
+      {notice && <div className="decision-notice" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
+      {!workspace && !busy && <section className="workspace-empty"><h2>暂时无法读取预算</h2><p>请重新启动本机试用服务。</p></section>}
+      {workspace && selected === "home" && <section className="decision-home">
+        <div className="decision-home__copy"><p className="decision-kicker">FY{String(workspace.fiscal_year).slice(-2)} 学校版 · {completedTasks}/5</p><h1 ref={pageTitleRef} tabIndex={-1}>{workspace.is_published ? "预算已定版" : "预算已经准备好"}</h1><p>{workspace.is_published ? "可以查看最终结果，所有修改和确认记录都已保留。" : <>现在只需要完成：<strong>{next?.label}</strong></>}</p>{workspace.is_published ? <a className="decision-primary" href={`/budget/results?revision=${encodeURIComponent(workspace.revision_id)}`}>查看预算概览</a> : next?.href ? <a className="decision-primary" href={next.href}>继续</a> : <button className="decision-primary" onClick={() => next?.section && changeSection(next.section)}>继续</button>}</div>
+        <div className="decision-home__status"><span>当前任务</span><strong>{activeTask.label}</strong><p>{workspace.is_published ? "流程已完成" : `第 ${activeTask.no} 项，共 5 项`}</p></div>
+      </section>}
+      {workspace?.is_published && <div hidden={selected !== "results"}><BudgetResultsPage key={workspace.revision_id} revisionId={workspace.revision_id} active={selected === "results"} /></div>}
+      {workspace && selected !== "home" && !(workspace.is_published && selected === "results") && <section className="decision-focus">
+        <header className="decision-focus__bar"><button onClick={() => changeSection("home")}>返回</button><div><span>任务 {activeTask.no} / 5</span><strong>{activeTask.label}</strong></div></header>
+        <section className={`stage-content decision-content ${selected === "rates" ? "decision-content--wide" : ""}`} aria-busy={busy}>
+          {selected === "source" && <><header className="content-heading"><div><span className="content-kicker">来源与范围 · 第一步</span><h2 ref={pageTitleRef} tabIndex={-1}>数据来源</h2><p>确认本次预算使用的数据范围和快照日期。</p></div><span className="content-status is-done">已冻结</span></header><div className="source-overview"><div><span>快照状态</span><strong>{meanings[String(workspace.source.status)] ?? "已冻结"}</strong></div><div><span>快照日期</span><strong>{formatDateTime(workspace.source.cutoff_at)}</strong></div><div><span>冻结时间</span><strong>{formatDateTime(workspace.source.frozen_at)}</strong></div></div><section className="source-list"><h3>本次使用的数据</h3>{sourceSummary.map((item, index) => <article key={`${item.name}-${index}`}><div><strong>{item.name}</strong><span>快照 {item.date}</span></div>{item.rows !== undefined && <em>{String(item.rows)} 条</em>}</article>)}</section><details className="rules-drawer"><summary>查看来源详情与口径</summary><div className="rules-drawer-body"><ReadTable rows={sourceRows ?? []} /><h3>来源核对</h3><ReadTable rows={(workspace.source.reconciliations as RecordValue[]) ?? []} /><p>期初老生使用上一财年春季普通招生人次；新生占比使用三分之二出勤口径作分母。</p></div></details></>}
+          {section && <><header className="content-heading"><div><span className="content-kicker">只处理这一项</span><h2 ref={pageTitleRef} tabIndex={-1}>{copy?.title ?? sectionNames[selected] ?? section.label}</h2><p>{copy?.intro ?? "核对当前数据并完成本步骤。"}</p></div><span className={`content-status ${confirmed ? "is-done" : dirty ? "is-editing" : hasSavedSection(workspace, selected) ? "is-saved" : ""}`}>{sectionStatus(workspace, section, dirty, confirmed)}</span></header><fieldset disabled={isReadOnly} className="business-fieldset">
             {selected === "rates" ? <RateTableEditor value={draft} referenceRows={Array.isArray(section.data.items) ? section.data.items as RecordValue[] : []} disabled={isReadOnly} dirty={dirty} onChange={nextDraft => { setDraft(nextDraft); setDirty(true); }} onAction={(mode, keys, reason) => { const actionSection = workspace.sections.find(item => item.key === (mode === "lock" ? "rate-lock" : "rate-unlock")); if (actionSection) void execute(actionSection.path, { items: keys.map(key => ({ rate_parameter_stable_key: key, reason })) }, false, mode === "lock" ? "选中比例已锁定。" : "选中比例已解锁。"); }} /> : <BusinessForm key={`${workspace.revision_id}:${selected}`} schema={section.schema} value={draft} choices={choices} fixedArrays={selected === "resources"} readOnlyKeys={selected === "resources" ? ["fiscal_season", "track", "product", "grade", "subject", "campus"] : []} onChange={nextDraft => { setDraft(nextDraft); setDirty(true); }} />}
             {blocker && <div className="prerequisite-note" role="status"><span>{blocker.text}</span><button type="button" onClick={() => changeSection(blocker.section)}>去确认</button></div>}
             {confirmIssues.length > 0 && <div className="confirmation-blockers" role="status"><strong>保存成功，但确认前还要补齐：</strong><ul>{confirmIssues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
             {inputIssues.length > 0 && <div className="confirmation-blockers" role="status"><strong>保存前还要完成：</strong><ul>{inputIssues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-            <div className="primary-actions"><button className="button button--primary" disabled={Boolean(blocker) || inputIssues.length > 0} title={inputIssues.length > 0 ? "请先补齐页面列出的必填内容" : undefined} onClick={() => void execute(section.path, draft, ["targets", "resources", "discount"].includes(selected), `${copy?.title ?? section.label}已保存。`)}>{busy ? "正在处理…" : copy?.primary ?? "保存"}</button>{section.confirm && !confirmed && <button className="button" disabled={dirty || confirmIssues.length > 0 || inputIssues.length > 0} title={confirmIssues.length > 0 || inputIssues.length > 0 ? "请先补齐页面列出的确认条件" : undefined} onClick={() => setConfirmArmed(true)}>确认并继续</button>}</div></fieldset>
+            <div className="primary-actions"><button className={`button ${dirty || !hasSavedSection(workspace, selected) || !section.confirm ? "button--primary" : ""}`} disabled={Boolean(blocker) || inputIssues.length > 0 || noChangesToSave} title={noChangesToSave ? "内容没有变化，无需重复保存" : inputIssues.length > 0 ? "请先补齐页面列出的必填内容" : undefined} onClick={() => void execute(section.path, draft, ["targets", "resources", "discount"].includes(selected), `${copy?.title ?? section.label}已保存。`)}>{busy ? "正在处理…" : noChangesToSave ? "已保存" : copy?.primary ?? "保存"}</button>{section.confirm && !confirmed && <button className={`button ${hasSavedSection(workspace, selected) && !dirty ? "button--primary" : ""}`} disabled={dirty || confirmIssues.length > 0 || inputIssues.length > 0} title={confirmIssues.length > 0 || inputIssues.length > 0 ? "请先补齐页面列出的确认条件" : undefined} onClick={() => setConfirmArmed(true)}>确认并继续</button>}</div></fieldset>
             {confirmArmed && section.confirm && <section className="confirmation-strip" role="group" aria-label="确认当前步骤"><div><strong>确认当前全部{copy?.title ?? section.label}？</strong><span>确认后仍可修改，但相关下游结果需要重新计算。</span></div><button className="button button--primary" onClick={() => { setConfirmArmed(false); void execute(section.confirm!.path, section.confirm!.body, false, `${copy?.title ?? section.label}已确认。`); }}>确认</button><button className="button" onClick={() => setConfirmArmed(false)}>取消</button></section>}
             {dirty && <p className="unsaved-note" role="status">修改尚未保存。保存失败时，当前输入会保留。</p>}{Array.isArray(section.data.items) && selected !== "rates" && <details className="rules-drawer"><summary>查看已保存数据</summary><div className="rules-drawer-body"><ReadTable rows={section.data.items as RecordValue[]} /></div></details>}</>}
-          {selected === "results" && <><header className="content-heading"><div><span className="content-kicker">计算与调平</span><h2>计算结果</h2><p>依次计算人数、班均、收入和目标差额，不会自动补人或放宽容差。</p></div><span className={`content-status ${workspace.manifest.target_closure_result_version_id ? "is-done" : ""}`}>{workspace.manifest.target_closure_result_version_id ? "已有结果" : "待计算"}</span></header><div className="calculation-callout"><div><strong>执行完整预算计算</strong><span>将使用当前已确认参数生成一套新的计算结果。</span></div><button className="button button--primary" disabled={isReadOnly} onClick={() => void execute(":calculate", {}, false, "预算计算已完成。")}>开始计算</button><button className="button" disabled={busy} onClick={() => void queryJob()}>查询计算进度</button></div>{jobStatus && <p role="status">当前状态：{jobStatus}</p>}<div className="result-tabs">{Object.entries(resultRoutes).map(([label, prefix]) => { const id = workspace.manifest[`${prefix.replaceAll("-", "_")}_version_id`]; return <button disabled={!id || busy} key={prefix} className={resultTitle === label ? "is-active" : ""} onClick={() => { if (!identity) return; setBusy(true); setError(""); void request<RecordValue>(`/${prefix}-versions/${id}`, identity).then(data => { setResult(data); setResultTitle(label); }).catch(nextError => setError(String(nextError))).finally(() => setBusy(false)); }}>{label}{!id && <small>待计算</small>}</button>; })}</div>{result && <section className="result-panel"><h3>{resultTitle}</h3><ReadTable rows={(result.items as RecordValue[]) ?? []} /></section>}</>}
-        </section></div>}
+          {selected === "results" && <><header className="content-heading"><div><span className="content-kicker">审阅与发布</span><h2 ref={pageTitleRef} tabIndex={-1}>计算结果</h2><p>依次计算人数、班均、收入和目标差额，不会自动补人或放宽容差。</p></div><span className={`content-status ${workspace.manifest.target_closure_result_version_id ? "is-done" : ""}`}>{workspace.is_published ? "已定版" : workspace.manifest.target_closure_result_version_id ? "已有结果" : "待计算"}</span></header>{<div className="calculation-callout"><div><strong>执行完整预算计算</strong><span>将使用当前已确认参数生成一套新的计算结果。</span></div><button className="button button--primary" disabled={isReadOnly} onClick={() => void execute(":calculate", {}, false, "预算计算已完成。")}>开始计算</button><button className="button" disabled={busy} onClick={() => void queryJob()}>查询计算进度</button>{workspace.manifest.target_closure_result_version_id && <a className="button" href={`/budget/rebalancing?revision=${encodeURIComponent(workspace.revision_id)}`}>查看缺口与调平方案</a>}</div>}{jobStatus && <p role="status">当前状态：{jobStatus}</p>}<div className="result-tabs">{Object.entries(resultRoutes).map(([label, prefix]) => { const id = workspace.manifest[`${prefix.replaceAll("-", "_")}_version_id`]; return <button disabled={!id || busy} key={prefix} className={resultTitle === label ? "is-active" : ""} onClick={() => { if (!identity) return; setBusy(true); setError(""); void request<RecordValue>(`/${prefix}-versions/${id}`, identity).then(data => { setResult(data); setResultTitle(label); }).catch(nextError => setError(String(nextError))).finally(() => setBusy(false)); }}>{label}{!id && <small>待计算</small>}</button>; })}</div>{result && <section className="result-panel"><h3>{resultTitle}</h3><ReadTable rows={(result.items as RecordValue[]) ?? []} /></section>}</>}
+        </section>
+        <details className="decision-advanced"><summary>高级维护</summary><div><p>仅在需要回看来源、修正历史步骤或查看版本时使用。</p>{tasks.map(task => <section key={task.key}><strong>{task.no}. {task.label}</strong><nav>{task.sections.map(key => <button key={key} className={selected === key ? "is-current" : ""} onClick={() => changeSection(key)}>{sectionNames[key] ?? key}{key !== "source" && isSectionComplete(workspace, key) ? " · 已完成" : ""}</button>)}</nav></section>)}<div className="decision-advanced__links"><a href={`/budget/opening?revision=${workspace.revision_id}`}>期初老生</a><a href={`/budget/audit?revision=${workspace.revision_id}`}>版本记录</a><a href={`/budget/rebalancing?revision=${workspace.revision_id}`}>自动调平</a>{latest && latest !== workspace.revision_id && <button disabled={busy} onClick={() => identity && void load(latest, identity, "home")}>返回最新草稿</button>}<button disabled={busy || !workspace.is_current_draft || dirty} onClick={() => void execute(":derive", { reason: "从当前版本创建试算版本" }, false, "试算版本已创建。")}>创建试算版本</button></div></div></details>
+      </section>}
       {busy && <div className="working-bar" role="status"><span />正在处理，请勿重复提交 {jobStatus && `· ${jobStatus}`}</div>}
     </main>
   </div>;

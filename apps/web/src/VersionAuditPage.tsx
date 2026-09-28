@@ -23,6 +23,7 @@ import {
   type RevisionDiff,
   type RevisionResponse,
 } from "./api";
+import { BudgetContextHeader } from "./BudgetContextHeader";
 
 const OWNER_ROLE = "DEPARTMENT_BUDGET_OWNER";
 
@@ -42,7 +43,23 @@ const COMMAND_LABELS: Record<string, string> = {
   CHANGE_AND_LOCK_RATE_PARAMETERS: "修改并锁定比例",
   APPLY_REBALANCING_SCENARIO: "应用调平方案",
   FINALIZE_FORMAL_PLAN_CONFIRMATION: "正式方案确认",
+  CALCULATE_HEADCOUNT_RESULT: "计算预算人数",
+  CALCULATE_CLASS_SIZE_RESULT: "核对班均",
+  CALCULATE_REVENUE_RESULT: "计算预算收入",
+  VALIDATE_TARGET_CLOSURE: "核对收入目标",
+  VALIDATE_CLASS_SIZE_RESULT: "核对班均",
 };
+
+function commandLabel(command: string): string {
+  return COMMAND_LABELS[command] ?? (command.startsWith("CALCULATE_") || command.startsWith("VALIDATE_") ? "系统计算" : "预算内容更新");
+}
+
+function isMilestoneRevision(revision: RevisionResponse, selectedId: string, publishedIds: Set<string>): boolean {
+  return revision.budget_revision_id === selectedId
+    || publishedIds.has(revision.budget_revision_id)
+    || typeof revision.component_manifest.formal_confirmation_id === "string"
+    || !/^(CALCULATE_|VALIDATE_)/.test(revision.command_type);
+}
 
 const EVENT_LABELS: Record<string, string> = {
   ANNUAL_BUDGET_CREATED: "建立年度预算",
@@ -240,7 +257,7 @@ function revisionStatus(
   publishedIds: Set<string>,
 ): { label: string; tone: string }[] {
   const statuses = [];
-  if (budget.current_draft_revision_id === revision.budget_revision_id) {
+  if (budget.current_draft_revision_id === revision.budget_revision_id && budget.current_published_revision_id !== revision.budget_revision_id) {
     statuses.push({ label: "当前草稿", tone: "draft" });
   }
   if (budget.current_published_revision_id === revision.budget_revision_id) {
@@ -254,43 +271,6 @@ function revisionStatus(
   return statuses.length ? statuses : [{ label: "历史草稿", tone: "historic" }];
 }
 
-function ConnectionPanel({
-  revisionId,
-  setRevisionId,
-  identity,
-  setIdentity,
-  loading,
-  connect,
-}: {
-  revisionId: string;
-  setRevisionId: (value: string) => void;
-  identity: ApiIdentity;
-  setIdentity: (value: ApiIdentity) => void;
-  loading: boolean;
-  connect: () => void;
-}) {
-  return (
-    <main className="audit-connect">
-      <section className="audit-connect__title">
-        <span className="archive-mark">档</span>
-        <p>年度预算 · 版本证据库</p>
-        <h1>每一次变化，<br />都有来处。</h1>
-        <div className="archive-lines" aria-hidden="true"><i /><i /><i /><i /></div>
-      </section>
-      <section className="audit-connect__form" aria-labelledby="audit-connect-title">
-        <p>P12</p>
-        <h2 id="audit-connect-title">打开版本卷宗</h2>
-        <label><span>预算修订 ID</span><input value={revisionId} onChange={(event) => setRevisionId(event.target.value.trim())} placeholder="粘贴 budget_revision_id" /></label>
-        <label><span>部门 ID</span><input value={identity.departmentId} onChange={(event) => setIdentity({ ...identity, departmentId: event.target.value })} placeholder="zhihui-learning" /></label>
-        <label><span>当前用户</span><input value={identity.userId} onChange={(event) => setIdentity({ ...identity, userId: event.target.value })} placeholder="budget-owner" /></label>
-        <button className="button button--primary button--wide" onClick={connect} disabled={loading || !revisionId || !identity.departmentId || !identity.userId}>
-          {loading ? "正在调取卷宗…" : "读取版本与审计"}
-        </button>
-      </section>
-    </main>
-  );
-}
-
 function ComponentDiffRow({
   item,
   selected,
@@ -302,24 +282,14 @@ function ComponentDiffRow({
 }) {
   const drillable = DETAIL_COMPONENTS.has(item.component_key);
   return (
-    <button
-      type="button"
-      className={`component-diff component-diff--${item.change_type.toLowerCase()}${selected ? " is-detail-selected" : ""}`}
-      onClick={() => onInspect(item.component_key)}
-      disabled={!drillable}
-      title={drillable ? "查看逐行变化证据" : "该组件暂未接入逐行比较"}
-    >
-      <span className="component-diff__type">{CHANGE_LABELS[item.change_type]}</span>
-      <div className="component-diff__name">
-        <strong>{COMPONENT_LABELS[item.component_key] ?? item.component_key}</strong>
-        <code>{drillable ? "可查看逐行证据" : item.component_key}</code>
+    <article className={`component-diff component-diff--${item.change_type.toLowerCase()}${selected ? " is-detail-selected" : ""}`}>
+      <div className="component-diff__summary">
+        <span className="component-diff__type">{CHANGE_LABELS[item.change_type]}</span>
+        <strong className="component-diff__name">{COMPONENT_LABELS[item.component_key] ?? "预算组件"}</strong>
+        {drillable && <button type="button" onClick={() => onInspect(item.component_key)}>查看逐行变化</button>}
       </div>
-      <div className="component-diff__value">
-        <span title={valueText(item.against_value)}>{shortId(item.against_value)}</span>
-        <i aria-hidden="true">›</i>
-        <strong title={valueText(item.revision_value)}>{shortId(item.revision_value)}</strong>
-      </div>
-    </button>
+      <details className="component-diff__technical"><summary>查看版本依据</summary><dl><div><dt>组件</dt><dd>{item.component_key}</dd></div><div><dt>比较版本</dt><dd>{valueText(item.against_value)}</dd></div><div><dt>当前版本</dt><dd>{valueText(item.revision_value)}</dd></div></dl></details>
+    </article>
   );
 }
 
@@ -385,10 +355,10 @@ function AuditEventRow({ event, revisionNo }: { event: AuditEvent; revisionNo?: 
       <div className="audit-event__dot" aria-hidden="true" />
       <div className="audit-event__body">
         <div className="audit-event__heading">
-          <h3>{EVENT_LABELS[event.event_type] ?? event.event_type}</h3>
+          <h3>{EVENT_LABELS[event.event_type] ?? "预算记录更新"}</h3>
           {revisionNo && <span>R{revisionNo}</span>}
         </div>
-        <p className="audit-event__actor">{event.actor_id} · {ROLE_LABELS[event.acting_role] ?? event.acting_role} · {event.object_type}</p>
+        <p className="audit-event__actor">{event.actor_id} · {ROLE_LABELS[event.acting_role] ?? event.acting_role}</p>
         {event.reason && <blockquote>{event.reason}</blockquote>}
         <details>
           <summary>查看审计证据</summary>
@@ -398,6 +368,8 @@ function AuditEventRow({ event, revisionNo }: { event: AuditEvent; revisionNo?: 
             ))}
             <div><dt>request_id</dt><dd>{event.request_id}</dd></div>
             <div><dt>event_id</dt><dd>{event.event_id}</dd></div>
+            <div><dt>操作类型</dt><dd>{event.event_type}</dd></div>
+            <div><dt>对象类型</dt><dd>{event.object_type}</dd></div>
           </dl>
         </details>
       </div>
@@ -406,8 +378,8 @@ function AuditEventRow({ event, revisionNo }: { event: AuditEvent; revisionNo?: 
 }
 
 export function VersionAuditPage() {
-  const [revisionInput, setRevisionInput] = useState(() => queryValue("revision"));
-  const [identity, setIdentity] = useState<ApiIdentity>(() => ({
+  const [revisionInput] = useState(() => queryValue("revision"));
+  const [identity] = useState<ApiIdentity>(() => ({
     userId: storedSetting("budget.userId", "budget-owner"),
     departmentId: storedSetting("budget.departmentId", "zhihui-learning"),
     roles: [OWNER_ROLE],
@@ -692,73 +664,63 @@ export function VersionAuditPage() {
   };
 
   if (!budget || !selectedRevision) {
+    if (revisionInput && !error) return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
     return (
-      <>
-        <ConnectionPanel
-          revisionId={revisionInput}
-          setRevisionId={setRevisionInput}
-          identity={identity}
-          setIdentity={setIdentity}
-          loading={loading}
-          connect={() => void openWorkspace(revisionInput)}
-        />
-        {error && <div className="global-error" role="alert">{error}</div>}
-      </>
+      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1>{error ? "变化记录读取失败" : "请先打开年度预算"}</h1><p>{error ?? "从预算结果进入，系统会带入对应的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 
   const visibleComponents = diff?.components.filter((item) => showUnchanged || item.change_type !== "UNCHANGED") ?? [];
   const relatedEvents = auditEvents;
+  const milestoneRevisions = [selectedRevision, ...revisions.filter((item) => item.budget_revision_id !== selectedId && isMilestoneRevision(item, selectedId, publishedIds))].slice(0, 8);
+  const hiddenCalculationCount = revisions.filter((item) => !isMilestoneRevision(item, selectedId, publishedIds)).length;
+  const isPublished = budget.current_published_revision_id === selectedId || publishedIds.has(selectedId);
+  const returnHref = isPublished ? `/budget/results?revision=${encodeURIComponent(selectedId)}` : `/budget/workspace?revision=${encodeURIComponent(selectedId)}&section=home`;
+  const compareRevision = revisionById.get(againstId);
+  const suggestedComparisons = [compareRevision, ...milestoneRevisions].filter((item, index, list): item is RevisionResponse => Boolean(item) && item?.budget_revision_id !== selectedId && list.findIndex((candidate) => candidate?.budget_revision_id === item?.budget_revision_id) === index).slice(0, 9);
+  const businessChangeCount = visibleComponents.filter((item) => item.component_key !== "formal_confirmation_id").length;
 
   return (
-    <div className="app-frame audit-app">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="预算智解首页"><span className="brand__seal">智</span><span>预算智解</span></a>
-        <nav aria-label="主要导航">
-          <a href="/budget/workspace">年度预算</a>
-          <a href={`/budget/rebalancing?revision=${selectedId}`}>调平方案</a>
-          <a href={`/budget/publication?revision=${selectedId}`}>发布检查</a>
-          <a className="is-current" href={`/budget/audit?revision=${selectedId}`}>版本与审计</a>
-        </nav>
-        <div className="topbar__identity"><span>受控证据</span><strong>{identity.userId}</strong></div>
-      </header>
+    <div className="app-frame audit-app decision-shell">
+      <a className="skip-link" href="#audit-main">跳到变化记录</a>
+      <BudgetContextHeader fiscalYear={budget.fiscal_year} revisionNo={selectedRevision.revision_no} revisionId={selectedId} status={isPublished ? "已定版" : "草稿"} />
 
-      <main className="audit-workspace">
-        <aside className="revision-spine" aria-label="预算修订历史">
-          <div className="revision-spine__title">
-            <p>FY{String(budget.fiscal_year).slice(-2)}</p>
-            <h1>版本卷宗</h1>
-            <span>{revisions.length} 次修订</span>
-          </div>
-          <div className="revision-spine__list">
-            {revisions.map((revision) => {
-              const statuses = revisionStatus(revision, budget, publishedIds);
-              return (
-                <button
-                  key={revision.budget_revision_id}
-                  className={revision.budget_revision_id === selectedId ? "is-selected" : ""}
-                  onClick={() => void selectRevision(revision.budget_revision_id)}
-                >
-                  <span className="revision-spine__number">R{revision.revision_no}</span>
-                  <span className="revision-spine__meta">
-                    <strong>{COMMAND_LABELS[revision.command_type] ?? revision.command_type}</strong>
-                    <small>{fullDate(revision.created_at)}</small>
-                    <i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <button className="revision-spine__switch" onClick={() => { setBudget(null); setSelectedId(""); setRevisions([]); }}>切换预算链</button>
-        </aside>
-
+      <main className="audit-workspace" id="audit-main" aria-busy={loading}>
         <section className="audit-main">
+          <div className="context-return"><a href={returnHref}>返回{isPublished ? "预算结果" : "年度预算"}</a><span>变化记录</span></div>
           <header className="audit-heading">
             <div>
-              <p>年度预算工作区 / 版本与审计</p>
-              <h2>R{selectedRevision.revision_no} 的变化证据</h2>
-              <span>精确修订，不自动替换为当前草稿</span>
+              <p>FY{String(budget.fiscal_year).slice(-2)} / 精确修订</p>
+              <h1>R{selectedRevision.revision_no} 相比 {compareRevision ? `R${compareRevision.revision_no}` : "所选版本"}</h1>
+              <span>{diff ? businessChangeCount === 0 ? "业务值未变，本次更新了确认或发布记录。" : `有 ${businessChangeCount} 项预算内容发生变化。` : "选择比较版本，查看本次变化。"}</span>
             </div>
+            <a href="#audit-versions">选择其他版本</a>
+          </header>
+
+          {error && <div className="inline-error" role="alert"><strong>读取未完成</strong><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
+
+          <section className="comparison-ribbon" aria-labelledby="comparison-title">
+            <div className="comparison-ribbon__revision">
+              <span>当前版本</span><strong>R{selectedRevision.revision_no}</strong><small>{commandLabel(selectedRevision.command_type)}</small>
+            </div>
+            <div className="comparison-ribbon__relation"><span>对比</span><i aria-hidden="true" /></div>
+            <label>
+              <span id="comparison-title">比较版本</span>
+              <select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}>
+                <option value="">不比较</option>
+                {suggestedComparisons.map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>R{item.revision_no} · {commandLabel(item.command_type)}</option>)}
+              </select>
+            </label>
+            <dl>
+              <div><dt>变化</dt><dd>{diff?.changed_count ?? 0}</dd></div>
+              <div><dt>失效</dt><dd>{diff?.removed_count ?? 0}</dd></div>
+              <div><dt>沿用</dt><dd>{diff?.unchanged_count ?? 0}</dd></div>
+            </dl>
+          </section>
+
+          <details className="audit-evidence">
+            <summary>技术依据与审计归档</summary>
+            <label className="audit-all-compare"><span>比较任意修订</span><select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}><option value="">不比较</option>{revisions.filter((item) => item.budget_revision_id !== selectedId).map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>R{item.revision_no} · {commandLabel(item.command_type)}</option>)}</select></label>
             <div className="audit-heading__side">
               <div className="audit-heading__hash">
                 <span>修订内容哈希</span>
@@ -779,33 +741,7 @@ export function VersionAuditPage() {
                   : <button onClick={() => void startArchive()} disabled={archiveBusy}>{archiveBusy ? "后台生成中…" : "生成归档包"}</button>}
               </section>
             </div>
-          </header>
-
-          {error && <div className="inline-error" role="alert"><strong>读取未完成</strong><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
-
-          <section className="comparison-ribbon" aria-labelledby="comparison-title">
-            <div className="comparison-ribbon__revision">
-              <span>选定修订</span><strong>R{selectedRevision.revision_no}</strong><small>{COMMAND_LABELS[selectedRevision.command_type] ?? selectedRevision.command_type}</small>
-            </div>
-            <div className="comparison-ribbon__relation">
-              <span>{diff ? ({ DIRECT_PARENT: "直接派生自", DIRECT_CHILD: "直接父版本为", ANCESTOR: "追溯到", DESCENDANT: "早于", SAME_BUDGET: "同预算链比较" }[diff.relationship] ?? diff.relationship) : "选择比较基准"}</span>
-              <i aria-hidden="true" />
-            </div>
-            <label>
-              <span id="comparison-title">比较基准</span>
-              <select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}>
-                <option value="">不比较</option>
-                {revisions.filter((item) => item.budget_revision_id !== selectedId).map((item) => (
-                  <option key={item.budget_revision_id} value={item.budget_revision_id}>R{item.revision_no} · {COMMAND_LABELS[item.command_type] ?? item.command_type}</option>
-                ))}
-              </select>
-            </label>
-            <dl>
-              <div><dt>发生变化</dt><dd>{diff?.changed_count ?? 0}</dd></div>
-              <div><dt>失效退出</dt><dd>{diff?.removed_count ?? 0}</dd></div>
-              <div><dt>继续沿用</dt><dd>{diff?.unchanged_count ?? 0}</dd></div>
-            </dl>
-          </section>
+          </details>
 
           <div className="audit-grid">
             <section className="change-ledger" aria-labelledby="change-ledger-title">
@@ -813,7 +749,7 @@ export function VersionAuditPage() {
                 <div><p>组件版本差异</p><h2 id="change-ledger-title">这次改了什么</h2></div>
                 <label className="unchanged-toggle"><input type="checkbox" checked={showUnchanged} onChange={(event) => setShowUnchanged(event.target.checked)} /><span>显示沿用项</span></label>
               </header>
-              <div className="change-ledger__columns"><span>状态</span><span>业务组件</span><span>基准版本 / 选定版本</span></div>
+              <div className="change-ledger__columns"><span>状态</span><span>业务内容</span><span>查看变化</span></div>
               <div className="change-ledger__body">
                 {!diff ? <p className="audit-empty">请选择另一个修订作为比较基准。</p>
                   : visibleComponents.length === 0 ? <p className="audit-empty">两个修订的组件清单完全一致。打开“显示沿用项”可核对完整链路。</p>
@@ -826,7 +762,7 @@ export function VersionAuditPage() {
                       />
                     ))}
               </div>
-              {diff && <footer><span>差异指纹</span><code title={diff.content_hash}>{shortId(diff.content_hash, 12)}</code></footer>}
+              {diff && <details className="audit-diff-hash"><summary>查看差异校验依据</summary><code title={diff.content_hash}>{diff.content_hash}</code></details>}
             </section>
 
             <section className="audit-timeline" aria-labelledby="audit-timeline-title">
@@ -911,6 +847,16 @@ export function VersionAuditPage() {
             </section>
           )}
         </section>
+        <aside className="revision-spine" id="audit-versions" aria-label="选择预算版本">
+          <div className="revision-spine__title"><p>FY{String(budget.fiscal_year).slice(-2)} · 版本</p><h2>重要记录</h2><span>当前查看 R{selectedRevision.revision_no}</span></div>
+          <div className="revision-spine__list">
+            {milestoneRevisions.map((item) => {
+              const statuses = revisionStatus(item, budget, publishedIds);
+              return <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}><span className="revision-spine__number">R{item.revision_no}</span><span className="revision-spine__meta"><strong>{commandLabel(item.command_type)}</strong><small>{fullDate(item.created_at)}</small><i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i></span></button>;
+            })}
+          </div>
+          <details className="audit-history-all"><summary>查看全部 {revisions.length} 次修订{hiddenCalculationCount ? `（含 ${hiddenCalculationCount} 次系统计算）` : ""}</summary><div>{revisions.map((item) => <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}>R{item.revision_no} · {commandLabel(item.command_type)} <small>{fullDate(item.created_at)}</small></button>)}</div></details>
+        </aside>
       </main>
     </div>
   );
