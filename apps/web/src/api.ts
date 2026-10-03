@@ -146,6 +146,7 @@ export interface TargetClosureVersion {
 }
 
 export interface SeasonRevenueResult {
+  season_headcount_result_id?: string;
   fiscal_season: number;
   quarter_name: string;
   track: string;
@@ -181,6 +182,7 @@ export interface RevenueAggregateResult {
 export interface RevenueResultVersion {
   revenue_result_version_id: string;
   budget_revision_id: string;
+  headcount_result_version_id?: string;
   fiscal_year: number;
   status: string;
   publishable: boolean;
@@ -189,6 +191,22 @@ export interface RevenueResultVersion {
   created_at: string;
   items: SeasonRevenueResult[];
   aggregates: RevenueAggregateResult[];
+}
+
+export interface SeasonHeadcountResult {
+  season_headcount_result_id: string;
+  fiscal_season: number;
+  quarter_name: string;
+  track: string; product: string; entry_attribute: string; grade: string; subject: string; campus: string;
+  integer_old_students: number | null;
+  integer_new_students: number | null;
+  integer_total_students: number | null;
+}
+
+export interface HeadcountResultVersion {
+  headcount_result_version_id: string;
+  budget_revision_id: string;
+  items: SeasonHeadcountResult[];
 }
 
 export interface ScenarioChange {
@@ -610,6 +628,16 @@ export async function fetchRevenueResultVersion(
     { headers: identityHeaders(identity), signal },
   );
   return parseResponse<RevenueResultVersion>(response);
+}
+
+export async function fetchHeadcountResultVersion(
+  versionId: string,
+  identity: ApiIdentity,
+  signal?: AbortSignal,
+): Promise<HeadcountResultVersion> {
+  return parseResponse<HeadcountResultVersion>(await fetch(`/api/v1/headcount-result-versions/${encodeURIComponent(versionId)}`, {
+    headers: identityHeaders(identity), signal,
+  }));
 }
 
 export async function fetchLatestOptimizationRun(

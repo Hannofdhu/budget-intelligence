@@ -276,6 +276,38 @@ def process_matches(process: dict[str, object]) -> bool:
         return False
 
 
+def restart_api() -> None:
+    """Reload API code without seeding, migrating, or altering existing budget data."""
+    state = json.loads(STATE.read_text())
+    if state.get("database") != DATABASE:
+        raise RuntimeError("运行记录不匹配")
+    process = next(p for p in state["processes"] if p["name"] == "api")
+    if not process_matches(process):
+        raise RuntimeError("API 进程身份不匹配，拒绝重启")
+    env = environment()
+    env["BUDGET_LOCAL_TRIAL_DEPARTMENT_ID"] = json.loads(FIXTURE.read_text())["department_id"]
+    os.kill(int(process["pid"]), signal.SIGTERM)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not free_port(8018):
+        time.sleep(0.1)
+    if not free_port(8018):
+        raise RuntimeError("API 尚未退出，未启动新进程")
+    with (RUNTIME / "api.log").open("a") as log:
+        child = subprocess.Popen(
+            [str(ROOT / ".venv/bin/uvicorn"), "apps.api.main:app", "--host", "127.0.0.1", "--port", "8018"],
+            cwd=ROOT,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    process.update(pid=child.pid, started=run("ps", "-p", str(child.pid), "-o", "lstart="))
+    STATE.write_text(json.dumps(state, indent=2))
+    wait_url(API + "/api/v1/local-trial/session")
+    print("API 已重启；未执行数据初始化或迁移")
+
+
 def stop() -> None:
     if not STATE.exists():
         return
@@ -294,7 +326,7 @@ def stop() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["start", "stop", "seed"])
+    parser.add_argument("command", choices=["start", "stop", "seed", "restart-api"])
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--lan", action="store_true", help="只将网页端口开放给当前局域网")
     args = parser.parse_args()
@@ -303,6 +335,8 @@ if __name__ == "__main__":
             asyncio.run(seed())
         elif args.command == "stop":
             stop()
+        elif args.command == "restart-api":
+            restart_api()
         else:
             start(not args.no_open, lan=args.lan)
     except Exception as error:

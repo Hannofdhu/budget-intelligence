@@ -7,7 +7,13 @@ export default defineConfig(({ mode }) => ({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": loadEnv(mode, ".", "BUDGET_").BUDGET_LOCAL_API_URL || "http://127.0.0.1:8000",
+      "/api": {
+        target: loadEnv(mode, ".", "BUDGET_").BUDGET_LOCAL_API_URL || "http://127.0.0.1:8000",
+        bypass(req) {
+          // Overwrite client-supplied values before forwarding real FY27 reads.
+          req.headers["x-budget-client-address"] = req.socket.remoteAddress || "unknown";
+        },
+      },
     },
   },
 }));

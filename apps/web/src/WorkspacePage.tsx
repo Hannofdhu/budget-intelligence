@@ -3,6 +3,8 @@ import { BusinessForm, ReadTable, meanings, type Schema, type Value } from "./Bu
 import { identityHeaders, newRequestId, parseResponse, fetchJob, fetchRevision, fetchAuditEvents, type ApiIdentity } from "./api";
 import { RateTableEditor } from "./RateTableEditor";
 import { BudgetResultsPage } from "./BudgetResultsPage";
+import { BudgetLifecycle } from "./BudgetLifecycle";
+import { initialBudgetRevision } from "./budgetBrowse";
 
 type RecordValue = Record<string, Value>;
 type Section = { key: string; label: string; schema: Schema; value: Value; data: RecordValue; path: string; confirm: { path: string; body: RecordValue } | null };
@@ -253,7 +255,7 @@ export function WorkspacePage() {
       const list = await request<Budget[]>("/workspace/budgets", who); if (stopped) return; setBudgets(list);
       const params = new URLSearchParams(location.search); const active = params.get("section") ?? "home";
       const allowed = ["home", "source", ...stages.flatMap(stage => [...stage.sections])]; const safeActive = allowed.includes(active) ? active : "home"; setSelected(safeActive);
-      const id = params.get("revision") ?? list[0]?.draft_revision_id; if (id) await load(id, who, safeActive);
+      const id = params.get("revision") ?? (list[0] ? initialBudgetRevision(list[0]) : null); if (id) await load(id, who, safeActive);
     } catch (nextError) { if (!stopped) setError(nextError instanceof Error ? nextError.message : String(nextError)); } finally { if (!stopped) setBusy(false); } })();
     return () => { stopped = true; sequence.current += 1; };
   }, []);
@@ -261,7 +263,7 @@ export function WorkspacePage() {
     if (dirty && !window.confirm("当前修改尚未保存。离开后将放弃这些修改，是否继续？")) return;
     if (workspace?.is_published && key === "home") key = "results";
     setSelected(key); setDraft(workspace?.sections.find(item => item.key === key)?.value ?? {}); setDirty(false); setError(""); setNotice(""); setResult(null); setConfirmArmed(false);
-    if (workspace) { const url = new URL(location.href); url.searchParams.set("revision", workspace.revision_id); url.searchParams.set("section", key); history.replaceState({}, "", url); }
+    if (workspace) { const url = new URL(location.href); url.searchParams.set("revision", workspace.revision_id); url.searchParams.set("section", key); if (key !== "results") url.searchParams.delete("view"); history.replaceState({}, "", url); }
   };
   const execute = async (path: string, body: unknown, prepare = false, success = "已保存。") => {
     if (!identity || !workspace) return; setBusy(true); setError(""); setNotice(""); setJobStatus("");
@@ -279,8 +281,8 @@ export function WorkspacePage() {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      const loaded = await load(String(id), identity, selected);
-      if (loaded) {
+      const loaded = await load(String(id), identity, path === ":derive" ? "home" : selected);
+      if (loaded && path !== ":derive") {
         const following = nextStep(loaded);
         if (following.section && following.section !== selected) {
           const staysInTask = taskFor(following.section).key === taskFor(selected).key;
@@ -308,6 +310,12 @@ export function WorkspacePage() {
     choices[String(entry.rate_reference_id)] = title; choices[String(entry.rate_parameter_stable_key)] = title;
   }
   const activeBudget = budgets.find(budget => budget.fiscal_year === workspace?.fiscal_year); const latest = activeBudget?.draft_revision_id;
+  const switchBudgetMode = (id: string, section = "home") => {
+    if (!identity || busy || (dirty && !window.confirm("放弃尚未保存的修改？"))) return;
+    setBusy(true); setError(""); setNotice("");
+    const url = new URL(location.href); url.searchParams.delete("view"); history.replaceState({}, "", url);
+    void load(id, identity, section).catch(nextError => setError(String(nextError))).finally(() => setBusy(false));
+  };
   const sourceRows = workspace?.source.components as RecordValue[] | undefined;
   const next = workspace ? nextStep(workspace) : null; const help = errorHelp(error); const copy = pageCopy[selected];
   const activeTask = taskFor(selected === "home" ? next?.section ?? "results" : selected);
@@ -323,11 +331,12 @@ export function WorkspacePage() {
   return <div className="budget-shell decision-shell"><a className="skip-link" href="#workspace-content">跳到主要内容</a>
     <header className="decision-topbar">
       <button className="decision-brand" onClick={() => changeSection("home")}><span aria-hidden="true">智</span><strong>预算智解</strong></button>
-      <label className="decision-budget-select"><span className="sr-only">年度预算</span><select disabled={busy} value={workspace?.fiscal_year ?? ""} onChange={event => { if (dirty && !window.confirm("放弃尚未保存的修改？")) return; const budget = budgets.find(item => item.fiscal_year === Number(event.target.value)); if (budget?.draft_revision_id && identity) { setBusy(true); void load(budget.draft_revision_id, identity, "home").catch(nextError => setError(String(nextError))).finally(() => setBusy(false)); } }}><option value="">选择预算</option>{budgets.map(budget => <option value={budget.fiscal_year} key={budget.annual_budget_id}>FY{String(budget.fiscal_year).slice(-2)} 学校版</option>)}</select></label>
+      <label className="decision-budget-select"><span className="sr-only">年度预算</span><select disabled={busy} value={workspace?.fiscal_year ?? ""} onChange={event => { if (event.target.value === "archive-fy27") { if (dirty && !window.confirm("放弃尚未保存的修改？")) return; location.assign("/budget/workspace?archive=fy27&step=5"); return; } const budget = budgets.find(item => item.fiscal_year === Number(event.target.value)); const id = budget && initialBudgetRevision(budget); if (id) switchBudgetMode(id); }}><option value="">选择预算</option><option value="archive-fy27">FY27 学校版 · 已定版</option>{budgets.map(budget => <option value={budget.fiscal_year} key={budget.annual_budget_id}>FY{String(budget.fiscal_year).slice(-2)} 学校版</option>)}</select></label>
       {workspace && <div className="decision-version"><span className={`status-dot ${workspace.is_published ? "is-published" : ""}`} /><span>{workspace.is_published ? "已定版" : "编辑中"}</span><small>R{workspace.revision_no}</small></div>}
     </header>
     <main className="decision-workspace" id="workspace-content">
       {workspace && <nav className="decision-progress" aria-label="预算任务进度">{tasks.map(task => { const state = taskState(workspace, task.key); const active = activeTask.key === task.key && selected !== "home"; const target = taskTarget(workspace, task, next); const taskLabel = workspace.is_published && task.key === "review" ? "预算概览" : task.label; const stateLabel = state === "done" ? "已完成" : active ? "正在处理" : "待处理"; return <button key={task.key} className={`is-${state} ${active ? "is-active" : ""}`} aria-current={active ? "step" : undefined} aria-label={`任务 ${task.no}：${taskLabel}，${stateLabel}`} onClick={() => changeSection(target)}><span>{task.no}</span><strong>{taskLabel}</strong><em className="decision-progress-short">{workspace.is_published && task.key === "review" ? "概览" : task.short}</em><small>{state === "done" ? "完成" : active ? "正在处理" : ""}</small></button>; })}</nav>}
+      {workspace && <BudgetLifecycle key={workspace.revision_id} busy={busy} mode={workspace.is_published ? "published" : "draft"} onView={!workspace.is_published && activeBudget?.published_revision_id ? () => switchBudgetMode(activeBudget.published_revision_id!, "results") : undefined} onContinue={workspace.is_published && latest && latest !== workspace.revision_id ? () => switchBudgetMode(latest) : undefined} onStart={workspace.is_published && workspace.is_current_draft && identity?.roles.includes("DATA_MAINTAINER") ? reason => execute(":derive", { reason }, false, "修订草稿已创建，定版预算保持不变。") : undefined} />}
       {error && <div className="decision-question" role="alert"><div><strong>还差一步</strong><p>{help.text}</p><details><summary>技术信息</summary><code>{error}</code></details></div>{help.section && <button onClick={() => changeSection(help.section!)}>去处理</button>}<button className="decision-dismiss" aria-label="关闭提示" onClick={() => setError("")}>关闭</button></div>}
       {notice && <div className="decision-notice" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
       {!workspace && !busy && <section className="workspace-empty"><h2>暂时无法读取预算</h2><p>请重新启动本机试用服务。</p></section>}
@@ -339,7 +348,7 @@ export function WorkspacePage() {
       {workspace && selected !== "home" && !(workspace.is_published && selected === "results") && <section className="decision-focus">
         <header className="decision-focus__bar"><button onClick={() => changeSection("home")}>返回</button><div><span>任务 {activeTask.no} / 5</span><strong>{activeTask.label}</strong></div></header>
         <section className={`stage-content decision-content ${selected === "rates" ? "decision-content--wide" : ""}`} aria-busy={busy}>
-          {selected === "source" && <><header className="content-heading"><div><span className="content-kicker">来源与范围 · 第一步</span><h2 ref={pageTitleRef} tabIndex={-1}>数据来源</h2><p>确认本次预算使用的数据范围和快照日期。</p></div><span className="content-status is-done">已冻结</span></header><div className="source-overview"><div><span>快照状态</span><strong>{meanings[String(workspace.source.status)] ?? "已冻结"}</strong></div><div><span>快照日期</span><strong>{formatDateTime(workspace.source.cutoff_at)}</strong></div><div><span>冻结时间</span><strong>{formatDateTime(workspace.source.frozen_at)}</strong></div></div><section className="source-list"><h3>本次使用的数据</h3>{sourceSummary.map((item, index) => <article key={`${item.name}-${index}`}><div><strong>{item.name}</strong><span>快照 {item.date}</span></div>{item.rows !== undefined && <em>{String(item.rows)} 条</em>}</article>)}</section><details className="rules-drawer"><summary>查看来源详情与口径</summary><div className="rules-drawer-body"><ReadTable rows={sourceRows ?? []} /><h3>来源核对</h3><ReadTable rows={(workspace.source.reconciliations as RecordValue[]) ?? []} /><p>期初老生使用上一财年春季普通招生人次；新生占比使用三分之二出勤口径作分母。</p></div></details></>}
+          {selected === "source" && <><header className="content-heading"><div><span className="content-kicker">来源与范围 · 第一步</span><h2 ref={pageTitleRef} tabIndex={-1}>数据来源</h2><p>确认本次预算使用的数据范围和快照日期。</p></div><span className="content-status is-done">已冻结</span></header><div className="source-overview"><div><span>快照状态</span><strong>{meanings[String(workspace.source.status)] ?? "已冻结"}</strong></div><div><span>快照日期</span><strong>{formatDateTime(workspace.source.cutoff_at)}</strong></div><div><span>冻结时间</span><strong>{formatDateTime(workspace.source.frozen_at)}</strong></div></div><section className="source-list"><h3>本次使用的数据</h3>{sourceSummary.map((item, index) => <article key={`${item.name}-${index}`}><div><strong>{item.name}</strong><span>快照 {item.date}</span></div>{item.rows !== undefined && <em>{String(item.rows)} 条</em>}</article>)}</section></>}
           {section && <><header className="content-heading"><div><span className="content-kicker">只处理这一项</span><h2 ref={pageTitleRef} tabIndex={-1}>{copy?.title ?? sectionNames[selected] ?? section.label}</h2><p>{copy?.intro ?? "核对当前数据并完成本步骤。"}</p></div><span className={`content-status ${confirmed ? "is-done" : dirty ? "is-editing" : hasSavedSection(workspace, selected) ? "is-saved" : ""}`}>{sectionStatus(workspace, section, dirty, confirmed)}</span></header><fieldset disabled={isReadOnly} className="business-fieldset">
             {selected === "rates" ? <RateTableEditor value={draft} referenceRows={Array.isArray(section.data.items) ? section.data.items as RecordValue[] : []} disabled={isReadOnly} dirty={dirty} onChange={nextDraft => { setDraft(nextDraft); setDirty(true); }} onAction={(mode, keys, reason) => { const actionSection = workspace.sections.find(item => item.key === (mode === "lock" ? "rate-lock" : "rate-unlock")); if (actionSection) void execute(actionSection.path, { items: keys.map(key => ({ rate_parameter_stable_key: key, reason })) }, false, mode === "lock" ? "选中比例已锁定。" : "选中比例已解锁。"); }} /> : <BusinessForm key={`${workspace.revision_id}:${selected}`} schema={section.schema} value={draft} choices={choices} fixedArrays={selected === "resources"} readOnlyKeys={selected === "resources" ? ["fiscal_season", "track", "product", "grade", "subject", "campus"] : []} onChange={nextDraft => { setDraft(nextDraft); setDirty(true); }} />}
             {blocker && <div className="prerequisite-note" role="status"><span>{blocker.text}</span><button type="button" onClick={() => changeSection(blocker.section)}>去确认</button></div>}

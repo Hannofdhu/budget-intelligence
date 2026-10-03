@@ -7,11 +7,16 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
+    "test": "node --test tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
+  },
+  "overrides": {
+    "exceljs": { "uuid": "11.1.1" }
   },
   "devDependencies": {
     "@types/react": "^19.1.0",

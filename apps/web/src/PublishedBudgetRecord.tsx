@@ -31,11 +31,10 @@ export function PublishedBudgetRecord({ revisionId, annualBudgetId, identity }: 
       <div><strong>{event.event_type === "PUBLISHED" ? "预算已定版" : "方案已确认"}</strong><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString("zh-CN", { hour12: false })}</time></div>
       <p>{event.actor_id}{event.acting_role === "DEPARTMENT_BUDGET_OWNER" ? " · 部门预算负责人" : ""}</p>
       {event.reason && <p>{event.reason}</p>}
-      <details><summary>查看依据</summary><pre>{JSON.stringify(event.detail, null, 2)}</pre></details>
     </li>)}</ol>}
     {readiness && <details className="overview-checks"><summary>当前复核 · {readiness.blocker_count ? `${readiness.blocker_count} 项需关注` : `${readiness.checks.length} 项通过`}</summary>
       <p>以下为当前读取的检查结果，定版事实以上方记录为准。</p>
-      <ul>{readiness.checks.map(check => <li key={check.code}><span>{check.passed ? "通过" : "需关注"}</span><div>{check.rule}<details><summary>检查依据</summary><pre>{JSON.stringify(check.actual, null, 2)}</pre></details></div></li>)}</ul>
+      <ul>{readiness.checks.map(check => <li key={check.code}><span>{check.passed ? "通过" : "需关注"}</span><div>{check.rule}</div></li>)}</ul>
     </details>}
   </div>;
 }
