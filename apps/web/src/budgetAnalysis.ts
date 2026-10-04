@@ -1,4 +1,5 @@
 import type { ExportColumn } from "./budgetExport.ts";
+import { budgetPeriodLabel, compareBudgetGrades } from "./budgetDisplay.ts";
 import type {
   BudgetAnalysisState, BudgetDimension, BudgetFact, BudgetFilters, BudgetMetric,
   BudgetMetricValues, BudgetPivot, BudgetPivotConfig, BudgetPivotRow, BudgetValue,
@@ -72,6 +73,7 @@ function sanitizeConfig(config: Partial<BudgetPivotConfig> | undefined): BudgetP
 }
 
 function dimensionCompare(dimension: BudgetDimension, left: string, right: string): number {
+  if (dimension === "grade") return compareBudgetGrades(left, right);
   if (dimension === "season") {
     const a = seasons.indexOf(left), b = seasons.indexOf(right);
     if (a >= 0 || b >= 0) return (a < 0 ? seasons.length : a) - (b < 0 ? seasons.length : b) || collator.compare(left, right);
@@ -250,7 +252,7 @@ export function pivotExport(pivot: BudgetPivot, input: BudgetPivotConfig): { col
   const config = sanitizeConfig(input);
   const columns: ExportColumn[] = config.rows.map(dimension => ({ key: dimension, label: dimensionLabels[dimension] }));
   const format = (metric: BudgetMetric): ExportColumn["format"] => metric === "discount" || metric === "renewal" ? "rate" : metric === "revenue" || metric === "business" ? "money" : "count";
-  for (const column of pivot.columns) for (const metric of config.metrics) columns.push({ key: `${column.key}:${metric}`, label: `${column.label} · ${metricLabels[metric]}${format(metric) === "money" ? "（元）" : ""}`, format: format(metric) });
+  for (const column of pivot.columns) for (const metric of config.metrics) columns.push({ key: `${column.key}:${metric}`, label: `${config.column === "season" ? budgetPeriodLabel(column.label, metric) : column.label} · ${metricLabels[metric]}${format(metric) === "money" ? "（元）" : ""}`, format: format(metric) });
   // With no column dimension, the single 'all' column already is the total.
   if (config.column !== "none") for (const metric of config.metrics) columns.push({ key: `total:${metric}`, label: `合计 · ${metricLabels[metric]}${format(metric) === "money" ? "（元）" : ""}`, format: format(metric) });
   const values = (cells: Record<string, BudgetMetricValues>, total: BudgetMetricValues) => {

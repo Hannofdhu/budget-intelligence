@@ -44,6 +44,29 @@ function render(facts, search = "", props = {}) {
 const text = html => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 const buttonText = html => [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].map(match => ({ attrs: match[1], text: text(match[2]) }));
 
+test("renewal-only pivot titles use cross-season stages while mixed metric headers keep revenue quarters", () => {
+  const facts = fourQuarters.map(row => ({ ...row, renewalNumerator: 70, renewalDenominator: 100 }));
+  const renewal = render(facts, "baView=pivot&baRows=track,grade&baMetrics=renewal");
+  const renewalHeaders = renewal.match(/<table class="ba-table ba-pivot-table"[^>]*><thead>([\s\S]*?)<\/thead>/)?.[1] ?? "";
+  for (const label of ["春续暑", "暑续秋", "秋续寒", "寒续春"]) assert.ok(text(renewalHeaders).includes(label));
+  assert.doesNotMatch(text(renewalHeaders), /暑假|秋季|寒假|春季/);
+  assert.match(renewal, /aria-label="赛道：智慧空间，年级：七年级，春续暑，预算续班率，70%"/);
+  const mixed = render(facts, "baView=pivot&baRows=track,grade&baMetrics=revenue,renewal");
+  const mixedHeaders = mixed.match(/<table class="ba-table ba-pivot-table"[^>]*><thead>([\s\S]*?)<\/thead>/)?.[1] ?? "";
+  for (const label of ["暑假", "秋季", "寒假", "春季"]) assert.ok(text(mixedHeaders).includes(label));
+  for (const label of ["春续暑续班率", "暑续秋续班率", "秋续寒续班率", "寒续春续班率"]) assert.ok(text(mixedHeaders).includes(label));
+  assert.match(mixed, /aria-label="赛道：智慧空间，年级：七年级，暑假，确认收入，/);
+});
+
+test("new composition figures use the same active quarter and grade population without fake annual totals", () => {
+  const facts = fourQuarters.map((row, index) => ({ ...row, old: 20 + index, new: 4 + index, total: 24 + 2 * index }));
+  const html = render(facts, `bf_season=${encodeURIComponent("秋季")}&bf_grade=${encodeURIComponent("七年级")}`);
+  for (const title of ["年级招生结构", "校区招生结构"]) assert.match(text(html), new RegExp(title));
+  assert.match(html, /aria-label="七年级，老生21人次，新生5人次，合计26人次"/);
+  assert.match(html, /aria-label="西直门，老生21人次，新生5人次，合计26人次"/);
+  assert.doesNotMatch(text(html), /全年合计|年度目标/);
+});
+
 test("default analysis markup presents a business board and all four fiscal seasons in place", () => {
   const html = render(fourQuarters), readable = text(html);
   assert.match(readable, /看板/); assert.match(readable, /透视/);
@@ -58,11 +81,11 @@ test("business board shows old and new counts plus weighted budget renewal in bo
     fact({ id: "small", old: 7, new: 3, total: 10, renewal: 0.8, renewalNumerator: 8, renewalDenominator: 10 })];
   const html = render(facts), readable = text(html);
   assert.match(readable, /季度招生人次/); assert.match(readable, /季度续班率/);
-  assert.match(readable, /季度招生预算/); assert.match(readable, /校区招生人次/); assert.match(readable, /校区续班率/);
+  assert.match(readable, /季度招生预算/); assert.match(readable, /校区招生人次/); assert.match(readable, /赛道与年级续班率/);
   assert.match(readable, /老生人次/); assert.match(readable, /新生人次/);
   assert.match(readable, /57/); assert.match(readable, /15/); assert.match(readable, /72/);
   assert.match(readable, /52\.73%/); assert.doesNotMatch(readable, /65%|51\.82%/);
-  assert.match(html, /role="img"[^>]*aria-label="[^"]*暑假续班率52\.73%/);
+  assert.match(html, /role="img"[^>]*aria-label="[^"]*春续暑续班率52\.73%/);
   assert.ok(buttonText(html).some(button => button.text === "透视续班率"));
   assert.match(html, /aria-label="季度招生预算表"/);
 });
@@ -179,12 +202,12 @@ test("board lays out old/new cards, quarterly student chart and tables, and weig
   const facts = [fact({ id: "small", old: 80, new: 20, total: 100, renewal: .8, renewalNumerator: 80, renewalDenominator: 100 }),
     fact({ id: "large", old: 540, new: 360, total: 900, renewal: .6, renewalNumerator: 540, renewalDenominator: 900 })];
   const html = render(facts), readable = text(html);
-  for (const label of ["老生人次", "新生人次", "季度招生人次", "季度续班率", "季度招生预算", "校区招生人次", "校区续班率"]) assert.ok(readable.includes(label), label);
+  for (const label of ["老生人次", "新生人次", "季度招生人次", "季度续班率", "季度招生预算", "校区招生人次", "赛道与年级续班率"]) assert.ok(readable.includes(label), label);
   assert.match(readable, /620/); assert.match(readable, /380/); assert.match(readable, /1,000/);
   assert.match(readable, /62%/); assert.doesNotMatch(readable, /70%/);
   assert.match(html, /<svg[^>]+role="img"/); assert.match(html, /aria-label="各季度老生与新生人次"/);
   assert.match(html, /aria-label="校区季度老生新生人次表"/);
-  assert.match(html, /aria-label="校区季度续班率表"/);
+  assert.match(html, /aria-label="赛道年级跨季续班率表"/);
   assert.doesNotMatch(readable, /按原价收入加权|点击看明细|只保存筛选和布局|当季业务确认收入|递延至下季收入/);
 });
 
@@ -213,7 +236,7 @@ test("student and renewal charts keep recorded zero and exclude half-missing qua
     fact({ id: "partial", season: "秋季", old: null, new: 10000, total: null, renewalNumerator: null, renewalDenominator: null })];
   const html = render(facts);
   assert.match(html, /height:80%/); assert.match(html, /height:20%/);
-  assert.match(html, /暑假续班率0%/); assert.equal((html.match(/<circle\b/g) ?? []).length, 1);
+  assert.match(html, /春续暑续班率0%/); assert.equal((html.match(/<circle\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /NaN|Infinity/);
   const shared = fs.readFileSync(new URL("../src/BudgetAnalysisView.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(shared, /key: "(?:current|carryout)"|当季业务确认收入|递延至下季收入/);
