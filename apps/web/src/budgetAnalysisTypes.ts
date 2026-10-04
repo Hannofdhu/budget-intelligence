@@ -1,6 +1,6 @@
 // Read-only display facts. Values and calculation versions remain owned by their source.
 export type BudgetDimension = "season" | "track" | "campus" | "product" | "grade" | "subject";
-export type BudgetMetric = "revenue" | "business" | "old" | "new" | "total" | "discount";
+export type BudgetMetric = "revenue" | "business" | "old" | "new" | "total" | "discount" | "renewal";
 export type BudgetValue = number | string | null;
 export type BudgetFact = Record<BudgetDimension, string> & {
   id: string;
@@ -9,6 +9,8 @@ export type BudgetFact = Record<BudgetDimension, string> & {
   current?: BudgetValue; carryout?: BudgetValue;
   price?: BudgetValue; renewal?: BudgetValue; share?: BudgetValue;
   detailDiscount?: BudgetValue; recognition?: BudgetValue;
+  // Saved budget input rate × eligible preceding enrollment; not rounded old counts.
+  renewalNumerator?: BudgetValue; renewalDenominator?: BudgetValue;
 };
 export type BudgetFilters = Record<BudgetDimension, string>;
 export type BudgetPivotConfig = {

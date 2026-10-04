@@ -67,7 +67,7 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
     </div>
     <div className="rate-toolbar"><label className="rate-search"><span className="sr-only">筛选比例参数</span><input placeholder="筛选季节、校区、产品或年级" value={query} onChange={event => setQuery(event.target.value)} /></label><span>{filtered.length} 条结果</span></div>
     {selected.size > 0 && <section className="rate-batch" aria-label="批量修改选中比例">
-      <div><strong>已选 {selected.size} 项</strong><span>留空的字段保持原值</span></div>
+      <div><strong>已选 {selected.size} 项</strong></div>
       <label>当前值<input inputMode="decimal" placeholder="例如 80" value={batchCurrent} onChange={event => setBatchCurrent(event.target.value)} /></label>
       <label>下限<input inputMode="decimal" placeholder="例如 70" value={batchLower} onChange={event => setBatchLower(event.target.value)} /></label>
       <label>上限<input inputMode="decimal" placeholder="例如 90" value={batchUpper} onChange={event => setBatchUpper(event.target.value)} /></label>
@@ -87,6 +87,6 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <td><div className="rate-reasons"><input disabled={disabled} aria-label="范围依据" value={String(item.boundary_reason ?? "")} placeholder="范围依据" onChange={event => updateRow(index, "boundary_reason", event.target.value)} /><input disabled={disabled} aria-label="人工调整原因" value={String(item.manual_reason ?? "")} placeholder="调整原因" onChange={event => updateRow(index, "manual_reason", event.target.value)} /></div></td>
       <td><span className={`status-tag ${meta.locked === true ? "status-tag--locked" : ""}`}>{meta.locked === true ? "已锁定" : meta.boundary_confirmed === true ? "已确认" : "待确认"}</span></td>
     </tr>)}</tbody></table></div>
-    {selected.size > 0 && <section className="rate-lockbar" aria-label="选中比例的锁定操作"><div><strong>管理选中比例</strong><span>{dirty ? "请先保存比例，再调整锁定状态。" : "锁定后自动调平不会修改这些比例。"}</span></div><label><span className="sr-only">锁定或解锁原因</span><input disabled={dirty || disabled} placeholder="填写锁定或解锁原因" value={reason} onChange={event => setReason(event.target.value)} /></label><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("lock", selectedStableKeys, reason.trim())}>锁定选中项</button><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("unlock", selectedStableKeys, reason.trim())}>解锁选中项</button></section>}
+    {selected.size > 0 && <section className="rate-lockbar" aria-label="选中比例的锁定操作"><div><strong>管理选中比例</strong>{dirty && <span role="status">请先保存比例</span>}</div><label><span className="sr-only">锁定或解锁原因</span><input disabled={dirty || disabled} placeholder="填写锁定或解锁原因" value={reason} onChange={event => setReason(event.target.value)} /></label><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("lock", selectedStableKeys, reason.trim())}>锁定选中项</button><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("unlock", selectedStableKeys, reason.trim())}>解锁选中项</button></section>}
   </div>;
 }

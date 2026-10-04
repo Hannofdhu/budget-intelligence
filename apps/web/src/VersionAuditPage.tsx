@@ -666,7 +666,7 @@ export function VersionAuditPage() {
   if (!budget || !selectedRevision) {
     if (revisionInput && !error) return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
     return (
-      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1>{error ? "变化记录读取失败" : "请先打开年度预算"}</h1><p>{error ?? "从预算结果进入，系统会带入对应的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
+      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1>{error ? "变化记录读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 
@@ -692,7 +692,7 @@ export function VersionAuditPage() {
             <div>
               <p>FY{String(budget.fiscal_year).slice(-2)} / 精确修订</p>
               <h1>R{selectedRevision.revision_no} 相比 {compareRevision ? `R${compareRevision.revision_no}` : "所选版本"}</h1>
-              <span>{diff ? businessChangeCount === 0 ? "业务值未变，本次更新了确认或发布记录。" : `有 ${businessChangeCount} 项预算内容发生变化。` : "选择比较版本，查看本次变化。"}</span>
+
             </div>
             <a href="#audit-versions">选择其他版本</a>
           </header>
@@ -713,6 +713,7 @@ export function VersionAuditPage() {
             </label>
             <dl>
               <div><dt>变化</dt><dd>{diff?.changed_count ?? 0}</dd></div>
+              {diff && <div><dt>业务变化</dt><dd>{businessChangeCount}</dd></div>}
               <div><dt>失效</dt><dd>{diff?.removed_count ?? 0}</dd></div>
               <div><dt>沿用</dt><dd>{diff?.unchanged_count ?? 0}</dd></div>
             </dl>
@@ -733,7 +734,7 @@ export function VersionAuditPage() {
                   {archiveJob?.status === "SUCCEEDED" ? (
                     <small>{fileSizeLabel(archiveJob.result?.size_bytes)} · SHA {shortId(archiveJob.result?.content_hash, 6)}</small>
                   ) : (
-                    <small>ZIP · 含清单、明细、参数、校验和审计</small>
+                    <small>ZIP</small>
                   )}
                 </div>
                 {archiveJob?.status === "SUCCEEDED"
@@ -799,7 +800,7 @@ export function VersionAuditPage() {
                 <div>
                   <p>逐行变化证据</p>
                   <h2 id="detail-drawer-title">{detailDiff?.component_label ?? COMPONENT_LABELS[detailComponent] ?? "读取明细"}</h2>
-                  <span>按稳定业务键对齐；证据文本变化不会冒充业务值变化。</span>
+
                 </div>
                 <button className="detail-drawer__close" onClick={() => { setDetailComponent(""); setDetailDiff(null); }} aria-label="关闭逐行差异">×</button>
               </header>

@@ -40,6 +40,8 @@ test("ratios can show numeric count and range but never a summed or unweighted m
   const cells = [cell({ campus: "西直门" }, "暑假", 0.5), cell({ campus: "西直门" }, "秋季", 0.8)];
   const stats = budgetSelectionStatistics(facts, cells, "discount", "season");
   assert.equal(stats.sum, null); assert.equal(stats.average, null); assert.equal(stats.min, 0.5); assert.equal(stats.max, 0.8);
+  const renewal = budgetSelectionStatistics(facts, cells, "renewal", "season");
+  assert.equal(renewal.sum, null); assert.equal(renewal.average, null); assert.equal(renewal.min, 0.5); assert.equal(renewal.max, 0.8);
 });
 
 test("real zero, negative values, sparse selections and duplicate facts keep their source meaning", () => {

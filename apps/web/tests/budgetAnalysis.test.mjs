@@ -7,6 +7,7 @@ import {
   pivotExport, readAnalysisState, seasons, validateAnalysisState, writeAnalysisState,
 } from "../src/budgetAnalysis.ts";
 import { budgetWorkbook } from "../src/budgetExport.ts";
+import { fetchOpeningStudentVersion } from "../src/api.ts";
 
 const fact = (overrides = {}) => ({ id: "1", season: "暑假", track: "智慧空间", campus: "西直门", product: "常规班", grade: "七年级", subject: "数学",
   revenue: 100, business: 90, listRevenue: 100, old: 7, new: 3, total: 10, ...overrides });
@@ -28,7 +29,7 @@ test("aggregation uses paired bases and strict completeness instead of averaging
   assert.equal(aggregateBudgetFacts([fact(), fact({ old: null })]).old, null);
   assert.equal(aggregateBudgetFacts([fact({ revenue: 0, old: 0 })]).revenue, 0);
   assert.equal(aggregateBudgetFacts([fact({ revenue: -1.5 })]).revenue, -1.5);
-  assert.deepEqual(aggregateBudgetFacts([]), { revenue: null, business: null, old: null, new: null, total: null, discount: null });
+  assert.deepEqual(aggregateBudgetFacts([]), { revenue: null, business: null, old: null, new: null, total: null, discount: null, renewal: null });
 });
 
 test("compensated aggregation preserves precision without rounding individual rows", () => {
@@ -160,6 +161,7 @@ test("the real FY27 952 quarterly facts reconcile 113004618.59 without counting 
   const fields = "renewal share old new total price discount tuition list_revenue business recognition current revenue carryout".split(" ");
   const sourceRows = source.sheets["滚动表"].rows.filter(row => row.row >= 2 && row.cells.A?.value != null);
   const records = sourceRows.flatMap(row => blocks.map((block, index) => ({
+    row: row.row, entry: row.cells.C.value, source_grade: row.cells.E.value, prior_students: row.cells.AE.value,
     track: row.cells.A.value, product: row.cells.B.value, grade: row.cells.D.value, subject: row.cells.F.value, campus: row.cells.G.value,
     annual: row.cells.W.value, season: seasons[index], ...Object.fromEntries(block.split(" ").map((column, i) => [fields[i], row.cells[column]?.value ?? null])),
   })));
@@ -174,11 +176,112 @@ test("the real FY27 952 quarterly facts reconcile 113004618.59 without counting 
   assert.equal(pivot.rows.filter(row => row.leaf).reduce((sum, row) => sum + row.total.revenue, 0).toFixed(2), "113004618.59");
   assert.equal(Object.values(pivot.columnTotals).reduce((sum, values) => sum + values.revenue, 0).toFixed(2), "113004618.59");
   assert.ok(facts.every(row => !Object.hasOwn(row, "annual")));
+  const expectedBases = [5951, 13100, 9250, 7695];
+  const expectedRates = [0.6516903192740718, 0.589074992366412, 0.6743739569915687, 0.7511095750487331];
+  for (const [i, season] of seasons.entries()) {
+    const quarter = filterBudgetFacts(facts, { season });
+    assert.equal(quarter.reduce((sum, row) => sum + row.renewalDenominator, 0), expectedBases[i]);
+    assert.ok(Math.abs(aggregateBudgetFacts(quarter).renewal - expectedRates[i]) < 1e-12);
+    assert.notEqual(aggregateBudgetFacts(quarter).renewal, aggregateBudgetFacts(quarter).old / expectedBases[i]);
+  }
+  assert.equal(filterBudgetFacts(facts, { season: "暑假" }).filter(row => row.renewalDenominator === 0 && row.renewal === "-").length, 119);
 });
 
-test("public metric registry exposes only supported additive metrics and true weighted discount", () => {
+test("public metric registry exposes supported additive metrics and true weighted ratios", () => {
   assert.deepEqual(Object.keys(dimensionLabels), ["season", "track", "campus", "product", "grade", "subject"]);
-  assert.deepEqual(Object.keys(metricLabels), ["revenue", "business", "old", "new", "total", "discount"]);
-  assert.ok(!Object.hasOwn(metricLabels, "renewal")); // missing full bases: no average of detail retention rates
+  assert.deepEqual(Object.keys(metricLabels), ["revenue", "business", "old", "new", "total", "discount", "renewal"]);
+  assert.equal(metricLabels.renewal, "预算续班率");
   assert.deepEqual(defaultAnalysisState().filters, emptyBudgetFilters);
+});
+
+test("budget renewal aggregates input-rate weighted bases, never arithmetic means or rounded old counts", () => {
+  const facts = [fact({ renewal: 0.5, renewalNumerator: 50, renewalDenominator: 100, old: 50 }),
+    fact({ renewal: 0.8, renewalNumerator: 8, renewalDenominator: 10, old: 7 })];
+  assert.equal(aggregateBudgetFacts(facts).renewal, 58 / 110);
+  assert.notEqual(aggregateBudgetFacts(facts).renewal, 0.65);
+  assert.notEqual(aggregateBudgetFacts(facts).renewal, 57 / 110);
+  assert.equal(aggregateBudgetFacts([fact({ renewalNumerator: 0, renewalDenominator: 0 })]).renewal, null);
+  assert.equal(aggregateBudgetFacts([facts[0], fact({ renewalNumerator: null, renewalDenominator: 10 })]).renewal, null);
+  assert.equal(aggregateBudgetFacts([fact({ renewalNumerator: 0, renewalDenominator: 10 })]).renewal, 0);
+  const conf = config({ metrics: ["renewal"] }), pivot = buildBudgetPivot(facts, conf), exported = pivotExport(pivot, conf);
+  assert.equal(pivot.totals.renewal, 58 / 110);
+  assert.equal(exported.rows.at(-1)["total:renewal"], 58 / 110);
+  assert.equal(exported.columns.find(column => column.key === "total:renewal").format, "rate");
+  assert.deepEqual(readAnalysisState("baMetrics=renewal").config.metrics, ["renewal"]);
+});
+
+test("historical renewal uses full preceding season values before filtering and retains unknown or invalid bases", () => {
+  const base = { ...fact(), row: 1, entry: "否", source_grade: "七年级", prior_students: 10, renewal: 0.51, total: 12, old: 5 };
+  const rows = [base, { ...base, season: "秋季", renewal: 0.8, old: 10, total: 13 }];
+  const normalized = normalizeHistoricalFacts(rows);
+  assert.equal(normalized[0].renewalDenominator, 10); assert.equal(normalized[0].renewalNumerator, 5.1);
+  assert.ok(Math.abs(aggregateBudgetFacts(filterBudgetFacts(normalized, { season: "秋季" })).renewal - 0.8) < 1e-12);
+  assert.equal(normalized[1].renewalDenominator, 12);
+  assert.equal(normalizeHistoricalFacts([rows[1]])[0].renewalDenominator, null);
+  for (const overrides of [{ prior_students: null }, { prior_students: -10 }, { renewal: -0.1 }, { renewal: 1.01 }, { renewal: "-" }, { prior_students: "-", renewal: "-", old: 1 }]) {
+    assert.equal(normalizeHistoricalFacts([{ ...base, ...overrides }])[0].renewalDenominator, null);
+  }
+  const noPrior = normalizeHistoricalFacts([{ ...base, prior_students: "-", renewal: "-", old: 0 }])[0];
+  assert.equal(noPrior.renewal, "-"); assert.equal(noPrior.renewalDenominator, 0);
+  assert.equal(aggregateBudgetFacts([noPrior]).renewal, null);
+  assert.equal(normalizeHistoricalFacts([base, base, rows[1]])[2].renewalDenominator, null);
+});
+
+function renewalPublishedFixture() {
+  const dims = { fiscal_year: 2028, track: "初中", campus: "西直门", product: "智慧空间", grade: "八年级", subject: "数学", entry_attribute: "NON_ENTRY", combination_id: "combo" };
+  const counts = [1, 2].map(i => ({ ...dims, season_headcount_result_id: `count${i}`, fiscal_season: 20280 + i, integer_old_students: i === 1 ? 65 : 76,
+    integer_new_students: i === 1 ? 35 : 24, integer_total_students: 100, renewal_rate_ppm: i === 1 ? null : 755000 }));
+  const revenue = counts.map(row => ({ ...row, quarter_recognized_revenue_yuan: "100", business_quarter_revenue_yuan: "90", list_price_revenue_yuan: "100" }));
+  const opening = { fiscal_year: 2028, zero_combination_ids: [], rows: [{ target_key: dims, source_key: { ...dims, grade: "七年级" }, exclusion: null,
+    enrollment: 100, renewal_rate_ppm: 654000, rate_version_id: "rateVersion" }, { target_key: null, exclusion: "GRADUATED", enrollment: 1000, renewal_rate_ppm: 900000, rate_version_id: "rateVersion" }] };
+  return { counts, revenue, context: { fiscalYear: 2028, rateParameterVersionId: "rateVersion", openingContent: opening } };
+}
+
+test("published renewal follows exact immutable opening and previous count bases, excludes graduates and never infers a missing base", () => {
+  const { counts, revenue, context } = renewalPublishedFixture();
+  const [summer, autumn] = normalizePublishedFacts(revenue, counts, context);
+  assert.equal(summer.renewalDenominator, 100); assert.equal(summer.renewalNumerator, 65.4);
+  assert.equal(summer.renewal, 0.654);
+  assert.equal(aggregateBudgetFacts([summer]).renewal, 0.654);
+  assert.equal(autumn.renewalDenominator, 100); assert.equal(aggregateBudgetFacts([autumn]).renewal, 0.755);
+  assert.notEqual(aggregateBudgetFacts([autumn]).renewal, 0.76);
+  assert.equal(normalizePublishedFacts(revenue, counts)[0].renewalDenominator, null);
+  assert.equal(normalizePublishedFacts([revenue[1]], [counts[1]], context)[0].renewalDenominator, null);
+  assert.equal(normalizePublishedFacts(revenue, [{ ...counts[0], headcount_result_version_id: "wrong" }, { ...counts[1], headcount_result_version_id: "correct" }], context)[1].renewalDenominator, null);
+  for (const badContext of [{ ...context, rateParameterVersionId: "wrong" }, { ...context, fiscalYear: 2029 }, { ...context, openingContent: null },
+    { ...context, openingContent: { ...context.openingContent, rows: [context.openingContent.rows[0], context.openingContent.rows[0]] } },
+    { ...context, openingContent: { ...context.openingContent, rows: [{ ...context.openingContent.rows[0], enrollment: -1 }] } }]) {
+    assert.equal(normalizePublishedFacts(revenue, counts, badContext)[0].renewalDenominator, null);
+  }
+  const unknown = normalizePublishedFacts(revenue, [{ ...counts[0], integer_total_students: null }, counts[1]], context);
+  assert.equal(unknown[1].renewalDenominator, null);
+});
+
+test("published explicit zero contributes no weight only when the matching count has zero old students", () => {
+  const { counts, revenue, context } = renewalPublishedFixture();
+  context.openingContent.rows = []; context.openingContent.zero_combination_ids = ["combo"];
+  const zero = normalizePublishedFacts([{ ...revenue[0], integer_old_students: 0 }], [{ ...counts[0], integer_old_students: 0 }], context)[0];
+  assert.equal(zero.renewalNumerator, 0); assert.equal(zero.renewalDenominator, 0);
+  assert.equal(aggregateBudgetFacts([zero]).renewal, null);
+  assert.equal(normalizePublishedFacts([revenue[0]], [counts[0]], context)[0].renewalDenominator, null);
+  const duplicate = { ...counts[0], entry_attribute: "ENTRY", combination_id: "other", season_headcount_result_id: "other" };
+  assert.equal(normalizePublishedFacts(revenue, [counts[0], duplicate, counts[1]], context)[0].renewalDenominator, null);
+});
+
+test("the opening display adapter performs only an exact immutable GET with identity and cancellation", async () => {
+  const previous = globalThis.fetch, controller = new AbortController();
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ opening_student_version_id: "opening/version", content_hash: "hash", content: { fiscal_year: 2028 } }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const result = await fetchOpeningStudentVersion("opening/version", { userId: "reader", departmentId: "department", roles: ["DATA_MAINTAINER"] }, controller.signal);
+    assert.equal(result.opening_student_version_id, "opening/version");
+    assert.equal(request.url, "/api/v1/opening-student-versions/opening%2Fversion");
+    assert.ok(request.options.method === undefined || request.options.method === "GET");
+    assert.equal(request.options.headers["X-User-ID"], "reader");
+    assert.equal(request.options.signal, controller.signal);
+    assert.equal(request.options.body, undefined);
+  } finally { globalThis.fetch = previous; }
 });

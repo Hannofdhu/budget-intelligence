@@ -146,9 +146,9 @@ function stageState(run: OptimizationRun | null, stage: string, unlock: Discount
 
 function StageRail({ run, unlock }: { run: OptimizationRun | null; unlock: DiscountUnlock | null }) {
   const stages = [
-    { key: "ENTRY_ONLY", index: "01", title: "入口结构", note: "财年入口总值不变" },
-    { key: "ENTRY_AND_RATES", index: "02", title: "续班率 · 新生占比", note: "并列、等百分点推进" },
-    { key: "ENTRY_RATES_AND_DISCOUNT", index: "03", title: "折扣率", note: "0.1 个百分点步长" },
+    { key: "ENTRY_ONLY", index: "01", title: "入口结构" },
+    { key: "ENTRY_AND_RATES", index: "02", title: "续班率 · 新生占比" },
+    { key: "ENTRY_RATES_AND_DISCOUNT", index: "03", title: "折扣率" },
   ];
   return (
     <ol className="lever-rail" aria-label="调平杠杆阶段">
@@ -157,7 +157,7 @@ function StageRail({ run, unlock }: { run: OptimizationRun | null; unlock: Disco
         return (
           <li className={`lever-rail__stage lever-rail__stage--${state.tone}`} key={stage.key}>
             <span className="lever-rail__index">{stage.index}</span>
-            <div><strong>{stage.title}</strong><small>{stage.note}</small></div>
+            <div><strong>{stage.title}</strong></div>
             <em>{state.label}</em>
           </li>
         );
@@ -181,7 +181,7 @@ function ContributionBar({ scenario }: { scenario: RebalancingScenario }) {
       <div className="contribution__track" aria-label={retentionShare === null ? "无可计算的收入贡献" : `实际收入贡献 ${retentionShare.toFixed(1)} 比 ${(100 - retentionShare).toFixed(1)}`}>
         <span style={{ width: `${retentionShare ?? 50}%` }} />
       </div>
-      <small>{retentionShare === null ? "本候选无可计算的比例收入贡献" : target ? `目标贡献 ${target[0]}/${target[1]}` : "本阶段不设比例贡献目标"}</small>
+      {retentionShare !== null && target && <small>目标贡献 {target[0]}/{target[1]}</small>}
     </div>
   );
 }
@@ -450,7 +450,7 @@ export function RebalancingPage() {
   if (!revision || !budget) {
     if (revisionInput && state !== "error") return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取预算缺口…</p></main></div>;
     return (
-      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 处理缺口</p><h1>{error ? "预算缺口读取失败" : "请先打开年度预算"}</h1><p>{error ?? "从预算结果进入，系统会自动带入需要处理的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void load(revisionInput)}>重试读取</button>}</main></div>
+      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 处理缺口</p><h1>{error ? "预算缺口读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void load(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 
@@ -474,7 +474,7 @@ export function RebalancingPage() {
           <div>
             <p className="decision-kicker">FY{String(budget.fiscal_year).slice(-2)} / 预算结果</p>
             <h1>{title}</h1>
-            <p>{isPublished ? "正式版本仅可查看。需要调整时，请从年度预算派生新草稿。" : !isCurrentDraft ? "历史修订仅可查看。需要继续调整，请先创建新草稿。" : !closure ? "完成人数、班均和收入计算后，系统才能判断是否需要调平。" : needsBalancing ? "先看可调整空间，再决定是否应用方案。" : "当前收入与目标的差异在确认容差内，可以继续确认预算。"}</p>
+
           </div>
           <div className={`gap-ledger ${gap !== null && !needsBalancing ? "gap-ledger--closed" : ""}`}>
             <span>{gap === null ? "当前修订" : gap < 0 ? "部门预算缺口" : gap > 0 ? "部门预算超额" : "与目标差异"}</span>
@@ -506,15 +506,15 @@ export function RebalancingPage() {
           </section>
         )}
 
-        {(needsBalancing || run) && <details className="rebalance-evidence"><summary>调整顺序与求解依据</summary><StageRail run={run} unlock={unlock} /><p>入口总量固定；续班率与新生占比并列、等百分点推进；折扣只在满足解锁条件后使用。</p><ProofPanel proofs={run?.infeasibility_proofs ?? []} /></details>}
+        {(needsBalancing || run) && <details className="rebalance-evidence"><summary>调整顺序与求解依据</summary><StageRail run={run} unlock={unlock} /><ProofPanel proofs={run?.infeasibility_proofs ?? []} /></details>}
 
         {isCurrentDraft && needsBalancing && run?.status !== "OPTIMAL" && run?.discount_unlock_required && (
           <section className="unlock-desk">
-            <div><span>03 / 折扣门禁</span><h2>前两级已精确穷尽</h2><p>不可行证明只能开启当前修订、当前输入指纹的折扣候选。上游变化后解锁立即失效。</p></div>
+            <div><span>03 / 折扣门禁</span><h2>前两级已精确穷尽</h2></div>
             <div className="unlock-desk__actions">
               {!unlock && <><textarea rows={3} value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} /><button onClick={() => void requestUnlock()} disabled={!exactRateProof || state === "working"}>数据维护人员发起解锁</button></>}
               {unlock?.status === "REQUESTED" && <><p><strong>已申请</strong><span>{unlock.reason}</span></p><button onClick={() => void confirmUnlock()} disabled={state === "working"}>部门预算负责人确认</button></>}
-              {unlock?.status === "ACTIVE" && <><p><strong>折扣候选已解锁</strong><span>需重新求解才会进入第三阶段</span></p><button onClick={() => void generate()} disabled={state === "working"}>生成含折扣候选</button></>}
+              {unlock?.status === "ACTIVE" && <><p><strong>折扣候选已解锁</strong></p><button onClick={() => void generate()} disabled={state === "working"}>生成含折扣候选</button></>}
             </div>
           </section>
         )}
@@ -522,14 +522,14 @@ export function RebalancingPage() {
         {isCurrentDraft && needsBalancing && <section className="candidate-section">
           <header>
             <div><span>可选方案</span><h2>先比较，再应用</h2></div>
-            <p>{run?.scenarios.length ? `${run.scenarios.length} 个不同结果，选择一个查看明细。` : "生成方案不会修改当前预算。"}</p>
+            {Boolean(run?.scenarios.length) && <span>{run!.scenarios.length} 个方案</span>}
           </header>
           {run?.scenarios.length ? (
             <div className="candidate-grid">
               {run.scenarios.map((scenario, index) => <CandidateCard key={scenario.rebalancing_scenario_id} scenario={scenario} index={index} selected={selectedId === scenario.rebalancing_scenario_id} onSelect={() => { setSelectedId(scenario.rebalancing_scenario_id); setShowDetails(true); }} />)}
             </div>
           ) : (
-            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3>{run?.status === "INFEASIBLE" ? "当前约束下没有可行方案" : run?.status === "INCOMPLETE" ? "尚未求出结论" : run?.status === "FAILED" ? "方案生成失败" : "等待生成方案"}</h3><p>{run?.status === "INFEASIBLE" ? "可查看上方的调整顺序与不可行依据，不会自动放宽边界。" : run?.status === "INCOMPLETE" ? "这不代表方案不可行，请重试或查看求解依据。" : run?.reason_code ?? "生成方案不会修改当前预算。"}</p></div>
+            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3>{run?.status === "INFEASIBLE" ? "当前约束下没有可行方案" : run?.status === "INCOMPLETE" ? "尚未求出结论" : run?.status === "FAILED" ? "方案生成失败" : "等待生成方案"}</h3>{run?.reason_code && <p role="status">{run.reason_code}</p>}</div>
           )}
         </section>}
 
@@ -546,7 +546,7 @@ export function RebalancingPage() {
               <div className="scenario-detail__apply">
                 <label><span>应用原因</span><textarea rows={2} value={applyReason} onChange={(event) => setApplyReason(event.target.value)} maxLength={500} /></label>
                 <button className="button button--primary" onClick={() => void applySelected()} disabled={state === "working" || run?.status !== "OPTIMAL" || !applyReason.trim()}>应用到草稿</button>
-                <small>将生成新的不可变预算修订；不会自动正式确认或发布。</small>
+
               </div>
             </div>
             <ContributionBar scenario={selected} />

@@ -81,8 +81,9 @@ export function BusinessForm({ schema, value, onChange, root = schema, name = ""
 export function ReadTable({ rows }: { rows: Record<string, Value>[] }) {
   const [query, setQuery] = useState(""); const [page, setPage] = useState(0);
   if (!rows.length) return <p>暂无明细。</p>;
-  const keys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => !hidden(k) && rows.some(r => r[k] !== null && typeof r[k] !== "object"));
-  const filtered = rows.filter(r => Object.values(r).some(v => typeof v !== "object" && String(v).includes(query)));
+  const hiddenResultKeys = new Set(["current_season_revenue_yuan", "next_season_carryover_revenue_yuan"]);
+  const keys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => !hidden(k) && !hiddenResultKeys.has(k) && rows.some(r => r[k] !== null && typeof r[k] !== "object"));
+  const filtered = rows.filter(r => keys.some(key => typeof r[key] !== "object" && String(r[key]).includes(query)));
   const n = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
   const displayValue = (key: string, cell: Value) => {
     if (cell === null || cell === undefined) return "—";

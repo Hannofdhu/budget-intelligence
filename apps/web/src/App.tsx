@@ -233,7 +233,7 @@ export function App() {
   if (path === "/budget/publication") return <PublicationPage />;
   const section = ({ "/budget/targets": "targets", "/budget/combinations": "combinations", "/budget/entry": "entry-total", "/budget/entry-allocation": "campus", "/budget/entry-scope": "entry-scope", "/budget/rates": "rates", "/budget/resources": "resources", "/budget/resource-finance": "resources", "/budget/discounts": "discount", "/budget/headcount": "results", "/budget/class-size": "results", "/budget/revenue": "results" } as Record<string, string>)[path];
   if (section) { const url = new URL(location.href); url.pathname = "/budget/workspace"; url.searchParams.set("section", section); history.replaceState({}, "", url); return <WorkspacePage />; }
-  return <main className="workspace"><h1>此页面尚未提供</h1><p>请从年度预算工作区选择正确操作；不会把未知页面当成发布检查。</p><a href="/budget/workspace">返回年度预算工作区</a></main>;
+  return <main className="workspace"><h1>此页面尚未提供</h1><a href="/budget/workspace">返回年度预算工作区</a></main>;
 }
 
 function PublicationPage() {
@@ -384,7 +384,7 @@ function PublicationPage() {
       return <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取发布状态…</p></main></div>;
     }
     return (
-      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1>{error ? "发布状态读取失败" : "请先打开年度预算"}</h1><p>{error ?? "选择预算后，系统会带你回到需要确认的修订。"}</p><a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
+      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1>{error ? "发布状态读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
     );
   }
 
@@ -435,7 +435,7 @@ function PublicationPage() {
           <button className="publication-refresh" onClick={refresh} disabled={loadState === "loading"} aria-label="刷新检查结果"><RefreshGlyph /><span>{loadState === "loading" ? "刷新中" : "刷新"}</span></button>
         </header>
         <div className="publication-heading">
-          <div><p>任务 5 / 5</p><h1 ref={pageTitleRef} tabIndex={-1}>确认并定版</h1><span>{isPublished ? "这版预算已定版，可以直接查看结果。" : readiness.status === "BLOCKED" ? "先处理阻断项，再回来确认。" : isFormallyConfirmed ? "正式方案已确认，接下来由你决定是否发布。" : "检查已通过，确认前系统会完整复算。"}</span></div>
+          <div><p>任务 5 / 5</p><h1 ref={pageTitleRef} tabIndex={-1}>确认并定版</h1></div>
           <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>查看变化记录</a>
         </div>
 
@@ -454,7 +454,7 @@ function PublicationPage() {
           </dl>
         </section>
 
-        {isPublished && !publishedWithAuditMismatch && <div className="publication-complete"><a className="decision-primary" href={`/budget/results?revision=${encodeURIComponent(activeRevisionId)}`}>查看预算结果</a><span>已定版版本仅可查看；后续修改需派生新草稿。</span></div>}
+        {isPublished && !publishedWithAuditMismatch && <div className="publication-complete"><a className="decision-primary" href={`/budget/results?revision=${encodeURIComponent(activeRevisionId)}`}>查看预算结果</a></div>}
 
         {error && (
           <div className="inline-error" role="alert">
@@ -489,7 +489,7 @@ function PublicationPage() {
 
             <div className="ledger__body">
               {groupedChecks.length === 0 ? (
-                <div className="empty-blockers"><StatusGlyph passed /><div><strong>没有发布阻断</strong><p>全部硬约束均已通过。需要核对技术明细时再查看全部检查。</p></div><button className="button" onClick={() => setFilter("all")}>查看全部 {readiness.checks.length} 项</button></div>
+                <div className="empty-blockers"><StatusGlyph passed /><div><strong>没有发布阻断</strong></div><button className="button" onClick={() => setFilter("all")}>查看全部 {readiness.checks.length} 项</button></div>
               ) : groupedChecks.map(([group, checks]) => (
                 <section className="check-group" key={group} aria-labelledby={`group-${group}`}>
                   <div className="check-group__title">
@@ -538,7 +538,7 @@ function PublicationPage() {
 
             {!isFormallyConfirmed && !isPublished && (
               <div className="action-panel">
-                <div className="confirmation-consequence"><strong>确认会重新计算整套预算</strong><span>人数、班均、收入和目标闭合将重新生成；任一阻断都会停止确认。</span></div>
+                <div className="confirmation-consequence"><strong>确认会重新计算整套预算</strong></div>
                 <label>
                   <span>正式确认原因 <b>必填</b></span>
                   <textarea value={formalReason} onChange={(event) => setFormalReason(event.target.value)} maxLength={500} rows={3} />
@@ -559,16 +559,14 @@ function PublicationPage() {
                 <button className="button button--publish button--wide" onClick={() => void handlePublish()} disabled={!canPublish}>
                   {actionState === "publishing" ? "正在发布…" : "发布年度预算基线"}
                 </button>
-                <p>发布前系统会再次检查全部硬约束并比对确认指纹。</p>
+
               </div>
             )}
 
             {isPublished && (
               <div className="published-receipt">
                 <div className="formal-stamp formal-stamp--published"><span>FY{String(annualBudget.fiscal_year).slice(-2)}</span><strong>已定版</strong></div>
-                <p>{publishedWithAuditMismatch
-                  ? `该正式版本按当前门禁复核存在 ${readiness.blocker_count} 项异常，仅可查看并进入审计处理。`
-                  : "该修订已成为当前年度预算正式基线，仅可查看或派生新草稿。"}</p>
+                {publishedWithAuditMismatch && <p role="alert">该正式版本按当前门禁复核存在 {readiness.blocker_count} 项异常，仅可查看并进入审计处理。</p>}
                 {published && <small>发布于 {formatDate(published.published_at)} · {published.published_by}</small>}
                 <a className="button button--primary published-result-link" href={`/budget/results?revision=${encodeURIComponent(revision.budget_revision_id)}`}>查看 FY{String(annualBudget.fiscal_year).slice(-2)} 预算结果</a>
               </div>

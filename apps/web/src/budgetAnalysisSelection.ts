@@ -23,7 +23,7 @@ export function budgetSelectionStatistics(facts: BudgetFact[], cells: BudgetSele
   if (numbers.length === 0) return null;
   const members = budgetFactsForCells(facts, cells, column);
   const hasOverlap = members.some(fact => cells.filter(cell => contains(fact, cell, column)).length > 1);
-  const sum = metric === "discount" ? null : aggregateBudgetFacts(members)[metric];
+  const sum = metric === "discount" || metric === "renewal" ? null : aggregateBudgetFacts(members)[metric];
   return {
     count: numbers.length,
     sum,

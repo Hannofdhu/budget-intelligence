@@ -51,14 +51,14 @@ export function OpeningStudentsPage() {
   return <div className="app-frame">
     <header className="topbar"><a className="brand" href={`/budget/workspace?revision=${encodeURIComponent(revision)}`}>年度预算工作区</a><nav aria-label="主要导航"><a className="is-current" href={`/budget/opening?revision=${encodeURIComponent(revision)}`}>期初老生</a><a href={`/budget/rebalancing?revision=${encodeURIComponent(revision)}`}>调平方案</a><a href={`/budget/audit?revision=${encodeURIComponent(revision)}`}>版本审计</a></nav></header>
     <main className="workspace opening-workspace">
-      <div className="page-heading"><div><h1>期初老生维护</h1><p>从上一财年春季招生人次续入暑假。FY27 已定版，仅 FY28 及以后适用。</p></div></div>
+      <div className="page-heading"><div><h1>期初老生维护</h1></div></div>
       <fieldset disabled={busy || data !== null} className="opening-connection"><legend>本地开发身份与预算修订</legend>
         <label>部门 ID<input value={identity.departmentId} onChange={e => setIdentity({ ...identity, departmentId: e.target.value })} /></label>
         <label>数据维护人员 ID<input value={identity.userId} onChange={e => setIdentity({ ...identity, userId: e.target.value })} /></label>
         <label>预算修订 ID<input value={revision} onChange={e => setRevision(e.target.value.trim())} /></label>
       </fieldset>
       <button className="button" disabled={busy || !revision} onClick={() => data ? (setData(null), setReceipt("")) : void load(revision)}>{data ? "切换修订" : "读取维护数据"}</button>
-      <p className="connect-note">开发身份请求头仅用于本地试用，不代表生产权限配置。</p>
+
       {error && <p className="inline-error" role="alert">{error}</p>}
       {receipt && <p className="opening-receipt" role="status">{receipt}</p>}
       {data && <>
@@ -72,13 +72,13 @@ export function OpeningStudentsPage() {
             <label>筛选校区、产品或科目<input value={query} onChange={e => setQuery(e.target.value)} placeholder="输入关键词" /></label>
             <div className="opening-table"><table><thead><tr>{["校区", "赛道 / 产品", "科目", "来源年级", "续入年级", "招生人次", "春续暑续班率", "理论老生人次"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>
               {source.rows.filter(r => [r.campus, r.product, r.track, r.subject, r.grade].join(" ").includes(query)).map((r, i) => <tr key={i}><td>{r.campus}</td><td>{r.track} / {r.product}</td><td>{r.subject}</td><td>{r.grade}</td><td>{target(r)?.grade ?? (r.grade === "九年级" ? "毕业，不续入" : "学科结束，不续入")}</td><td>{r.enrollment ?? "缺失"}</td><td>{r.renewal_rate_ppm === null ? "待维护" : `${r.renewal_rate_ppm / 10000}%`}</td><td>{r.enrollment === null || r.renewal_rate_ppm === null ? "无法计算" : target(r) ? (r.enrollment * r.renewal_rate_ppm / 1000000).toLocaleString("zh-CN", { maximumFractionDigits: 6 }) : "—"}</td></tr>)}
-            </tbody></table></div><p>共 {source.rows.length} 条来源。这里展示理论人数；最终整数由人数计算按组分配，不逐行提前取整。</p></>}
+            </tbody></table></div><p>共 {source.rows.length} 条来源</p></>}
         </section>
-        {source && <section className="ledger opening-section"><h2>无来源覆盖的明细 · {uncovered.length} 条</h2><p>逐项确认确实没有期初老生后勾选；未勾选视为缺失，不会自动填零。</p>
+        {source && <section className="ledger opening-section"><h2>无来源覆盖的明细 · {uncovered.length} 条</h2>
           <div className="opening-zero-list">{uncovered.map(c => <label key={c.combination_id}><input type="checkbox" disabled={busy || !data.is_current_draft} checked={zeros.includes(c.combination_id)} onChange={e => setZeros(e.target.checked ? [...zeros, c.combination_id] : zeros.filter(id => id !== c.combination_id))} />{c.campus} / {c.track} / {c.product} / {c.grade} / {c.subject}：确认期初为 0</label>)}</div>
           <label>维护原因（必填）<textarea disabled={busy} rows={3} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></label>
           {invalid && <p role="alert">来源人数或续班率绑定不完整，请维护上游数据后重新读取。</p>}
-          <button className="button button--primary" disabled={busy || !data.is_current_draft || invalid || zeros.length !== uncovered.length || !reason.trim()} onClick={() => void save()}>{busy ? "处理中…" : "保存期初版本"}</button><p>保存会生成新修订，不覆盖历史版本，也不会自动计算或发布预算。</p>
+          <button className="button button--primary" disabled={busy || !data.is_current_draft || invalid || zeros.length !== uncovered.length || !reason.trim()} onClick={() => void save()}>{busy ? "处理中…" : "保存期初版本"}</button>
         </section>}
       </>}
     </main>

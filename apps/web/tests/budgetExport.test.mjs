@@ -51,7 +51,7 @@ test("all five exports exclude spreadsheet locations and store amounts/counts/ra
 });
 
 const sourcePath = new URL("../../../output/fy27-shadow/source-cells.json", import.meta.url);
-test("952 FY27 quarterly rows retain their saved revenue and cross-year carry reconciliation in XLSX", { skip: !fs.existsSync(sourcePath) }, async () => {
+test("952 FY27 XLSX rows retain recognized revenue without exposing carry components or changing their source reconciliation", { skip: !fs.existsSync(sourcePath) }, async () => {
   const original = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
   const blocks = ["AW AX AY", "BN BO BP", "CE CF CG", "CV CW CX"];
   const rows = original.sheets["滚动表"].rows.filter(row => row.row >= 2 && row.cells.A?.value != null)
@@ -61,14 +61,15 @@ test("952 FY27 quarterly rows retain their saved revenue and cross-year carry re
         revenue: row.cells[revenue].value, carryout: row.cells[carryout].value };
     }));
   assert.equal(rows.length, 952);
-  const columns = historicalExportColumns(4).filter(column => ["campus", "season", "current", "revenue", "carryout"].includes(column.key));
+  const columns = historicalExportColumns(4).filter(column => ["campus", "season", "revenue"].includes(column.key));
+  assert.ok(historicalExportColumns(4).every(column => !["current", "carryout"].includes(column.key)));
   const workbook = await budgetWorkbook(columns, rows);
   const { default: ExcelJS } = await import("exceljs");
   const reopened = new ExcelJS.Workbook();
   await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
   assert.equal(reopened.worksheets[0].rowCount, 953);
   const totals = {};
-  for (const field of ["current", "revenue", "carryout"]) {
+  for (const field of ["revenue"]) {
     const index = columns.findIndex(column => column.key === field) + 1;
     totals[field] = 0;
     rows.forEach((row, i) => {
@@ -79,7 +80,7 @@ test("952 FY27 quarterly rows retain their saved revenue and cross-year carry re
     });
   }
   assert.equal(totals.revenue.toFixed(2), "113004618.59");
-  assert.equal((totals.current + totals.carryout).toFixed(2), "112480004.34");
+  assert.equal(rows.reduce((total, row) => total + row.current + row.carryout, 0).toFixed(2), "112480004.34");
 });
 
 test("historical budget UI exposes no workbook-specific source controls", () => {

@@ -53,6 +53,30 @@ test("default analysis markup presents a business board and all four fiscal seas
   assert.doesNotMatch(html, /查看依据|来源与口径|参数来源|secret\.xlsx/);
 });
 
+test("business board shows old and new counts plus weighted budget renewal in both chart and quarter table", () => {
+  const facts = [fact({ old: 50, new: 12, total: 62, renewal: 0.5, renewalNumerator: 50, renewalDenominator: 100 }),
+    fact({ id: "small", old: 7, new: 3, total: 10, renewal: 0.8, renewalNumerator: 8, renewalDenominator: 10 })];
+  const html = render(facts), readable = text(html);
+  assert.match(readable, /季度招生人次/); assert.match(readable, /季度续班率/);
+  assert.match(readable, /季度招生预算/); assert.match(readable, /校区招生人次/); assert.match(readable, /校区续班率/);
+  assert.match(readable, /老生人次/); assert.match(readable, /新生人次/);
+  assert.match(readable, /57/); assert.match(readable, /15/); assert.match(readable, /72/);
+  assert.match(readable, /52\.73%/); assert.doesNotMatch(readable, /65%|51\.82%/);
+  assert.match(html, /role="img"[^>]*aria-label="[^"]*暑假续班率52\.73%/);
+  assert.ok(buttonText(html).some(button => button.text === "透视续班率"));
+  assert.match(html, /aria-label="季度招生预算表"/);
+});
+
+test("renewal pivot supports the same weighted ratio and unknown bases remain a dash", () => {
+  const facts = [fact({ renewalNumerator: 50, renewalDenominator: 100 }), fact({ id: "small", renewalNumerator: 8, renewalDenominator: 10 })];
+  const html = render(facts, "baView=pivot&baMetrics=renewal"), readable = text(html);
+  assert.match(readable, /预算续班率/); assert.match(readable, /52\.73%/);
+  assert.match(html, /aria-label="[^"]*预算续班率[^"]*52\.73%/);
+  const unknown = render([fact({ renewal: 0.9, renewalNumerator: null, renewalDenominator: null })], "baView=pivot&baMetrics=renewal");
+  assert.match(text(unknown), /—/); assert.doesNotMatch(text(unknown), /90%/);
+  assert.doesNotMatch(unknown, /NaN|Infinity|undefined/);
+});
+
 test("URL selects the actual pivot markup with hierarchy configuration and numeric cells", () => {
   const html = render(fourQuarters, "baView=pivot&baRows=campus,product&baMetrics=revenue,total&baUnit=yuan");
   const readable = text(html);
@@ -118,15 +142,17 @@ test("visible analysis buttons have usable accessible names and table navigation
 const sourcePath = new URL("../../../output/fy27-shadow/source-cells.json", import.meta.url);
 test("the real FY27 overview renders 113004618.59 from 952 quarterly rows, not repeated annual totals", { skip: !fs.existsSync(sourcePath) }, () => {
   const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-  const blocks = ["AL AM AN AR AS AX", "BC BD BE BI BJ BO", "BT BU BV BZ CA CF", "CK CL CM CQ CR CW"];
-  const fields = ["old", "new", "total", "list_revenue", "business", "revenue"];
+  const blocks = ["AI AL AM AN AR AS AX", "AZ BC BD BE BI BJ BO", "BQ BT BU BV BZ CA CF", "CH CK CL CM CQ CR CW"];
+  const fields = ["renewal", "old", "new", "total", "list_revenue", "business", "revenue"];
   const facts = normalizeHistoricalFacts(source.sheets["滚动表"].rows.filter(row => row.row >= 2 && row.cells.A?.value != null)
-    .flatMap(row => blocks.map((block, index) => ({ track: row.cells.A.value, product: row.cells.B.value, grade: row.cells.D.value,
+    .flatMap(row => blocks.map((block, index) => ({ row: row.row, prior_students: row.cells.AE.value, entry: row.cells.C.value, source_grade: row.cells.E.value,
+      track: row.cells.A.value, product: row.cells.B.value, grade: row.cells.D.value,
       subject: row.cells.F.value, campus: row.cells.G.value, annual: row.cells.W.value, season: ["暑假", "秋季", "寒假", "春季"][index],
       ...Object.fromEntries(block.split(" ").map((column, i) => [fields[i], row.cells[column]?.value ?? null])) }))));
   assert.equal(facts.length, 952);
   const html = render(facts, "baUnit=yuan");
   assert.match(text(html), /113,004,618\.59/);
+  for (const rate of ["65.17%", "58.91%", "67.44%", "75.11%"]) assert.match(text(html), new RegExp(rate.replace(/[.%]/g, "\\$&")));
   assert.doesNotMatch(html, /来源与口径|参数来源|查看依据/);
 });
 
@@ -138,10 +164,70 @@ test("the analysis view stays inside the existing five-step annual-budget shell"
   assert.match(historical, /<BudgetAnalysisView/); assert.match(results, /<BudgetAnalysisView/);
   assert.doesNotMatch(shared, /location\.assign|location\.href\s*=/);
   assert.doesNotMatch(shared, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/);
+  assert.match(results, /fetchRevision\(counts\.budget_revision_id/);
+  assert.match(results, /fetchOpeningStudentVersion\(openingId/);
+  assert.doesNotMatch(results, /fetchOpeningWorkspace|saveOpening|calculateHeadcount/);
 });
 
 test("static render restores all mocked browser globals", () => {
   const before = Object.getOwnPropertyDescriptor(globalThis, "location");
   render(fourQuarters);
   assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, "location"), before);
+});
+
+test("board lays out old/new cards, quarterly student chart and tables, and weighted budget renewal", () => {
+  const facts = [fact({ id: "small", old: 80, new: 20, total: 100, renewal: .8, renewalNumerator: 80, renewalDenominator: 100 }),
+    fact({ id: "large", old: 540, new: 360, total: 900, renewal: .6, renewalNumerator: 540, renewalDenominator: 900 })];
+  const html = render(facts), readable = text(html);
+  for (const label of ["老生人次", "新生人次", "季度招生人次", "季度续班率", "季度招生预算", "校区招生人次", "校区续班率"]) assert.ok(readable.includes(label), label);
+  assert.match(readable, /620/); assert.match(readable, /380/); assert.match(readable, /1,000/);
+  assert.match(readable, /62%/); assert.doesNotMatch(readable, /70%/);
+  assert.match(html, /<svg[^>]+role="img"/); assert.match(html, /aria-label="各季度老生与新生人次"/);
+  assert.match(html, /aria-label="校区季度老生新生人次表"/);
+  assert.match(html, /aria-label="校区季度续班率表"/);
+  assert.doesNotMatch(readable, /按原价收入加权|点击看明细|只保存筛选和布局|当季业务确认收入|递延至下季收入/);
+});
+
+test("renewal is a selectable pivot metric and missing quarters never become zero line points", () => {
+  const facts = [fact({ renewal: .65, renewalNumerator: 65, renewalDenominator: 100 })];
+  const board = render(facts);
+  assert.equal((board.match(/<circle\b/g) ?? []).length, 1);
+  assert.equal((board.match(/<polyline\b/g) ?? []).length, 0);
+  assert.match(text(board), /65%/);
+  const pivot = render(facts, "baView=pivot&baMetrics=renewal");
+  assert.match(text(pivot), /预算续班率/); assert.match(text(pivot), /65%/);
+  assert.doesNotMatch(text(pivot), /预算续班率（人次）/);
+  assert.match(pivot, /type="checkbox"[^>]*checked/);
+});
+
+test("quarter-filtered student totals have no whole-year label and keep other seasons unknown", () => {
+  const facts = fourQuarters.map(row => ({ ...row, renewal: .8, renewalNumerator: 8, renewalDenominator: 10 }));
+  const html = render(facts, `bf_season=${encodeURIComponent("秋季")}`), readable = text(html);
+  assert.doesNotMatch(readable, /全年/);
+  assert.match(readable, /合计/); assert.equal((html.match(/<circle\b/g) ?? []).length, 1);
+  assert.match(readable, /80%/);
+});
+
+test("student and renewal charts keep recorded zero and exclude half-missing quarters from the bar scale", () => {
+  const facts = [fact({ id: "full", old: 8, new: 2, total: 10, renewal: 0, renewalNumerator: 0, renewalDenominator: 100 }),
+    fact({ id: "partial", season: "秋季", old: null, new: 10000, total: null, renewalNumerator: null, renewalDenominator: null })];
+  const html = render(facts);
+  assert.match(html, /height:80%/); assert.match(html, /height:20%/);
+  assert.match(html, /暑假续班率0%/); assert.equal((html.match(/<circle\b/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /NaN|Infinity/);
+  const shared = fs.readFileSync(new URL("../src/BudgetAnalysisView.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(shared, /key: "(?:current|carryout)"|当季业务确认收入|递延至下季收入/);
+  assert.match(shared, /key: "renewal", label: "预算续班率", format: "rate"/);
+});
+
+test("FY27 student board displays all saved quarterly rates from the correct transition bases", { skip: !fs.existsSync(sourcePath) }, () => {
+  const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+  const blocks = ["AL AM AN AR AS AX AI", "BC BD BE BI BJ BO AZ", "BT BU BV BZ CA CF BQ", "CK CL CM CQ CR CW CH"];
+  const fields = ["old", "new", "total", "list_revenue", "business", "revenue", "renewal"];
+  const facts = normalizeHistoricalFacts(source.sheets["滚动表"].rows.filter(row => row.row >= 2 && row.cells.A?.value != null)
+    .flatMap(row => blocks.map((block, index) => ({ row: row.row, track: row.cells.A.value, product: row.cells.B.value, grade: row.cells.D.value,
+      subject: row.cells.F.value, campus: row.cells.G.value, prior_students: row.cells.AE?.value ?? null,
+      season: ["暑假", "秋季", "寒假", "春季"][index], ...Object.fromEntries(block.split(" ").map((column, i) => [fields[i], row.cells[column]?.value ?? null])) }))));
+  const readable = text(render(facts, "baUnit=yuan"));
+  for (const value of ["23,610", "13,178", "36,788", "65.17%", "58.91%", "67.44%", "75.11%", "113,004,618.59"]) assert.ok(readable.includes(value), value);
 });

@@ -195,17 +195,23 @@ export interface RevenueResultVersion {
 
 export interface SeasonHeadcountResult {
   season_headcount_result_id: string;
+  combination_id?: string;
+  combination_stable_key?: string;
+  fiscal_year?: number;
   fiscal_season: number;
   quarter_name: string;
   track: string; product: string; entry_attribute: string; grade: string; subject: string; campus: string;
   integer_old_students: number | null;
   integer_new_students: number | null;
   integer_total_students: number | null;
+  renewal_rate_ppm?: number | null;
+  new_student_share_input_ppm?: number | null;
 }
 
 export interface HeadcountResultVersion {
   headcount_result_version_id: string;
   budget_revision_id: string;
+  rate_parameter_version_id?: string;
   items: SeasonHeadcountResult[];
 }
 
@@ -440,6 +446,14 @@ export interface OpeningWorkspace {
   fiscal_year: number; source_fiscal_season: number; is_current_draft: boolean;
   sources: Array<{ source_component_id: string; dataset_name: string; snapshot_date: string; source_batch: string; partition: string; content_hash: string; rows: OpeningSourceRow[] }>;
   combinations: Array<OpeningDimension & { combination_id: string }>;
+}
+export interface OpeningStudentVersion {
+  opening_student_version_id: string;
+  content_hash: string;
+  content: Record<string, unknown>;
+}
+export async function fetchOpeningStudentVersion(versionId: string, identity: ApiIdentity, signal?: AbortSignal): Promise<OpeningStudentVersion> {
+  return parseResponse(await fetch(`/api/v1/opening-student-versions/${encodeURIComponent(versionId)}`, { headers: identityHeaders(identity), signal }));
 }
 export async function fetchOpeningWorkspace(revisionId: string, identity: ApiIdentity): Promise<OpeningWorkspace> {
   return parseResponse(await fetch(`/api/v1/revisions/${encodeURIComponent(revisionId)}/opening-students/workspace`, { headers: identityHeaders(identity) }));

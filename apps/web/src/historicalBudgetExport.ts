@@ -17,8 +17,6 @@ export function historicalExportColumns(step: number): ExportColumn[] {
   if (step === 4) return [...common, season,
     { key: "minimum", label: "最低班均", format: "count" }, { key: "price", label: "学费原价（元）", format: "money" },
     { key: "discount", label: "折扣率", format: "rate" }, { key: "recognition", label: "当季确认比例", format: "rate" },
-    { key: "business", label: "业务收入（含税，元）", format: "money" },
-    { key: "current", label: "当季业务确认收入（不含税，元）", format: "money" },
-    { key: "carryout", label: "递延至下季收入（不含税，元）", format: "money" }, revenue];
+    { key: "business", label: "业务收入（含税，元）", format: "money" }, revenue];
   return [...common, season, ...students, revenue];
 }

@@ -33,7 +33,7 @@ export function PublishedBudgetRecord({ revisionId, annualBudgetId, identity }: 
       {event.reason && <p>{event.reason}</p>}
     </li>)}</ol>}
     {readiness && <details className="overview-checks"><summary>当前复核 · {readiness.blocker_count ? `${readiness.blocker_count} 项需关注` : `${readiness.checks.length} 项通过`}</summary>
-      <p>以下为当前读取的检查结果，定版事实以上方记录为准。</p>
+
       <ul>{readiness.checks.map(check => <li key={check.code}><span>{check.passed ? "通过" : "需关注"}</span><div>{check.rule}</div></li>)}</ul>
     </details>}
   </div>;

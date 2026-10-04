@@ -8,14 +8,14 @@ export const dimensionLabels: Record<BudgetDimension, string> = {
   season: "季度", track: "赛道", campus: "校区", product: "产品", grade: "年级", subject: "科目",
 };
 export const metricLabels: Record<BudgetMetric, string> = {
-  revenue: "确认收入", business: "业务收入（含税）", old: "老生人次", new: "新生人次", total: "总人次", discount: "综合折扣",
+  revenue: "确认收入", business: "业务收入（含税）", old: "老生人次", new: "新生人次", total: "总人次", discount: "综合折扣", renewal: "预算续班率",
 };
 export const seasons = ["暑假", "秋季", "寒假", "春季"];
 export const emptyBudgetFilters: BudgetFilters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
 const dimensions = Object.keys(dimensionLabels) as BudgetDimension[];
 const metrics = Object.keys(metricLabels) as BudgetMetric[];
 const collator = new Intl.Collator("zh-CN", { numeric: true });
-const emptyValues = (): BudgetMetricValues => ({ revenue: null, business: null, old: null, new: null, total: null, discount: null });
+const emptyValues = (): BudgetMetricValues => ({ revenue: null, business: null, old: null, new: null, total: null, discount: null, renewal: null });
 
 export function defaultAnalysisState(): BudgetAnalysisState {
   return { view: "board", filters: { ...emptyBudgetFilters }, config: { rows: ["campus"], column: "season", metrics: ["revenue"], sort: "revenue-desc" }, unit: "wan" };
@@ -49,9 +49,11 @@ function completeSum(facts: BudgetFact[], field: keyof BudgetFact): number | nul
 
 export function aggregateBudgetFacts(facts: BudgetFact[]): BudgetMetricValues {
   const values = emptyValues();
-  for (const metric of metrics) if (metric !== "discount") values[metric] = completeSum(facts, metric);
+  for (const metric of metrics) if (metric !== "discount" && metric !== "renewal") values[metric] = completeSum(facts, metric);
   const list = completeSum(facts, "listRevenue");
   values.discount = values.business !== null && list !== null && list !== 0 ? values.business / list : null;
+  const numerator = completeSum(facts, "renewalNumerator"), denominator = completeSum(facts, "renewalDenominator");
+  values.renewal = numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null;
   return values;
 }
 
@@ -125,12 +127,22 @@ function quarterName(row: Record<string, unknown>): string {
 // Keep only display facts. Annual row totals, workbook positions and provenance are
 // deliberately excluded, preventing an annual value from being counted four times.
 export function normalizeHistoricalFacts(records: object[]): BudgetFact[] {
+  const sourceRows = records.map(record);
+  const sourceKey = (row: Record<string, unknown>, season = row.season) => JSON.stringify([row.row ?? null, row.track, row.product, row.entry, row.grade, row.source_grade, row.subject, row.campus, season]);
+  const bySeason = uniqueIndex(sourceRows, sourceKey);
   return records.map((source, index) => {
     const row = record(source), dims = factDimensions(row, row.season);
+    const seasonIndex = seasons.indexOf(dims.season);
+    const previous = seasonIndex > 0 ? bySeason.get(sourceKey(row, seasons[seasonIndex - 1])) : null;
+    const base = seasonIndex === 0 ? row.prior_students : previous?.total;
+    // The FY27 saved workbook explicitly uses '-' for rows without preceding
+    // spring enrollment and an old count of zero. It is not a missing value.
+    const notApplicable = seasonIndex === 0 && base === "-" && row.renewal === "-" && numericValue(rawValue(row.old)) === 0;
+    const basis = notApplicable ? { renewalNumerator: 0, renewalDenominator: 0 } : renewalBasis(base, row.renewal);
     return { ...dims, id: `historical:${JSON.stringify(dimensions.map(key => dims[key]))}:${index}`,
       revenue: rawValue(row.revenue), business: rawValue(row.business), listRevenue: rawValue(Object.hasOwn(row, "list_revenue") ? row.list_revenue : row.listRevenue),
       old: rawValue(row.old), new: rawValue(row.new), total: rawValue(row.total), current: rawValue(row.current), carryout: rawValue(row.carryout),
-      price: rawValue(row.price), renewal: rawValue(row.renewal), share: rawValue(row.share), detailDiscount: rawValue(row.discount), recognition: rawValue(row.recognition) };
+      price: rawValue(row.price), renewal: rawValue(row.renewal), share: rawValue(row.share), detailDiscount: rawValue(row.discount), recognition: rawValue(row.recognition), ...basis };
   });
 }
 
@@ -144,7 +156,30 @@ function uniqueIndex(records: Record<string, unknown>[], key: (row: Record<strin
 }
 function rateValue(value: unknown): number | null { const number = numericValue(rawValue(value)); return number === null ? null : number / 1_000_000; }
 
-export function normalizePublishedFacts(records: object[], headcountRows: object[] = []): BudgetFact[] {
+function renewalBasis(base: unknown, rate: unknown): Pick<BudgetFact, "renewalNumerator" | "renewalDenominator"> {
+  const denominator = numericValue(rawValue(base)), value = numericValue(rawValue(rate));
+  if (denominator === null || denominator < 0 || value === null || value < 0 || value > 1) return { renewalNumerator: null, renewalDenominator: null };
+  return { renewalNumerator: denominator * value, renewalDenominator: denominator };
+}
+
+export type PublishedRenewalContext = { fiscalYear: number; rateParameterVersionId: string; openingContent: Record<string, unknown> | null };
+function publishedOpeningBasis(count: Record<string, unknown>, countRows: Record<string, unknown>[], context?: PublishedRenewalContext) {
+  const missing = { renewalNumerator: null, renewalDenominator: null, inputRate: null };
+  const content = context?.openingContent;
+  if (!context || !content || !context.rateParameterVersionId || content.fiscal_year !== context.fiscalYear || count.fiscal_season !== context.fiscalYear * 10 + 1 || !Array.isArray(content.rows) || !Array.isArray(content.zero_combination_ids)) return missing;
+  const openingDimensions = ["track", "product", "grade", "subject", "campus"];
+  const targetKey = (row: Record<string, unknown>) => JSON.stringify(openingDimensions.map(key => row[key]));
+  const matchingCounts = countRows.filter(row => row.fiscal_season === count.fiscal_season && targetKey(row) === targetKey(count));
+  if (matchingCounts.length !== 1) return missing;
+  const mapped = (content.rows as object[]).map(record).filter(row => row.target_key && typeof row.target_key === "object" && targetKey(record(row.target_key as object)) === targetKey(count));
+  const explicitZero = typeof count.combination_id === "string" && content.zero_combination_ids.includes(count.combination_id);
+  if (explicitZero) return mapped.length === 0 && numericValue(rawValue(count.integer_old_students)) === 0 ? { renewalNumerator: 0, renewalDenominator: 0, inputRate: null } : missing;
+  if (mapped.length !== 1 || mapped[0].exclusion !== null || mapped[0].rate_version_id !== context.rateParameterVersionId) return missing;
+  const inputRate = rateValue(mapped[0].renewal_rate_ppm), basis = renewalBasis(mapped[0].enrollment, inputRate);
+  return { ...basis, inputRate: basis.renewalDenominator === null ? null : inputRate };
+}
+
+export function normalizePublishedFacts(records: object[], headcountRows: object[] = [], context?: PublishedRenewalContext): BudgetFact[] {
   const countRows = headcountRows.map(record);
   const countById = uniqueIndex(countRows.filter(row => typeof row.season_headcount_result_id === "string" && row.season_headcount_result_id), row => String(row.season_headcount_result_id));
   const countByKey = uniqueIndex(countRows, fullPublishedKey);
@@ -157,11 +192,27 @@ export function normalizePublishedFacts(records: object[], headcountRows: object
       row.headcount_result_version_id && count.headcount_result_version_id && row.headcount_result_version_id !== count.headcount_result_version_id ||
       row.fiscal_year && count.fiscal_year && row.fiscal_year !== count.fiscal_year ||
       numericValue(rawValue(row.integer_total_students)) !== numericValue(rawValue(count.integer_total_students)))) count = null;
+    let basis: Pick<BudgetFact, "renewalNumerator" | "renewalDenominator"> = { renewalNumerator: null, renewalDenominator: null };
+    let inputRenewal = rateValue(count?.renewal_rate_ppm);
+    if (count) {
+      const fiscalSeason = numericValue(rawValue(count.fiscal_season));
+      if (fiscalSeason !== null && fiscalSeason % 10 === 1) {
+        const opening = publishedOpeningBasis(count, countRows, context);
+        basis = { renewalNumerator: opening.renewalNumerator, renewalDenominator: opening.renewalDenominator };
+        inputRenewal = opening.inputRate;
+      }
+      else if (fiscalSeason !== null && fiscalSeason % 10 >= 2 && fiscalSeason % 10 <= 4) {
+        const previous = countByKey.get(fullPublishedKey({ ...count, fiscal_season: fiscalSeason - 1 }));
+        if (previous && (!count.combination_id || !previous.combination_id || count.combination_id === previous.combination_id) &&
+          (!count.fiscal_year || !previous.fiscal_year || count.fiscal_year === previous.fiscal_year) &&
+          (!count.headcount_result_version_id || !previous.headcount_result_version_id || count.headcount_result_version_id === previous.headcount_result_version_id)) basis = renewalBasis(previous.integer_total_students, inputRenewal);
+      }
+    }
     return { ...dims, id: `published:${id ?? fullPublishedKey(row)}:${index}`,
       revenue: rawValue(row.quarter_recognized_revenue_yuan), business: rawValue(row.business_quarter_revenue_yuan), listRevenue: rawValue(row.list_price_revenue_yuan),
       old: rawValue(count?.integer_old_students), new: rawValue(count?.integer_new_students), total: rawValue(row.integer_total_students),
       price: rawValue(row.list_price_yuan), detailDiscount: rateValue(row.detail_discount_rate_ppm),
-      renewal: rateValue(count?.renewal_rate_ppm), share: rateValue(count?.new_student_share_input_ppm) };
+      renewal: inputRenewal, share: rateValue(count?.new_student_share_input_ppm), ...basis };
   });
 }
 
@@ -198,7 +249,7 @@ export function validateAnalysisState(state: BudgetAnalysisState, facts: BudgetF
 export function pivotExport(pivot: BudgetPivot, input: BudgetPivotConfig): { columns: ExportColumn[]; rows: object[] } {
   const config = sanitizeConfig(input);
   const columns: ExportColumn[] = config.rows.map(dimension => ({ key: dimension, label: dimensionLabels[dimension] }));
-  const format = (metric: BudgetMetric): ExportColumn["format"] => metric === "discount" ? "rate" : metric === "revenue" || metric === "business" ? "money" : "count";
+  const format = (metric: BudgetMetric): ExportColumn["format"] => metric === "discount" || metric === "renewal" ? "rate" : metric === "revenue" || metric === "business" ? "money" : "count";
   for (const column of pivot.columns) for (const metric of config.metrics) columns.push({ key: `${column.key}:${metric}`, label: `${column.label} · ${metricLabels[metric]}${format(metric) === "money" ? "（元）" : ""}`, format: format(metric) });
   // With no column dimension, the single 'all' column already is the total.
   if (config.column !== "none") for (const metric of config.metrics) columns.push({ key: `total:${metric}`, label: `合计 · ${metricLabels[metric]}${format(metric) === "money" ? "（元）" : ""}`, format: format(metric) });

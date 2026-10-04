@@ -16,7 +16,7 @@ export function BudgetLifecycle({ mode, onView, onContinue, onStart, busy = fals
     {onContinue && <button disabled={busy} onClick={onContinue}>继续修订草稿</button>}
     {onStart && !creating && <button disabled={busy} onClick={() => setCreating(true)}>开始修订</button>}
     {creating && onStart && <form className="budget-revision-start" onSubmit={event => { event.preventDefault(); if (reason.trim() && !busy) void onStart(reason.trim()); }}>
-      <p>新建草稿，保留当前定版预算。</p>
+
       <label>修订原因<input autoFocus required disabled={busy} value={reason} onChange={event => setReason(event.target.value)} /></label>
       <div><button disabled={busy || !reason.trim()} type="submit">创建修订草稿</button><button disabled={busy} type="button" onClick={() => setCreating(false)}>取消</button></div>
     </form>}
