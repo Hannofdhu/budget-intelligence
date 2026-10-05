@@ -1,6 +1,6 @@
 """Authenticated, local-trial-only historical read model. No mutation endpoint."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/historical-budgets/fy27")
-async def fy27_review(request: Request, actor: Annotated[Actor, Depends(current_actor)]) -> dict:
+async def fy27_review(request: Request, actor: Annotated[Actor, Depends(current_actor)]) -> dict[str, Any]:
     session = await trial_session(request)
     address = request.headers.get("X-Budget-Client-Address", "")
     if address not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}:

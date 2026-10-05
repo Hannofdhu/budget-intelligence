@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OpeningStudentsPage } from "./OpeningStudentsPage";
 import { WorkspacePage } from "./WorkspacePage";
 import { HistoricalBudgetPage } from "./HistoricalBudgetPage";
+import { ForecastPage } from "./ForecastPage";
 
 import {
   ApiError,
@@ -219,6 +220,7 @@ function BudgetOverviewRedirect() {
 
 export function App() {
   const path = window.location.pathname;
+  if (path === "/budget/forecast") return <ForecastPage />;
   if (path === "/budget/workspace" && new URLSearchParams(location.search).get("archive") === "fy27") return <HistoricalBudgetPage />;
   if (path === "/" || path === "/budget/workspace") return <WorkspacePage />;
   if (path === "/budget/revisions") return <VersionAuditPage />;

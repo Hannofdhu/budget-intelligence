@@ -42,7 +42,7 @@ def build_review(payload: dict[str, Any]) -> dict[str, Any]:
     for row in rows:
         cells, n = row["cells"], row["row"]
 
-        def val(col: str, cells: dict = cells) -> Any:
+        def val(col: str, cells: dict[str, Any] = cells) -> Any:
             return cells.get(col, {}).get("value")
 
         if n < 2 or val("A") is None:

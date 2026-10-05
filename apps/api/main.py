@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from apps.api.errors import domain_error_handler
 from apps.api.middleware import RequestContextMiddleware
+from apps.api.routes.forecast import router as forecast_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.historical_review import router as historical_review_router
 from apps.api.routes.local_trial import router as local_trial_router
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router, prefix="/api/v1")
     app.include_router(local_trial_router, prefix="/api/v1")
     app.include_router(historical_review_router, prefix="/api/v1")
+    app.include_router(forecast_router, prefix="/api/v1")
     return app
 
 

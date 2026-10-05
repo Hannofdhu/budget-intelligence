@@ -1,6 +1,8 @@
 import copy
 import json
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -8,13 +10,13 @@ from packages.source_snapshot import fy27_review as review
 
 
 @pytest.fixture
-def source():
+def source() -> Any:
     if not review.EXTRACTION.exists():
         pytest.skip("Local FY27 source is not checked into Git")
     return json.loads(review.EXTRACTION.read_text())
 
 
-def test_source_totals_and_exact_cell_values(source):
+def test_source_totals_and_exact_cell_values(source: dict[str, Any]) -> None:
     result = review.build_review(source)
     assert result["scope_count"] == 238
     assert result["season_count"] == 952
@@ -35,7 +37,7 @@ def test_source_totals_and_exact_cell_values(source):
     )
 
 
-def test_preserves_negative_blank_text_and_formula_evidence(source):
+def test_preserves_negative_blank_text_and_formula_evidence(source: dict[str, Any]) -> None:
     result = review.build_review(source)
     assert next(r for r in result["rows"] if r["row"] == 151)["opening"] == -0.01
     summer = next(r for r in result["rows"] if r["row"] == 14)
@@ -47,18 +49,18 @@ def test_preserves_negative_blank_text_and_formula_evidence(source):
     assert "publishable" not in result
 
 
-def test_rejects_changed_totals(source):
+def test_rejects_changed_totals(source: dict[str, Any]) -> None:
     changed = copy.deepcopy(source)
     changed["sheets"]["滚动表"]["rows"][1]["cells"]["W"]["value"] += 1
     with pytest.raises(ValueError, match="合计不一致"):
         review.build_review(changed)
 
 
-def test_current_income_and_carryout_reconcile_across_fiscal_years(source):
+def test_current_income_and_carryout_reconcile_across_fiscal_years(source: dict[str, Any]) -> None:
     result = review.build_review(source)
     rows = result["rows"]
 
-    def total(items, field):
+    def total(items: list[dict[str, Any]], field: str) -> Decimal:
         return sum((Decimal(str(row[field])) for row in items), Decimal(0))
 
     generated = total(rows, "current") + total(rows, "carryout")
@@ -70,14 +72,23 @@ def test_current_income_and_carryout_reconcile_across_fiscal_years(source):
     assert abs(generated + opening - next_year - Decimal(result["annual_revenue"])) < Decimal(".00001")
     for row in rows:
         prior = (
-            row["opening"] if row["season"] == "暑假" else
-            next(item["carryout"] for item in rows if item["row"] == row["row"] and
-                 review.SEASONS.index(item["season"]) == review.SEASONS.index(row["season"]) - 1)
+            row["opening"]
+            if row["season"] == "暑假"
+            else next(
+                item["carryout"]
+                for item in rows
+                if item["row"] == row["row"]
+                and review.SEASONS.index(item["season"]) == review.SEASONS.index(row["season"]) - 1
+            )
         )
-        assert abs(Decimal(str(row["revenue"])) - Decimal(str(row["current"])) - Decimal(str(prior))) < Decimal(".00001")
+        assert abs(
+            Decimal(str(row["revenue"])) - Decimal(str(row["current"])) - Decimal(str(prior))
+        ) < Decimal(".00001")
 
 
-def test_rejects_stale_extraction(source, tmp_path, monkeypatch):
+def test_rejects_stale_extraction(
+    source: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     original = tmp_path / "source.xlsx"
     original.write_bytes(b"different source")
     extraction = tmp_path / "source.json"
@@ -89,21 +100,21 @@ def test_rejects_stale_extraction(source, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_history_access_local_only_and_department_scoped(monkeypatch):
+async def test_history_access_local_only_and_department_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
     from starlette.requests import Request
 
     from apps.api.routes import historical_review as route
     from packages.domain.identity.models import Actor, Role
 
-    async def session(_):
+    async def session(_: Request) -> dict[str, str]:
         return {"departmentId": "test-dept"}
 
     monkeypatch.setattr(route, "trial_session", session)
     monkeypatch.setattr(route, "read_review", lambda: {"mode": "HISTORICAL_EXCEL_READ_ONLY"})
     actor = Actor(user_id="owner", department_id="test-dept", roles=frozenset({Role.DEPARTMENT_BUDGET_OWNER}))
 
-    def request(address):
+    def request(address: str) -> Request:
         return Request({"type": "http", "headers": [(b"x-budget-client-address", address.encode())]})
 
     assert (await route.fy27_review(request("127.0.0.1"), actor))["mode"] == "HISTORICAL_EXCEL_READ_ONLY"

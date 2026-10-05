@@ -82,7 +82,7 @@ export function HistoricalBudgetPage() {
     </header>
     <main className="decision-workspace" id="history-content">
       <nav className="decision-progress" aria-label="预算拆解导航">{steps.map((label, index) => <button key={label} className={`is-done ${step === index + 1 ? "is-active" : ""}`} aria-current={step === index + 1 ? "step" : undefined} onClick={() => changeStep(index + 1)}><span>{index + 1}</span><strong>{label}</strong><em className="decision-progress-short">{label.slice(0, 2)}</em></button>)}</nav>
-      <BudgetLifecycle mode="historical" />
+      <div className="history-product-nav"><BudgetLifecycle mode="historical" /><a href="/budget/forecast?archive=fy27">达成预测</a></div>
       {error ? <section className="decision-question" role="alert"><p>{error}</p><button onClick={() => location.reload()}>重新读取</button></section> : !data ? <p role="status">正在读取 FY27 预算…</p> : <>
         <header className="history-heading"><div><p>FY27 学校版</p><h1>{steps[step - 1]}</h1></div></header>
         {step !== 5 && <section className="history-filters" aria-label="预算筛选">{Object.entries({ season: "季度", ...dimensions }).filter(([key]) => key !== "season" || step >= 3).map(([key, label]) => <label key={key}>{label}<select aria-label={label} value={filters[key as keyof typeof filters]} onChange={event => updateFilters({ ...filters, [key]: event.target.value })}>{["", ...(key === "season" ? seasons : [...new Set(data.rows.map(row => String(row[key as keyof Line])))].sort((a, b) => a.localeCompare(b, "zh-CN")))].map(value => <option key={value} value={value}>{value || "全部"}</option>)}</select></label>)}</section>}

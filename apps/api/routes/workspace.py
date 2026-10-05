@@ -186,9 +186,7 @@ def planned_new_student_form_value(data: dict[str, Any]) -> dict[str, Any]:
                 "subject": row["subject"],
                 "campus": row["campus"],
                 "planned_new_students": row["planned_new_students"],
-                "manual_renewal_rate_ppm": row.get("lock_origin", {}).get(
-                    "manual_renewal_rate_ppm"
-                ),
+                "manual_renewal_rate_ppm": row.get("lock_origin", {}).get("manual_renewal_rate_ppm"),
                 "reason": row["manual_reason"],
             }
             for row in data.get("items", [])
