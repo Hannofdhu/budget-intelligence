@@ -13,7 +13,7 @@ from typing import Any
 
 from packages.headcount.calculation import _largest_remainder, round_half_up
 
-RULE_VERSION = "natural-forecast-fy27-v2"
+RULE_VERSION = "natural-forecast-fy27-v3"
 SEASONS = ("暑假", "秋季", "寒假", "春季")
 DIMS = ("track", "product", "grade", "subject", "campus")
 STATES = {"FINALIZED", "OPEN", "ENDED", "FUTURE"}
@@ -169,6 +169,186 @@ def _stable(row: dict[str, Any]) -> str:
     return "|".join(f"{len(value)}:{value}" for value in _key(row))
 
 
+def _trial_note(
+    notes: list[dict[str, Any]], code: str, message: str, row: dict[str, Any], **detail: object
+) -> None:
+    item: dict[str, Any] = {"code": code, "message": message, "season": row["season"], "dims": _dims(row)}
+    if detail:
+        item["detail"] = detail
+    if item not in notes:
+        notes.append(item)
+
+
+def _scope_rows(
+    scopes: list[dict[str, Any]],
+    baseline: dict[tuple[str, tuple[str, ...]], dict[str, Any]],
+    minimum: int,
+    trial: bool,
+    notes: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[str, ...]], dict[str, Any]]:
+    """Create forecast-only scopes without changing any approved budget row."""
+    result: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+    baseline_keys = {key for _, key in baseline}
+    for scope in scopes:
+        dims = scope.get("dims")
+        kind = scope.get("kind", "UNBUDGETED_BUSINESS")
+        if (
+            not isinstance(dims, dict)
+            or not all(_key(dims))
+            or not str(scope.get("reason") or "").strip()
+            or kind not in {"UNBUDGETED_BUSINESS", "FINANCIAL_ONLY"}
+        ):
+            _issue(issues, "FORECAST_SCOPE_INVALID", "预测专用范围必须指定完整维度、类型和原因")
+            continue
+        key = _key(dims)
+        if key in baseline_keys or any(existing_key == key for _, existing_key in result):
+            _issue(issues, "FORECAST_SCOPE_DUPLICATED", "预测专用范围不可覆盖预算或重复", row=dims)
+            continue
+        financial = scope.get("financial", {})
+        additional = scope.get("additional", {})
+        if not isinstance(financial, dict) or not isinstance(additional, dict):
+            _issue(issues, "FORECAST_SCOPE_INVALID", "预测专用参数必须按季度填写", row=dims)
+            continue
+        for season in SEASONS:
+            params = financial.get(season, {})
+            if not isinstance(params, dict):
+                _issue(issues, "FORECAST_SCOPE_INVALID", "预测专用财务参数无效", season=season, row=dims)
+                params = {}
+            row = {
+                "season": season,
+                **_dims(dims),
+                "revenue": 0,
+                "total": 0,
+                "old": 0,
+                "new": 0,
+                "opening": 0,
+                "_forecast_only": True,
+                "_scope_kind": kind,
+                "_scope_additional": _integer(additional.get(season, 0)),
+                "_financial_method": params.get("method", "EXPLICIT_PARAMETERS"),
+                **{
+                    field: params.get(field)
+                    for field in ("price", "discount", "recognition", "renewal", "share")
+                },
+            }
+            if row["_scope_additional"] is None:
+                _issue(
+                    issues,
+                    "FORECAST_SCOPE_ADDITIONAL_INVALID",
+                    "预测专用新增人数必须为非负整数",
+                    season=season,
+                    row=row,
+                )
+            if kind == "FINANCIAL_ONLY":
+                if row["_scope_additional"] != 0:
+                    _issue(
+                        issues,
+                        "FINANCIAL_ONLY_ADDITIONAL_FORBIDDEN",
+                        "纯财务范围不能生成新增学生",
+                        season=season,
+                        row=row,
+                    )
+                row["_scope_additional"] = 0
+                row["_future_method"] = "FINANCIAL_ONLY"
+                result[season, key] = row
+                continue
+            peers = [
+                peer
+                for (peer_season, _), peer in baseline.items()
+                if peer_season == season and all(peer[name] == row[name] for name in ("track", "product"))
+            ]
+            if trial and any(row[field] is None for field in ("price", "discount", "recognition")):
+                templates = {
+                    tuple(_decimal(peer.get(field)) for field in ("price", "discount", "recognition"))
+                    for peer in peers
+                }
+                if len(templates) == 1:
+                    template = next(iter(templates))
+                    if all(value is not None for value in template):
+                        for field, value in zip(("price", "discount", "recognition"), template, strict=True):
+                            if row[field] is None:
+                                row[field] = value
+                        row["_financial_method"] = "PEER_PRODUCT_UNIFORM_TEMPLATE"
+                        _trial_note(
+                            notes,
+                            "PEER_PRODUCT_FINANCIAL_TEMPLATE",
+                            "财务参数暂用同季度同赛道同产品统一模板",
+                            row,
+                            price=str(row["price"]),
+                            discount=str(row["discount"]),
+                            recognition=str(row["recognition"]),
+                        )
+            row["_future_method"] = "EXPLICIT_PARAMETERS"
+            if trial and (row["renewal"] is None or row["share"] is None):
+                grade_peers = [peer for peer in peers if peer["grade"] == row["grade"]]
+                prior_season = SEASONS[SEASONS.index(season) - 1] if season != SEASONS[0] else None
+                renewal_peers = [
+                    peer
+                    for peer in grade_peers
+                    if _integer(peer.get("total")) is not None
+                    and _integer(baseline.get((prior_season or "", _key(peer)), {}).get("total")) is not None
+                    and _decimal(peer.get("renewal")) is not None
+                    and 0 <= (_decimal(peer.get("renewal")) or Decimal(0)) <= 1
+                ]
+                rn = sum(
+                    (
+                        Fraction(_integer(baseline[prior_season or "", _key(peer)]["total"]) or 0)
+                        * Fraction(_decimal(peer["renewal"]) or Decimal(0))
+                        for peer in renewal_peers
+                    ),
+                    Fraction(0),
+                )
+                rd = sum(
+                    _integer(baseline[prior_season or "", _key(peer)]["total"]) or 0 for peer in renewal_peers
+                )
+                share_peers = [
+                    peer
+                    for peer in grade_peers
+                    if _integer(peer.get("new")) is not None and _integer(peer.get("total")) is not None
+                ]
+                sn = sum(_integer(peer["new"]) or 0 for peer in share_peers)
+                sd = sum(_integer(peer["total"]) or 0 for peer in share_peers)
+                if row["renewal"] is None and rd >= minimum and 0 <= rn <= rd:
+                    row["renewal"] = Decimal(rn.numerator) / Decimal(rn.denominator * rd)
+                if row["share"] is None and sd >= minimum and 0 <= sn < sd:
+                    row["share"] = Decimal(sn) / Decimal(sd)
+                if row["renewal"] is not None and row["share"] is not None:
+                    row["_future_method"] = "PEER_GRADE_WEIGHTED"
+                    _trial_note(
+                        notes,
+                        "PEER_GRADE_WEIGHTED",
+                        "未来人数暂用同季度同赛道同产品同年级合计人次比例",
+                        row,
+                        renewal_n=_ratio(rn),
+                        renewal_d=rd,
+                        share_n=sn,
+                        share_d=sd,
+                    )
+                else:
+                    unused_renewal, unused_share = row["renewal"], row["share"]
+                    row["renewal"] = row["share"] = None
+                    row["_hold_size"] = True
+                    row["_future_method"] = "TRIAL_SIZE_HELD"
+                    _trial_note(
+                        notes,
+                        "TRIAL_SIZE_HELD",
+                        "无同产品同年级可用比例：暂沿用上季人数，不新增新生；不是续班率",
+                        row,
+                        unapplied_renewal=_ratio(_decimal(unused_renewal)),
+                        unapplied_share=_ratio(_decimal(unused_share)),
+                    )
+            _trial_note(
+                notes,
+                "UNBUDGETED_ADDITIONAL",
+                "预算未覆盖业务后续新增独立设置，不接受校区预算缺口分摊",
+                row,
+                additional=row["_scope_additional"],
+            )
+            result[season, key] = row
+    return result
+
+
 def _issue(
     issues: list[dict[str, Any]],
     code: str,
@@ -250,6 +430,7 @@ def _source_index(
     assumptions: dict[str, Any],
     baseline_keys: set[tuple[str, ...]],
     issues: list[dict[str, Any]],
+    financial_only_keys: set[tuple[str, ...]] | None = None,
 ) -> tuple[dict[tuple[str, tuple[str, ...]], dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     signed_actuals_verified = _signed_actuals_verified(snapshot)
     mapping: dict[tuple[str, ...], tuple[str, ...]] = {}
@@ -305,7 +486,20 @@ def _source_index(
             continue
         seen.add((season, skey))
         row = {**original, **_dims(original)}
-        if assumptions.get("states", {}).get(season) in {"OPEN", "ENDED"}:
+        target = mapping.get(skey, skey)
+        financial_only = target in (financial_only_keys or set())
+        row["invalid_financial_only_source"] = financial_only and any(
+            _integer(row.get(field)) != 0 for field in ("enrollment", "new_business", "new_base", "old_base")
+        )
+        if row["invalid_financial_only_source"]:
+            _issue(
+                issues,
+                "FINANCIAL_ONLY_SOURCE_HAS_STUDENTS",
+                "纯财务范围的来源学生人次必须明确全为零，不能隐藏正数、负数或缺失人次",
+                season=season,
+                row=row,
+            )
+        if not financial_only and assumptions.get("states", {}).get(season) in {"OPEN", "ENDED"}:
             new, old, total = (_integer(row.get(field)) for field in ("new_base", "old_base", "enrollment"))
             row["invalid_current_base"] = new is None or old is None or total is None or new + old != total
             if row["invalid_current_base"]:
@@ -357,7 +551,6 @@ def _source_index(
             and old_process is not None
             and new_process + old_process == total_process
         )
-        target = mapping.get(skey, skey)
         if target not in baseline_keys:
             if all(skey):
                 history_pool.append(row)
@@ -375,7 +568,8 @@ def _source_index(
             )
             continue
         row.update(zip(DIMS, target, strict=True))
-        history_pool.append(row)
+        if not financial_only:
+            history_pool.append(row)
         grouped[season, target].append(row)
 
     result: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
@@ -385,6 +579,9 @@ def _source_index(
             row[field] = _sum([_decimal(member.get(field)) for member in members])
         row["source_count"] = len(members)
         row["invalid_current_base"] = any(member.get("invalid_current_base") for member in members)
+        row["invalid_financial_only_source"] = any(
+            member.get("invalid_financial_only_source") for member in members
+        )
         row["invalid_history_fields"] = sorted(
             {field for member in members for field in member.get("invalid_history_fields", [])}
         )
@@ -556,21 +753,41 @@ def _open_counts(
         )
     for campus, budget_rows in sorted(grouped.items()):
         current = {_key(row): source.get((season, _key(row))) for row in budget_rows}
-        budget_new = _sum([_decimal(row.get("new")) for row in budget_rows])
-        business_new = _sum([_decimal(row.get("new_business")) if row else None for row in current.values()])
+        covered_rows = [row for row in budget_rows if not row.get("_forecast_only")]
+        budget_new = _sum([_decimal(row.get("new")) for row in covered_rows]) if covered_rows else Decimal(0)
+        business_new = (
+            _sum(
+                [
+                    _decimal((current[_key(row)] or {}).get("new_business")) if current[_key(row)] else None
+                    for row in covered_rows
+                ]
+            )
+            if covered_rows
+            else Decimal(0)
+        )
         default_additional = None
         if budget_new is not None and budget_new >= 0 and business_new is not None and business_new >= 0:
             default_additional = (
                 0 if state == "ENDED" else round_half_up(Fraction(max(Decimal(0), budget_new - business_new)))
             )
         additional = adjustments.get((season, campus, "additional"), default_additional)
+        scope_additions = {
+            _key(row): _integer(row.get("_scope_additional"))
+            for row in budget_rows
+            if row.get("_forecast_only")
+        }
+        scope_total = sum(value for value in scope_additions.values() if value is not None)
         campus_view: dict[str, Any] = {
             "season": season,
             "campus": campus,
             "budget_new": _ratio(budget_new),
             "current_business_new": _ratio(business_new),
-            "additional_default": default_additional,
-            "additional": additional,
+            "additional_default": default_additional + scope_total
+            if default_additional is not None
+            else None,
+            "additional": additional + scope_total if additional is not None else None,
+            "budgeted_additional": additional,
+            "unbudgeted_additional": scope_total,
             "new_withdrawal": None,
             "old_withdrawal": None,
             "new_base": None,
@@ -621,7 +838,7 @@ def _open_counts(
                 caps_by_kind[kind][key] = base
         campus_view["new_base"] = sum(caps_by_kind["new"].values())
         campus_view["old_base"] = sum(caps_by_kind["old"].values())
-        if additional is None:
+        if additional is None or any(value is None for value in scope_additions.values()):
             _issue(
                 issues,
                 "BUSINESS_NEW_MISSING",
@@ -631,7 +848,7 @@ def _open_counts(
             )
             continue
         gaps: dict[tuple[str, ...], Fraction] = {}
-        for row in budget_rows:
+        for row in covered_rows:
             actual = current[_key(row)]
             assert actual is not None
             planned, actual_new = _decimal(row.get("new")), _decimal(actual.get("new_business"))
@@ -671,6 +888,7 @@ def _open_counts(
                 row=budget_rows[0],
             )
             continue
+        additions.update({key: value for key, value in scope_additions.items() if value is not None})
         for key, value in additions.items():
             result[key]["additional"] = value
         if not verified:
@@ -789,7 +1007,11 @@ def _future_counts(
         renewal, share = _decimal(row.get("renewal")), _decimal(row.get("share"))
         old = new = None
         explicit_zero = all(_decimal(row.get(field)) == 0 for field in ("old", "new", "total"))
-        if prior is None:
+        if row.get("_scope_kind") == "FINANCIAL_ONLY":
+            old = new = Fraction(0)
+        elif row.get("_hold_size") and _integer(prior) is not None:
+            old, new = Fraction(_integer(prior) or 0), Fraction(0)
+        elif prior is None:
             _issue(
                 issues,
                 "UPSTREAM_HEADCOUNT_UNAVAILABLE",
@@ -940,6 +1162,8 @@ def _calculate(
             else {"code": "SOURCE_ISSUE", "message": str(source_issue), "severity": "BLOCKING"}
         )
     states = assumptions.get("states", {})
+    trial = assumptions.get("trial_mode") is True
+    trial_notes: list[dict[str, Any]] = []
     minimum = _integer(assumptions.get("minimum_sample", 30))
     if minimum is None or minimum < 1:
         _issue(issues, "MINIMUM_SAMPLE_INVALID", "历史样本门槛须为正整数")
@@ -982,9 +1206,15 @@ def _calculate(
                 "定版预算明细未完整覆盖四季",
                 row=dict(zip(DIMS, key, strict=True)),
             )
-    source, unmapped, history_pool = _source_index(snapshot, assumptions, baseline_keys, issues)
+    scopes = _scope_rows(assumptions.get("forecast_scopes", []), indexed, minimum, trial, trial_notes, issues)
+    indexed.update(scopes)
+    all_keys = {key for _, key in indexed}
+    financial_only_keys = {key for (_, key), row in scopes.items() if row["_scope_kind"] == "FINANCIAL_ONLY"}
+    source, unmapped, history_pool = _source_index(
+        snapshot, assumptions, all_keys, issues, financial_only_keys
+    )
     fiscal_year = _integer(baseline.get("fiscal_year")) or 2027
-    carries, unmapped_carries = _carryins_index(snapshot, assumptions, baseline_keys, fiscal_year, issues)
+    carries, unmapped_carries = _carryins_index(snapshot, assumptions, all_keys, fiscal_year, issues)
     has_financial_carryins = isinstance(snapshot.get("frozen_carryins"), list)
     signed_actuals_verified = _signed_actuals_verified(snapshot)
     adjustments = _adjustments(assumptions, issues)
@@ -999,10 +1229,15 @@ def _calculate(
             _issue(issues, "QUARTER_STATE_REQUIRED", "每个季度必须明确预测状态", season=season)
         counts: dict[tuple[str, ...], dict[str, int | None]] = {}
         if state in {"OPEN", "ENDED"}:
+            source_backed_rows = [
+                row
+                for row in season_rows
+                if row.get("_scope_kind") != "FINANCIAL_ONLY" and (not trial or (season, _key(row)) in source)
+            ]
             counts = _open_counts(
                 season,
                 state,
-                season_rows,
+                source_backed_rows,
                 source,
                 history_pool,
                 adjustments,
@@ -1012,6 +1247,41 @@ def _calculate(
                 evidence,
                 campuses,
             )
+            if trial:
+                for row in season_rows:
+                    if row.get("_scope_kind") == "FINANCIAL_ONLY" or (season, _key(row)) in source:
+                        continue
+                    if row.get("_forecast_only"):
+                        prior_total = _integer(previous.get(_key(row), {}).get("forecast_total"))
+                        counts[_key(row)] = {
+                            "total": prior_total,
+                            "new": 0 if prior_total is not None else None,
+                            "old": prior_total,
+                            "additional": 0,
+                            "new_withdrawal": None,
+                            "old_withdrawal": None,
+                        }
+                        _trial_note(
+                            trial_notes,
+                            "TRIAL_SIZE_HELD",
+                            "当季无来源：预算外业务规模暂沿用上季，不新增新生；未预测退班",
+                            row,
+                        )
+                    else:
+                        counts[_key(row)] = {
+                            "total": _integer(row.get("total")),
+                            "new": _integer(row.get("new")),
+                            "old": _integer(row.get("old")),
+                            "additional": None,
+                            "new_withdrawal": None,
+                            "old_withdrawal": None,
+                        }
+                        _trial_note(
+                            trial_notes,
+                            "BASELINE_ESTIMATE",
+                            "当季来源缺失：暂展示原预算估值，不是实际招生或实际收入",
+                            row,
+                        )
         elif state == "FUTURE":
             counts = _future_counts(season, season_rows, previous, issues)
         current: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -1025,6 +1295,14 @@ def _calculate(
                 "budget_total": _ratio(_decimal(row.get("total"))),
                 "budget_new": _ratio(_decimal(row.get("new"))),
                 "budget_old": _ratio(_decimal(row.get("old"))),
+                "budget_covered": not row.get("_forecast_only", False),
+                "scope_kind": row.get("_scope_kind", "BUDGETED_BUSINESS"),
+                "counts_not_applicable": row.get("_scope_kind") == "FINANCIAL_ONLY",
+                "data_status": "ACTUAL" if state == "FINALIZED" else "FORECAST",
+                "future_method": row.get("_future_method", "BASELINE_PARAMETERS")
+                if state == "FUTURE"
+                else None,
+                "financial_method": row.get("_financial_method", "BASELINE_PARAMETERS"),
                 "forecast_revenue": None,
                 "forecast_total": None,
                 "forecast_new": None,
@@ -1056,6 +1334,18 @@ def _calculate(
                         season=season,
                         row=row,
                     )
+                    if trial:
+                        item.update(
+                            data_status="ACTUAL_UNAVAILABLE",
+                            method="ACTUAL_UNAVAILABLE",
+                            included_in_closed_actual_total=False,
+                        )
+                        _trial_note(
+                            trial_notes,
+                            "ACTUAL_UNAVAILABLE",
+                            "已定版该明细实际未知；未填零或预算值，部门使用完整冻结实际合计",
+                            row,
+                        )
                 else:
                     revenue, carryout = (
                         _decimal(actual.get("actual_revenue")),
@@ -1063,7 +1353,14 @@ def _calculate(
                     )
                     item["frozen_actual_revenue"] = _money(revenue)
                     item["frozen_actual_carryout"] = _money(carryout)
-                    total = _integer(actual.get("enrollment"))
+                    financial_only = row.get("_scope_kind") == "FINANCIAL_ONLY"
+                    total = (
+                        None
+                        if actual.get("invalid_financial_only_source")
+                        else 0
+                        if financial_only
+                        else _integer(actual.get("enrollment"))
+                    )
                     if revenue is None or (revenue < 0 and not signed_actuals_verified) or total is None:
                         _issue(
                             issues,
@@ -1076,8 +1373,8 @@ def _calculate(
                         item.update(
                             forecast_revenue=_money(revenue),
                             forecast_total=total,
-                            forecast_new=_integer(actual.get("new_base")),
-                            forecast_old=_integer(actual.get("old_base")),
+                            forecast_new=0 if financial_only else _integer(actual.get("new_base")),
+                            forecast_old=0 if financial_only else _integer(actual.get("old_base")),
                         )
                     if carryout is not None and carryout < 0 and not signed_actuals_verified:
                         if not has_financial_carryins:
@@ -1112,6 +1409,12 @@ def _calculate(
                     new_withdrawal=values.get("new_withdrawal"),
                     old_withdrawal=values.get("old_withdrawal"),
                 )
+                if trial and state in {"OPEN", "ENDED"} and actual is None:
+                    item["data_status"] = (
+                        "TRIAL_SIZE_HELD" if row.get("_forecast_only") else "BASELINE_ESTIMATE"
+                    )
+                if state == "FUTURE" and row.get("_hold_size"):
+                    item["data_status"] = "TRIAL_SIZE_HELD"
                 preceding_state = (
                     states.get(SEASONS[SEASONS.index(season) - 1]) if season != SEASONS[0] else None
                 )
@@ -1132,14 +1435,20 @@ def _calculate(
                         if season == SEASONS[0]
                         else _decimal(previous.get(key, {}).get("forecast_carryout"))
                     )
-                revenue, carryout = _forecast_revenue(
-                    row,
-                    values.get("total"),
-                    incoming,
-                    issues,
-                    allow_signed_incoming=has_financial_carryins
-                    or (signed_actuals_verified and preceding_state == "FINALIZED"),
-                )
+                if row.get("_scope_kind") == "FINANCIAL_ONLY":
+                    revenue, carryout = incoming, Decimal(0)
+                    item.update(forecast_total=0, forecast_new=0, forecast_old=0, counts_not_applicable=True)
+                    if actual is not None and actual.get("invalid_financial_only_source"):
+                        item.update(forecast_total=None, forecast_new=None, forecast_old=None)
+                else:
+                    revenue, carryout = _forecast_revenue(
+                        row,
+                        values.get("total"),
+                        incoming,
+                        issues,
+                        allow_signed_incoming=has_financial_carryins
+                        or (signed_actuals_verified and preceding_state == "FINALIZED"),
+                    )
                 item.update(
                     forecast_revenue=_money(revenue),
                     forecast_carryout=_money(carryout),
@@ -1232,8 +1541,17 @@ def _calculate(
                     forecast_revenue=None, forecast_total=None, gap=None, achievement=None, status="BLOCKED"
                 )
             else:
-                known_sum = _sum([_decimal(row.get("forecast_revenue")) for row in quarter_rows])
-                if known_sum is not None and abs(known_sum - actual_revenue) > Decimal("0.01"):
+                known_actual_rows = [
+                    row
+                    for row in quarter_rows
+                    if row.get("data_status") not in {"BASELINE_ESTIMATE", "ACTUAL_UNAVAILABLE"}
+                ]
+                known_sum = _sum([_decimal(row.get("forecast_revenue")) for row in known_actual_rows])
+                if (
+                    len(known_actual_rows) == len(quarter_rows)
+                    and known_sum is not None
+                    and abs(known_sum - actual_revenue) > Decimal("0.01")
+                ):
                     _issue(
                         issues,
                         "FINALIZED_TOTAL_MISMATCH",
@@ -1266,7 +1584,17 @@ def _calculate(
             unique_issues.append(issue)
     return {
         "rule_version": RULE_VERSION,
-        "ready": not any(issue["severity"] == "BLOCKING" for issue in unique_issues),
+        "ready": not trial and not any(issue["severity"] == "BLOCKING" for issue in unique_issues),
+        "trial_mode": trial,
+        "trial_ready": trial
+        and {issue["code"] for issue in unique_issues if issue["severity"] == "BLOCKING"}.issubset(
+            {"FINALIZED_ACTUAL_MISSING"}
+        )
+        and all(
+            quarter["forecast_revenue"] is not None and quarter["forecast_total"] is not None
+            for quarter in quarters
+        ),
+        "trial_assumptions": trial_notes,
         "as_of": snapshot.get("as_of"),
         "rows": output,
         "quarters": quarters,

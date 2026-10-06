@@ -95,6 +95,33 @@ def test_blocking_data_and_department_isolation(tmp_path: Path) -> None:
     assert len(store.current("another")["history"]) == 1
 
 
+def test_trial_is_never_confirmable_even_when_calculation_says_ready(tmp_path: Path) -> None:
+    store = ForecastStore(tmp_path)
+    result = store.append_version(
+        department="department",
+        actor="owner",
+        request_id="trial-request",
+        request_hash="trial",
+        parent_id=None,
+        baseline_hash="immutable-budget",
+        snapshot={"as_of": "2026-10-03", "rows": []},
+        assumptions={"states": {"暑假": "FINALIZED"}, "trial_mode": True},
+        calculation={"ready": True, "trial_ready": True},
+        reason="trial",
+    )
+    before = {path: path.read_bytes() for path in tmp_path.glob("event-*.json")}
+    with pytest.raises(ForecastStoreError, match="试用预测不能正式确认"):
+        store.confirm(
+            department="department",
+            actor="owner",
+            version_id=result["version"]["id"],
+            request_id="trial-confirm",
+            request_hash="confirmation",
+            reason="not official",
+        )
+    assert {path: path.read_bytes() for path in tmp_path.glob("event-*.json")} == before
+
+
 def test_content_tampering_and_deleted_event_are_detected(tmp_path: Path) -> None:
     store = ForecastStore(tmp_path)
     first = version(store)

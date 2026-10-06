@@ -11,6 +11,7 @@ import { budgetWorkbook } from "../src/budgetExport.ts";
 import {
   forecastNumber, sumForecastRows, groupForecastRows, defaultForecastStates, forecastStateLabels,
   getForecast, refreshForecast, reviseForecast, confirmForecast, groupForecastIssues, forecastMappingIssues, prepareForecastMapping, forecastPresentationRow,
+  prepareTrialForecast, trialFinancialDraft, applyTrialFinancialDraft, canConfirmForecast,
 } from "../src/forecastApi.ts";
 
 const require = createRequire(import.meta.url);
@@ -19,7 +20,7 @@ const compiled = await build({ entryPoints: [fileURLToPath(new URL("../src/Forec
   loader: { ".css": "empty" }, logLevel: "silent" });
 const module = { exports: {} };
 new Function("require", "module", "exports", compiled.outputFiles[0].text)(require, module, module.exports);
-const { ForecastDashboard, forecastGapLabel } = module.exports;
+const { ForecastDashboard, forecastGapLabel, ForecastLogic, ForecastTrialStatus, ForecastTrialScopeEditor, TrialAssumptionNotes, forecastRowLabel } = module.exports;
 const text = html => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 const row = (overrides = {}) => ({ season: "暑假", track: "智慧空间", campus: "西直门", product: "常规班", grade: "七年级", subject: "数学",
   budget_revenue: "100000.000000", forecast_revenue: "98000.000000", budget_total: 100, forecast_total: 97, method: "FROZEN_ACTUAL", ...overrides });
@@ -232,11 +233,13 @@ test("forecast API commands use local identity, fresh idempotency keys, explicit
     await refreshForecast(actor, defaultForecastStates, "测试更新");
     await reviseForecast(actor, "parent-1", assumptions, "测试人数修订");
     await confirmForecast(actor, "p-1", "测试确认");
-    assert.deepEqual(calls.map(call => call.url), ["/api/v1/forecasts/fy27/current", "/api/v1/forecasts/fy27/refresh", "/api/v1/forecasts/fy27/revise", "/api/v1/forecasts/fy27/p-1/confirm"]);
+    await prepareTrialForecast(actor, "parent-trial", "准备试用");
+    assert.deepEqual(calls.map(call => call.url), ["/api/v1/forecasts/fy27/current", "/api/v1/forecasts/fy27/refresh", "/api/v1/forecasts/fy27/revise", "/api/v1/forecasts/fy27/p-1/confirm", "/api/v1/forecasts/fy27/prepare-trial"]);
     for (const call of calls) assert.equal(call.options.headers["X-User-ID"], actor.userId);
     const keys = calls.slice(1).map(call => call.options.headers["Idempotency-Key"]);
-    assert.equal(new Set(keys).size, 3); assert.ok(keys.every(key => key.length >= 8));
+    assert.equal(new Set(keys).size, 4); assert.ok(keys.every(key => key.length >= 8));
     assert.deepEqual(JSON.parse(calls[2].options.body), { parent_id: "parent-1", reason: "测试人数修订", assumptions });
+    assert.deepEqual(JSON.parse(calls[4].options.body), { parent_id: "parent-trial", reason: "准备试用" });
     assert.ok(calls.every(call => !/annual-budgets|\/revisions\/|publication/.test(call.url)));
   } finally { globalThis.fetch = previous; }
 });
@@ -245,4 +248,140 @@ test("conflicts expose a usable reload instruction and are never blindly retried
   globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({ detail: "预测版本已变化，请重新读取后操作" }), { status: 409 }); };
   try { await assert.rejects(getForecast({ userId: "reader", departmentId: "department", roles: [] }), /预测版本已变化，请重新读取后操作/); assert.equal(calls, 1); }
   finally { globalThis.fetch = previous; }
+});
+
+const trialScope = (overrides = {}) => ({ dims: { track: "智慧空间", product: "独立产品", grade: "七年级", subject: "数学", campus: "完整校区" },
+  kind: "UNBUDGETED_BUSINESS", reason: "测试明确试用假设", additional: { 秋季: 0 },
+  financial: { 秋季: { price: "3000", discount: "0.85", recognition: "0.9", renewal: null, share: null, method: "TRIAL_ESTIMATE" },
+    寒假: { price: "3100", discount: "0.9", recognition: "1", renewal: "0.7", share: "0.2", method: "PEER_GRADE_WEIGHTED" } }, ...overrides });
+
+test("trial financial drafts use percentages for editing and preserve genuinely unspecified rates", () => {
+  const original = trialScope(), before = JSON.stringify(original), draft = trialFinancialDraft(original, "秋季");
+  assert.equal(draft.price, "3000"); assert.equal(draft.discount, "85"); assert.equal(draft.recognition, "90");
+  assert.equal(draft.renewal, ""); assert.equal(draft.share, ""); assert.equal(draft.additional, "0");
+  const result = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, price: "3250.50", discount: "86.5", recognition: "95", additional: "17", reason: " 秋季试用调整 " });
+  assert.equal(result.error, ""); assert.ok(result.scope); assert.equal(result.scope.reason, "秋季试用调整");
+  assert.deepEqual(result.scope.financial.秋季, { price: "3250.5", discount: "0.865", recognition: "0.95", renewal: null, share: null, method: "MANUAL" });
+  assert.equal(result.scope.additional.秋季, 17); assert.deepEqual(result.scope.financial.寒假, original.financial.寒假);
+  assert.notEqual(result.scope, original); assert.notEqual(result.scope.dims, original.dims); assert.equal(JSON.stringify(original), before);
+});
+
+test("trial edits validate finite numeric bounds, mandatory reason, integer additional and freeze actual scopes", () => {
+  const original = trialScope(), draft = trialFinancialDraft(original, "秋季");
+  for (const change of [{ price: "Infinity" }, { discount: "101" }, { recognition: "-1" }, { renewal: "NaN" }, { renewal: "101" }, { share: "100" }, { share: "-1" }, { additional: "1.5" }, { additional: "10000001" }, { reason: " " }]) {
+    const result = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, ...change });
+    assert.equal(result.scope, null); assert.ok(result.error);
+  }
+  assert.equal(applyTrialFinancialDraft(original, "秋季", "FINALIZED", draft).scope, null);
+  assert.equal(applyTrialFinancialDraft(trialScope({ kind: "FINANCIAL_ONLY" }), "秋季", "OPEN", draft).scope, null);
+  const future = applyTrialFinancialDraft(original, "寒假", "FUTURE", { ...trialFinancialDraft(original, "寒假"), additional: "99", renewal: "72.5", share: "18", reason: "未来试用修改" }).scope;
+  assert.deepEqual(future.additional, { 秋季: 0 }); assert.equal(future.financial.寒假.renewal, "0.725"); assert.equal(future.financial.寒假.share, "0.18");
+});
+
+test("additional-only trial edits retain all raw financial decimals and estimation method, despite rounded percentage display", () => {
+  const financial = { price: "3017.123456789123456789", discount: "0.853123456789123456789", recognition: "0.913987654321987654321", renewal: "0.713123456789123456789", share: "0.123987654321987654321", method: "PEER_GRADE_WEIGHTED" };
+  const original = trialScope({ financial: { 秋季: financial } }), before = JSON.stringify(original), draft = trialFinancialDraft(original, "秋季");
+  const result = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, additional: "1", reason: "仅调整新增" });
+  assert.equal(result.error, ""); assert.equal(result.scope.additional.秋季, 1);
+  assert.deepEqual(result.scope.financial.秋季, financial); assert.notEqual(result.scope.financial.秋季, financial);
+  assert.equal(JSON.stringify(original), before);
+  const emptyRates = trialScope({ financial: { 秋季: { price: 0, discount: "0.000000", recognition: "1.000000", method: "TRIAL_ESTIMATE" } } });
+  const next = applyTrialFinancialDraft(emptyRates, "秋季", "OPEN", { ...trialFinancialDraft(emptyRates, "秋季"), additional: "2", reason: "仅调整新增" });
+  assert.deepEqual(next.scope.financial.秋季, emptyRates.financial.秋季);
+  assert.equal(Object.hasOwn(next.scope.financial.秋季, "renewal"), false); assert.equal(Object.hasOwn(next.scope.financial.秋季, "share"), false);
+  const preciseShare = trialScope({ financial: { 秋季: { ...financial, share: "0.999999999999999999999" } } });
+  const retained = applyTrialFinancialDraft(preciseShare, "秋季", "OPEN", { ...trialFinancialDraft(preciseShare, "秋季"), additional: "1", reason: "仅调整新增" });
+  assert.equal(retained.error, ""); assert.equal(retained.scope.financial.秋季.share, "0.999999999999999999999", "display-rounded 100% is not a financial edit");
+});
+
+test("a single financial edit converts only that field and keeps untouched raw decimal strings", () => {
+  const financial = { price: "3017.123456789123456789", discount: "0.853123456789123456789", recognition: "0.913987654321987654321", renewal: null, share: "0.123987654321987654321", method: "PEER_GRADE_WEIGHTED" };
+  const original = trialScope({ financial: { 秋季: financial } }), draft = trialFinancialDraft(original, "秋季");
+  const next = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, discount: "86.5", reason: "仅改折扣" }).scope;
+  assert.deepEqual(next.financial.秋季, { ...financial, discount: "0.865", method: "MANUAL" });
+  const normalized = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, discount: `${draft.discount}0`, additional: "1", reason: "格式未改数值" }).scope;
+  assert.deepEqual(normalized.financial.秋季, financial);
+  const cleared = applyTrialFinancialDraft(original, "秋季", "OPEN", { ...draft, share: "", reason: "清除新生占比" }).scope;
+  assert.deepEqual(cleared.financial.秋季, { ...financial, share: null, method: "MANUAL" });
+});
+
+test("independent trial business is not a zero-budget excess, while covered group budgets can compare the full trial forecast", () => {
+  const independent = row({ budget_covered: false, budget_revenue: 0, budget_total: 0, forecast_revenue: "5000", forecast_total: 5, method: "PARENT_PARAMETER_PROJECTION" });
+  const before = JSON.stringify(independent), shown = forecastPresentationRow(independent), only = groupForecastRows([independent], "track")[0];
+  assert.equal(shown.budget_revenue, null); assert.equal(shown.budget_total, null);
+  assert.equal(only.budget_revenue, null); assert.equal(only.gap, null); assert.equal(only.achievement, null); assert.equal(only.hasUnbudgeted, true);
+  const mixed = groupForecastRows([row(), independent], "track")[0];
+  assert.equal(mixed.budget_revenue, 100000); assert.equal(mixed.forecast_revenue, 103000); assert.equal(mixed.gap, -3000);
+  assert.equal(mixed.budget_total, 100); assert.equal(mixed.forecast_total, 102); assert.equal(mixed.achievement, 1.03);
+  assert.equal(groupForecastRows([independent, row({ unmapped: true, budget_revenue: 0 })], "track")[0].gap, null);
+  const html = render(calculation({ rows: [independent] })); assert.match(text(html), /含未单列业务 未单列/);
+  const body = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+  assert.match(text(body), /未单列 5,000 未单列 5/); assert.equal(JSON.stringify(independent), before);
+});
+
+test("trial scope XLSX preserves blank unbudgeted columns and numeric forecast values", async () => {
+  const raw = row({ budget_covered: false, budget_revenue: 0, budget_total: 0, forecast_revenue: "-7.25", forecast_total: 15 });
+  const before = JSON.stringify(raw);
+  const workbook = await budgetWorkbook([{ key: "budget_revenue", label: "预算", format: "money" }, { key: "budget_total", label: "预算人次", format: "count" },
+    { key: "forecast_revenue", label: "预计收入", format: "money" }, { key: "forecast_total", label: "预计人次", format: "count" }], [forecastPresentationRow(raw)], "试用预测");
+  const { default: ExcelJS } = await import("exceljs"), loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await workbook.xlsx.writeBuffer()); const sheet = loaded.worksheets[0];
+  assert.equal(sheet.getCell("A2").value, null); assert.equal(sheet.getCell("B2").value, null);
+  assert.equal(sheet.getCell("C2").type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell("C2").value, -7.25);
+  assert.equal(sheet.getCell("D2").type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell("D2").value, 15); assert.equal(JSON.stringify(raw), before);
+});
+
+test("trial completeness shows known department totals even if child actuals are unavailable, and retains formal blockers folded", () => {
+  const data = calculation({ ready: false, trial_ready: true, annual: { budget_revenue: "113004618.59", forecast_revenue: "121000000", gap: "-7995381.41", achievement: "1.070753" },
+    rows: [row({ forecast_revenue: null, forecast_total: null, data_status: "ACTUAL_UNAVAILABLE" })],
+    issues: [{ code: "ACTUAL_UNAVAILABLE", severity: "BLOCKING", season: "暑假", message: "部分实际明细未对应" }] });
+  const html = renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, trialMode: true })), readable = text(html);
+  assert.match(readable, /预计全年收入 12,100 万/); assert.match(readable, /预计超额 799\.54 万/); assert.match(readable, /预计达成率 107\.08%/);
+  assert.doesNotMatch(readable, /尚不能完成预测|类预测条件待处理/);
+  assert.match(readable, /正式确认条件 1 类 阻断明细 1/);
+  assert.match(html, /class="forecast-section forecast-issues"><details><summary>/);
+  assert.match(html, /<option selected="">秋季<\/option>/); assert.equal(data.rows[0].forecast_revenue, null);
+});
+
+test("formal confirmation never accepts trial completeness or skips owner, dirty or server readiness gates", () => {
+  const actor = { userId: "owner", departmentId: "test", roles: ["DEPARTMENT_BUDGET_OWNER"] };
+  const version = { id: "p1", status: "DRAFT", assumptions: { trial_mode: false }, calculation: { ready: true, trial_ready: true } };
+  assert.equal(canConfirmForecast(version, actor), true);
+  assert.equal(canConfirmForecast({ ...version, assumptions: { trial_mode: true } }, actor), false);
+  assert.equal(canConfirmForecast({ ...version, calculation: { ready: false, trial_ready: true } }, actor), false);
+  assert.equal(canConfirmForecast(version, actor, true), false); assert.equal(canConfirmForecast(version, null), false);
+  assert.equal(canConfirmForecast(version, { ...actor, roles: ["DATA_MAINTAINER"] }), false);
+  assert.equal(canConfirmForecast({ ...version, status: "CONFIRMED" }, actor), false);
+});
+
+test("trial interactions keep complete dimensions visible and distinguish estimates from actuals without a new product shell", () => {
+  const logic = renderToStaticMarkup(createElement(ForecastLogic)), status = renderToStaticMarkup(createElement(ForecastTrialStatus, { ready: true, onAdjust() {} }));
+  assert.match(text(logic), /暑假 已定版实际 秋季 当前人次 ＋ 后续新增 − 预计退班 寒假、春季 承接上一季预测人数/);
+  assert.match(text(status), /试用试算 完整预测已准备 非正式预测 调整试用假设/);
+  const scopes = [trialScope(), trialScope({ dims: { track: "智慧伴学", product: "结转项目", grade: "八年级", subject: "英语", campus: "另一校区" }, kind: "FINANCIAL_ONLY" })];
+  const editor = renderToStaticMarkup(createElement(ForecastTrialScopeEditor, { scopes, states: defaultForecastStates, onChange() {} })), readable = text(editor);
+  assert.match(readable, /完整校区 智慧空间 \/ 独立产品 \/ 七年级 \/ 数学/); assert.match(readable, /结转实际/);
+  assert.match(editor, /aria-label="调整秋季 智慧空间 \/ 完整校区 \/ 独立产品 \/ 七年级 \/ 数学试用假设"/);
+  assert.equal(forecastRowLabel(row({ data_status: "TRIAL_SIZE_HELD" })), "暂按上一季人数");
+  assert.equal(forecastRowLabel(row({ data_status: "BASELINE_ESTIMATE" })), "预算参数估计");
+  assert.equal(forecastRowLabel(row({ data_status: "ACTUAL_UNAVAILABLE" })), "实际未对应");
+  assert.doesNotMatch(readable, /Excel|来源与口径|参数来源|查看依据|定版规则/);
+});
+
+test("trial default dimension view uses open-quarter results without altering department annual and quarter totals", () => {
+  const data = calculation({ ready: false, trial_ready: true, rows: [row({ forecast_revenue: null, forecast_total: null, data_status: "ACTUAL_UNAVAILABLE" }), row({ season: "秋季", forecast_revenue: "68000", forecast_total: 68, method: "TERMINAL_FORECAST" })] });
+  const html = renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, trialMode: true }));
+  const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+  assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);
+  assert.match(text(html), /预计全年收入 37\.6 万/); assert.equal(data.annual.forecast_revenue, "376000");
+  const all = render(data); assert.match(text(all), /部分暑假明细未对应，全年分组暂不合计；可按季度查看/);
+  const allTable = all.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+  assert.match(text(allTable), /20 — — — 200 —/);
+});
+
+test("trial notes explicitly disclose entered rates that were not applied, including numerical zero", () => {
+  const html = renderToStaticMarkup(createElement(TrialAssumptionNotes, { assumptions: [{ code: "TRIAL_SIZE_HELD", message: "暂按上一季人数", season: "寒假", dims: trialScope().dims, detail: { unapplied_renewal: "0.7", unapplied_share: null } },
+    { code: "TRIAL_SIZE_HELD", message: "暂按上一季人数", season: "春季", dims: trialScope().dims, detail: { unapplied_renewal: null, unapplied_share: 0 } }] }));
+  assert.equal((text(html).match(/已填写比例暂未用于计算/g) ?? []).length, 2);
+  assert.match(text(html), /寒假 \/ 智慧空间 \/ 完整校区 \/ 独立产品 \/ 七年级 \/ 数学/);
 });

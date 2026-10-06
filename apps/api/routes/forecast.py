@@ -1,9 +1,10 @@
 """FY27 desktop forecasting, intentionally isolated from annual-budget commands."""
 
+from decimal import Decimal
 from typing import Annotated, Any, Literal, Self
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
 from apps.api.auth import current_actor
 from apps.api.routes.historical_review import fy27_review
@@ -12,6 +13,7 @@ from packages.domain.identity.models import Actor, Role
 from packages.forecast.calculation import calculate_forecast
 from packages.forecast.source import extract_forecast_source
 from packages.forecast.store import ForecastStore, ForecastStoreError, fingerprint
+from packages.forecast.trial import build_trial_assumptions
 from packages.source_snapshot.adapter import SourceAdapterError
 
 router = APIRouter()
@@ -67,11 +69,53 @@ class Adjustment(StrictBody):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+Season = Literal["暑假", "秋季", "寒假", "春季"]
+
+
+class TrialFinancial(StrictBody):
+    price: Decimal = Field(ge=0, le=1000000000, allow_inf_nan=False)
+    discount: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+    recognition: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+    renewal: Decimal | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    share: Decimal | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+    method: str = Field(min_length=1, max_length=100)
+
+    @field_validator("price", "discount", "recognition", "renewal", "share", mode="before")
+    @classmethod
+    def numeric_not_boolean(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("预测参数须为数值，不能使用布尔值")
+        return value
+
+    @field_validator("method")
+    @classmethod
+    def method_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("必须指定参数使用方式")
+        return value.strip()
+
+
+class ForecastScope(StrictBody):
+    dims: Dimensions
+    kind: Literal["UNBUDGETED_BUSINESS", "FINANCIAL_ONLY"] = "UNBUDGETED_BUSINESS"
+    reason: str = Field(min_length=1, max_length=1000)
+    financial: dict[Season, TrialFinancial] = Field(default_factory=dict)
+    additional: dict[Season, StrictInt] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def nonnegative_additional(self) -> Self:
+        if any(value < 0 or value > 10000000 for value in self.additional.values()):
+            raise ValueError("明细后续新增人次须为非负整数")
+        return self
+
+
 class Assumptions(StrictBody):
     states: dict[str, SeasonState] = Field(default_factory=lambda: dict(DEFAULT_STATES))
     minimum_sample: StrictInt = Field(default=30, ge=1, le=1000000)
     mappings: list[Mapping] = Field(default_factory=list, max_length=2000)
     adjustments: list[Adjustment] = Field(default_factory=list, max_length=2000)
+    trial_mode: StrictBool = False
+    forecast_scopes: list[ForecastScope] = Field(default_factory=list, max_length=2000)
 
     @model_validator(mode="after")
     def full_states(self) -> Self:
@@ -84,6 +128,11 @@ class Assumptions(StrictBody):
             if state == "FINALIZED" and seen_nonfinal:
                 raise ValueError("已定版季度必须从暑假开始连续指定")
             seen_nonfinal = seen_nonfinal or state != "FINALIZED"
+        keys = [tuple(scope.dims.model_dump().values()) for scope in self.forecast_scopes]
+        if len(set(keys)) != len(keys):
+            raise ValueError("同一完整业务维度只能有一个独立预测范围")
+        if self.forecast_scopes and not self.trial_mode:
+            raise ValueError("独立预测范围当前仅用于试用试算")
         return self
 
 
@@ -104,6 +153,11 @@ class Revise(StrictBody):
 
 
 class Confirmation(StrictBody):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class PrepareTrial(StrictBody):
+    parent_id: str = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=1000)
 
 
@@ -167,6 +221,21 @@ def _guard_change(current: Json | None, assumptions: Json, actor: Actor) -> None
     adjustments = [(a["season"], a["campus"], a["kind"]) for a in assumptions["adjustments"]]
     if len(set(adjustments)) != len(adjustments):
         raise HTTPException(422, "同一季度、校区和类型只能填写一个调整值")
+    dimension_names = ("track", "product", "grade", "subject", "campus")
+    prior_scopes = {
+        tuple(scope["dims"][name] for name in dimension_names): scope
+        for scope in prior.get("forecast_scopes", [])
+    }
+    for scope in assumptions.get("forecast_scopes", []):
+        previous = prior_scopes.get(tuple(scope["dims"][name] for name in dimension_names), {})
+        for season, value in scope["additional"].items():
+            if assumptions["states"][season] not in {"OPEN", "ENDED"}:
+                if previous.get("additional", {}).get(season) != value:
+                    raise HTTPException(409, "独立业务后续新增只能调整开放招生季度")
+        for season, values in scope["financial"].items():
+            if assumptions["states"][season] == "FINALIZED":
+                if previous.get("financial", {}).get(season) != values:
+                    raise HTTPException(409, "已定版季度使用冻结实际，不能修改试用参数")
 
 
 def _replay(actor: Actor, request_id: str, digest: str) -> Json | None:
@@ -239,8 +308,43 @@ async def revise(request: Request, body: Revise, actor: ActorDep, request_id: Re
     parent = _current(actor)["version"]
     if not parent or parent["id"] != body.parent_id:
         raise HTTPException(409, "预测版本已变化，请重新读取后操作")
-    assumptions = body.assumptions.model_dump()
+    assumptions = body.assumptions.model_dump(mode="json")
     assumptions = _retire_finalized_adjustments(parent, assumptions)
+    _guard_change(parent, assumptions, actor)
+    try:
+        result = store.append_version(
+            department=actor.department_id,
+            actor=actor.user_id,
+            request_id=request_id,
+            request_hash=digest,
+            parent_id=parent["id"],
+            baseline_hash=baseline["sha256"],
+            snapshot=parent["snapshot"],
+            assumptions=assumptions,
+            calculation=calculate_forecast(baseline, parent["snapshot"], assumptions),
+            reason=body.reason.strip(),
+        )
+    except ForecastStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _safe_view(result)
+
+
+@router.post("/forecasts/fy27/prepare-trial")
+async def prepare_trial(request: Request, body: PrepareTrial, actor: ActorDep, request_id: RequestId) -> Json:
+    baseline = await _access(request, actor)
+    if not actor.has_role(Role.DATA_MAINTAINER):
+        raise HTTPException(403, "只有数据维护人员可以准备试用预测")
+    digest = fingerprint({"command": "prepare-trial", "body": body.model_dump()})
+    if replay := _replay(actor, request_id, digest):
+        return replay
+    parent = _current(actor)["version"]
+    if not parent or parent["id"] != body.parent_id:
+        raise HTTPException(409, "预测版本已变化，请重新读取后操作")
+    if parent["baseline_hash"] != baseline["sha256"]:
+        raise HTTPException(409, "FY27 定版档案与预测基准不一致")
+    assumptions = Assumptions.model_validate(
+        build_trial_assumptions(baseline, parent["snapshot"], parent["assumptions"])
+    ).model_dump(mode="json")
     _guard_change(parent, assumptions, actor)
     try:
         result = store.append_version(

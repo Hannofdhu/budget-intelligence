@@ -125,6 +125,45 @@ def prove_financial_snapshot(snapshot: dict[str, Any]) -> None:
     }
 
 
+def forecast_scope(
+    *, grade: str = "八年级", campus: str = "西直门", kind: str = "UNBUDGETED_BUSINESS"
+) -> dict[str, Any]:
+    return {
+        "dims": {"track": "初中", "product": "智慧空间", "grade": grade, "subject": "数学", "campus": campus},
+        "kind": kind,
+        "reason": "已开展但未在原预算单列，独立预测，不改变原预算",
+        "financial": {
+            season: {
+                "price": "106",
+                "discount": "1",
+                "recognition": "0.5",
+                "method": "CONFIRMED_PRODUCT_TEMPLATE",
+            }
+            for season in SEASONS
+        },
+        "additional": {"秋季": 0},
+    }
+
+
+def add_scope_source(snapshot: dict[str, Any], scope: dict[str, Any]) -> None:
+    snapshot["rows"].extend(
+        [
+            {
+                **row,
+                **scope["dims"],
+                "enrollment": 10,
+                "new_business": 1,
+                "new_base": 2,
+                "old_base": 8,
+                "actual_revenue": "200",
+                "actual_carryout": "20",
+            }
+            for row in list(snapshot["rows"])
+            if row["campus"] == "西直门" and row["subject"] == "数学"
+        ]
+    )
+
+
 def test_frozen_net_revenue_and_actual_carryout_are_not_divided_by_tax() -> None:
     baseline, snapshot, assumptions = inputs()
     result = calculate_forecast(baseline, snapshot, assumptions)
@@ -759,7 +798,7 @@ def test_full_financial_proof_preserves_signed_closed_details_and_department_act
     prove_financial_snapshot(snapshot)
     result = calculate_forecast(baseline, snapshot, assumptions)
     assert result["ready"]
-    assert result["rule_version"] == "natural-forecast-fy27-v2"
+    assert result["rule_version"] == "natural-forecast-fy27-v3"
     assert result["signed_actuals_verified"]
     summer = result_row(result, "暑假")
     assert summer["forecast_revenue"] == "-10.120000"
@@ -896,3 +935,315 @@ def test_verified_signed_unmapped_actual_preserves_department_amount_but_mapping
     assert unmapped["forecast_revenue"] == "-10.120000"
     assert unmapped["frozen_actual_revenue"] == "-10.120000"
     assert result["quarters"][0]["forecast_revenue"] == "1049.880000"
+
+
+def test_trial_open_missing_sources_use_baseline_but_closed_missing_actual_remains_unknown() -> None:
+    baseline, snapshot, assumptions = inputs()
+    snapshot["rows"] = []
+    snapshot["frozen_carryins"] = []
+    snapshot["actual_totals"] = {"暑假": {"actual_revenue": "33312209.53", "enrollment": 12642}}
+    assumptions["trial_mode"] = True
+    original = copy.deepcopy((baseline, snapshot, assumptions))
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["ready"]
+    assert result["trial_ready"]
+    summer = result_row(result, "暑假")
+    assert summer["data_status"] == "ACTUAL_UNAVAILABLE"
+    assert summer["forecast_revenue"] is None and summer["forecast_total"] is None
+    assert result["quarters"][0]["forecast_revenue"] == "33312209.530000"
+    assert result["quarters"][0]["forecast_total"] == 12642
+    autumn = result_row(result, "秋季")
+    assert autumn["data_status"] == "BASELINE_ESTIMATE"
+    assert autumn["forecast_total"] == 100 and autumn["forecast_new"] == 20
+    assert autumn["forecast_revenue"] == "5000.000000"
+    assert result_row(result, "寒假")["forecast_total"] == 63
+    assert Decimal(result["annual"]["forecast_revenue"]) == Decimal("33312209.53") + sum(
+        Decimal(quarter["forecast_revenue"]) for quarter in result["quarters"][1:]
+    )
+    assert any(note["code"] == "BASELINE_ESTIMATE" for note in result["trial_assumptions"])
+    assert (baseline, snapshot, assumptions) == original
+
+
+def test_scope_additional_is_isolated_and_missing_grade_peer_holds_size() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert result["trial_ready"] and not result["ready"]
+    assert "SOURCE_UNMAPPED" not in issue_codes(result)
+    baseline_autumn = result_row(result, "秋季")
+    scoped_autumn = next(
+        row for row in result["rows"] if row["season"] == "秋季" and row["grade"] == "八年级"
+    )
+    assert baseline_autumn["additional"] == 10
+    assert scoped_autumn["additional"] == 0
+    assert scoped_autumn["forecast_total"] == 10
+    assert scoped_autumn["forecast_revenue"] == "520.000000"
+    assert not scoped_autumn["budget_covered"]
+    for season in ("寒假", "春季"):
+        scoped_future = next(
+            row for row in result["rows"] if row["season"] == season and row["grade"] == "八年级"
+        )
+        assert scoped_future["forecast_total"] == 10
+        assert scoped_future["forecast_new"] == 0
+        assert scoped_future["renewal"] is None
+        assert scoped_future["data_status"] == "TRIAL_SIZE_HELD"
+    assert result["annual"]["budget_revenue"] == "4000.000000"
+    assert result["quarters"][0]["forecast_revenue"] == "1260.000000"
+
+
+def test_scope_manual_additional_changes_only_scope_and_campus_total_not_normal_budget_gap() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    scope["additional"]["秋季"] = 3
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    scoped = next(row for row in result["rows"] if row["season"] == "秋季" and row["grade"] == "八年级")
+    assert result_row(result, "秋季")["additional"] == 10
+    assert scoped["additional"] == 3 and scoped["forecast_total"] == 13
+    campus = next(row for row in result["campuses"] if row["season"] == "秋季")
+    assert campus["budgeted_additional"] == 10
+    assert campus["unbudgeted_additional"] == 3
+    assert campus["additional"] == 13
+
+
+def test_trial_grade_peer_ratios_weight_parameters_not_average_or_saved_rounded_old_counts() -> None:
+    baseline, snapshot, assumptions = inputs(campuses=("西直门", "other"))
+    for row in baseline["rows"]:
+        row["total"] = 100 if row["campus"] == "西直门" else 300
+        row["old"] = 0  # saved rounded/top-up counts must not define inherited renewal
+        row["renewal"] = "0.4" if row["campus"] == "西直门" else "0.8"
+        row["share"] = "0.1" if row["campus"] == "西直门" else "0.3"
+    scope = forecast_scope(grade="七年级", campus="new campus")
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    winter = result_row(result, "寒假", campus="new campus")
+    assert winter["future_method"] == "PEER_GRADE_WEIGHTED"
+    assert Decimal(winter["renewal"]) == Decimal("0.7")
+    assert winter["forecast_old"] == 7 and winter["forecast_new"] == 1
+    evidence = next(
+        note
+        for note in result["trial_assumptions"]
+        if note["code"] == "PEER_GRADE_WEIGHTED" and note["season"] == "寒假"
+    )
+    assert evidence["detail"]["renewal_n"] == "280"
+    assert evidence["detail"]["renewal_d"] == 400
+    assert evidence["detail"]["share_n"] == 40
+    assert evidence["detail"]["share_d"] == 400
+
+
+def test_financial_only_scope_carries_income_once_but_never_projects_students() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope(campus="pure finance", kind="FINANCIAL_ONLY")
+    scope["financial"] = {}
+    snapshot["frozen_carryins"] = [
+        {"season": "秋季", "origin_season": 20264, "dims": scope["dims"], "revenue": "55.25"}
+    ]
+    snapshot["actual_totals"] = {"暑假": {"actual_revenue": "1060", "enrollment": 100}}
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert result["trial_ready"] and not result["ready"]
+    assert "FROZEN_CARRYIN_UNMAPPED" not in issue_codes(result)
+    autumn = result_row(result, "秋季", campus="pure finance")
+    assert autumn["forecast_revenue"] == "55.250000"
+    assert autumn["forecast_total"] == 0
+    assert autumn["counts_not_applicable"]
+    assert result["quarters"][1]["forecast_revenue"] == "5255.250000"
+    assert result_row(result, "寒假", campus="pure finance")["forecast_total"] == 0
+    assert result_row(result, "寒假", campus="pure finance")["forecast_revenue"] == "0.000000"
+
+
+def test_scope_mapping_keeps_independent_product_and_counts_without_changing_baseline() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope(campus="canonical")
+    add_scope_source(snapshot, scope)
+    for row in snapshot["rows"]:
+        if row["campus"] == "canonical":
+            row["campus"] = "alias"
+    assumptions.update(
+        trial_mode=True,
+        forecast_scopes=[scope],
+        mappings=[
+            {
+                "source": {**scope["dims"], "campus": "alias"},
+                "target": scope["dims"],
+                "reason": "explicit alias only",
+            }
+        ],
+    )
+    original = copy.deepcopy(baseline)
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert result["trial_ready"]
+    assert "MAPPING_TARGET_NOT_FOUND" not in issue_codes(result)
+    scoped = next(row for row in result["rows"] if row["season"] == "秋季" and row["campus"] == "canonical")
+    assert scoped["product"] == "智慧空间" and scoped["grade"] == "八年级"
+    assert scoped["forecast_total"] == 10
+    assert baseline == original
+
+
+def test_trial_flag_does_not_allow_missing_frozen_department_totals_or_invalid_actual_counts() -> None:
+    baseline, snapshot, assumptions = inputs()
+    snapshot["rows"] = []
+    snapshot["frozen_carryins"] = []
+    assumptions["trial_mode"] = True
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["trial_ready"]
+    assert result["quarters"][0]["forecast_revenue"] is None
+    baseline, snapshot, assumptions = inputs()
+    assumptions["trial_mode"] = True
+    next(row for row in snapshot["rows"] if row["season"] == "秋季")["enrollment"] = -1
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["ready"] and not result["trial_ready"]
+    assert result_row(result, "秋季")["forecast_total"] is None
+
+
+def test_trial_never_crosses_product_template_or_overrides_invalid_manual_value() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    scope["dims"]["product"] = "distinct product"
+    scope["financial"] = {}
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["trial_ready"]
+    assert not any(note["code"] == "PEER_PRODUCT_FINANCIAL_TEMPLATE" for note in result["trial_assumptions"])
+    scope["financial"] = forecast_scope()["financial"]
+    scope["financial"]["秋季"]["price"] = "-1"
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["trial_ready"]
+
+
+def test_strict_scope_missing_future_rates_is_blocked_not_implicitly_held() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    add_scope_source(snapshot, scope)
+    assumptions["forecast_scopes"] = [scope]
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["ready"] and not result["trial_ready"]
+    assert "RENEWAL_RATE_INVALID" in issue_codes(result)
+    assert not any(row["data_status"] == "TRIAL_SIZE_HELD" for row in result["rows"])
+
+
+@pytest.mark.parametrize(
+    "failure", ["source_issue", "duplicate_baseline", "duplicate_mapping", "negative_people"]
+)
+def test_known_trial_department_results_cannot_hide_real_quality_blockers(failure: str) -> None:
+    baseline, snapshot, assumptions = inputs()
+    assumptions["trial_mode"] = True
+    if failure == "source_issue":
+        snapshot["issues"] = [{"code": "FINANCIAL_PARTITION_MISMATCH", "message": "source is not reconciled"}]
+    elif failure == "duplicate_baseline":
+        baseline["rows"].append(copy.deepcopy(baseline["rows"][0]))
+    elif failure == "duplicate_mapping":
+        dims = {key: baseline["rows"][0][key] for key in ("track", "product", "grade", "subject", "campus")}
+        assumptions["mappings"] = [{"source": dims, "target": dims, "reason": "exact"}] * 2
+    elif failure == "negative_people":
+        snapshot["rows"][0]["old_base"] = -1
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert result["annual"]["forecast_revenue"] is not None
+    assert not result["ready"] and not result["trial_ready"]
+
+
+@pytest.mark.parametrize("explicit_field", ["renewal", "share"])
+def test_partial_manual_future_parameter_is_preserved_and_only_missing_peer_field_fills(
+    explicit_field: str,
+) -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope(grade="七年级", campus="new campus")
+    scope["financial"]["寒假"][explicit_field] = "0.8" if explicit_field == "renewal" else "0.4"
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    winter = result_row(result, "寒假", campus="new campus")
+    assert result["trial_ready"]
+    if explicit_field == "renewal":
+        assert Decimal(winter["renewal"]) == Decimal("0.8")
+        assert winter["forecast_old"] == 8 and winter["forecast_new"] == 2
+    else:
+        assert Decimal(winter["renewal"]) == Decimal("0.5")
+        assert winter["forecast_old"] == 5 and winter["forecast_new"] == 3
+    assert scope["financial"]["寒假"][explicit_field] == ("0.8" if explicit_field == "renewal" else "0.4")
+
+
+def test_partial_manual_parameter_without_peer_is_disclosed_as_unapplied_size_hold() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    scope["financial"]["寒假"]["renewal"] = "0.8"
+    add_scope_source(snapshot, scope)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    winter = next(row for row in result["rows"] if row["season"] == "寒假" and row["grade"] == "八年级")
+    assert winter["data_status"] == "TRIAL_SIZE_HELD"
+    assert winter["forecast_total"] == 10 and winter["renewal"] is None
+    evidence = next(
+        note
+        for note in result["trial_assumptions"]
+        if note["season"] == "寒假" and note["code"] == "TRIAL_SIZE_HELD"
+    )
+    assert evidence["detail"]["unapplied_renewal"] == "0.8"
+    assert scope["financial"]["寒假"]["renewal"] == "0.8"
+
+
+@pytest.mark.parametrize("value", [1, -1, None])
+@pytest.mark.parametrize("field", ["enrollment", "new_business", "new_base", "old_base"])
+def test_financial_only_classification_cannot_hide_original_source_student_counts(
+    field: str, value: int | None
+) -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope(campus="pure finance", kind="FINANCIAL_ONLY")
+    for season in ("暑假", "秋季"):
+        row = {
+            **snapshot["rows"][0],
+            **scope["dims"],
+            "season": season,
+            "enrollment": 0,
+            "new_business": 0,
+            "new_base": 0,
+            "old_base": 0,
+            "actual_revenue": "55.25",
+            "actual_carryout": "0",
+        }
+        if season == "秋季":
+            row[field] = value
+        snapshot["rows"].append(row)
+    snapshot["frozen_carryins"] = []
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["trial_ready"] and not result["ready"]
+    assert "FINANCIAL_ONLY_SOURCE_HAS_STUDENTS" in issue_codes(result)
+    assert result["quarters"][0]["forecast_revenue"] == "1115.250000"
+    assert result_row(result, "秋季", campus="pure finance")["forecast_total"] is None
+
+
+def test_verified_zero_financial_only_source_is_allowed_and_closed_income_is_not_doubled() -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope(campus="pure finance", kind="FINANCIAL_ONLY")
+    snapshot["rows"].extend(
+        [
+            {
+                **row,
+                **scope["dims"],
+                "enrollment": 0,
+                "new_business": 0,
+                "new_base": 0,
+                "old_base": 0,
+                "actual_revenue": "55.25",
+                "actual_carryout": "0",
+            }
+            for row in list(snapshot["rows"])
+        ]
+    )
+    snapshot["frozen_carryins"] = []
+    prove_financial_snapshot(snapshot)
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert result["trial_ready"] and not result["ready"]
+    assert "FINANCIAL_ONLY_SOURCE_HAS_STUDENTS" not in issue_codes(result)
+    assert result["quarters"][0]["forecast_revenue"] == "1115.250000"
+    assert result["quarters"][0]["forecast_total"] == 100
+    pure_finance = result_row(result, "暑假", campus="pure finance")
+    assert pure_finance["forecast_revenue"] == "55.250000"
+    assert pure_finance["counts_not_applicable"] and pure_finance["forecast_total"] == 0

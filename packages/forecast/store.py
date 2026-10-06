@@ -187,6 +187,8 @@ class ForecastStore:
             version = view["version"]
             if not version or version["id"] != version_id:
                 raise ForecastStoreError("只能确认当前预测版本")
+            if version["assumptions"].get("trial_mode"):
+                raise ForecastStoreError("试用预测不能正式确认；需核实试用假设后生成正式预测")
             if not version["calculation"].get("ready"):
                 raise ForecastStoreError("尚有数据阻断，不能确认预测")
             if version["status"] == "CONFIRMED":

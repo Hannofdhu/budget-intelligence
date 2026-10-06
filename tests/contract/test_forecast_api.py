@@ -303,6 +303,97 @@ def test_every_dimension_and_integer_mandatory_and_unknown_inputs_rejected() -> 
 
 
 @pytest.mark.asyncio
+async def test_trial_preparation_versions_same_snapshot_and_replays_original_result(
+    setup_route: tuple[Request, Actor], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    request, actor = setup_route
+    first = await route.refresh(request, route.Refresh(reason="first"), actor, "request-1")
+    original = _event_bytes(tmp_path)
+
+    def prepare(_: Any, __: Any, prior: dict[str, Any]) -> dict[str, Any]:
+        return {**deepcopy(prior), "trial_mode": True, "forecast_scopes": []}
+
+    monkeypatch.setattr(route, "build_trial_assumptions", prepare)
+    monkeypatch.setattr(
+        route, "calculate_forecast", lambda *_: {"ready": False, "trial_ready": True, "annual": {"gap": "5"}}
+    )
+    body = route.PrepareTrial(parent_id=first["version"]["id"], reason="local trial")
+    trial = await route.prepare_trial(request, body, actor, "trial-001")
+    assert trial["version"]["status"] == "DRAFT"
+    assert trial["version"]["parent_id"] == first["version"]["id"]
+    assert trial["version"]["assumptions"]["trial_mode"] is True
+    assert trial["version"]["calculation"]["trial_ready"] is True
+    assert trial["version"]["snapshot_hash"] == first["version"]["snapshot_hash"]
+    assert "snapshot" not in trial["version"]
+    assert all(path.read_bytes() == value for path, value in original.items())
+    assert await route.prepare_trial(request, body, actor, "trial-001") == trial
+    with pytest.raises(HTTPException) as old:
+        await route.prepare_trial(request, body, actor, "trial-002")
+    assert old.value.status_code == 409
+    with pytest.raises(HTTPException) as forbidden:
+        await route.confirm(
+            request, trial["version"]["id"], route.Confirmation(reason="not official"), actor, "confirm-trial"
+        )
+    assert "试用预测不能正式确认" in forbidden.value.detail
+
+
+@pytest.mark.asyncio
+async def test_trial_preparation_requires_maintainer_and_current_baseline(
+    setup_route: tuple[Request, Actor], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    request, actor = setup_route
+    first = await route.refresh(request, route.Refresh(reason="first"), actor, "request-1")
+    body = route.PrepareTrial(parent_id=first["version"]["id"], reason="trial")
+    owner_only = Actor("owner", "department", frozenset({Role.DEPARTMENT_BUDGET_OWNER}))
+    with pytest.raises(HTTPException) as denied:
+        await route.prepare_trial(request, body, owner_only, "trial-001")
+    assert denied.value.status_code == 403
+    original = _event_bytes(tmp_path)
+
+    async def changed(_: Request, __: Actor) -> dict[str, Any]:
+        return {"sha256": "different", "rows": []}
+
+    monkeypatch.setattr(route, "_access", changed)
+    with pytest.raises(HTTPException) as mismatch:
+        await route.prepare_trial(request, body, actor, "trial-002")
+    assert mismatch.value.status_code == 409
+    assert _event_bytes(tmp_path) == original
+
+
+def test_trial_scope_validation_and_finalized_parameter_guard() -> None:
+    from pydantic import ValidationError
+
+    dims = {name: "具体值" for name in ("track", "product", "grade", "subject", "campus")}
+    financial = {"price": "4665", "discount": ".85", "recognition": ".6875", "method": "MANUAL"}
+    scope = {"dims": dims, "reason": "试用估计", "financial": {"秋季": financial}, "additional": {"秋季": 0}}
+    assumptions = route.Assumptions.model_validate({"trial_mode": True, "forecast_scopes": [scope]})
+    assert assumptions.forecast_scopes[0].financial["秋季"].renewal is None
+    for bad in (
+        {"trial_mode": False, "forecast_scopes": [scope]},
+        {"trial_mode": True, "forecast_scopes": [scope, scope]},
+        {"trial_mode": True, "forecast_scopes": [{**scope, "additional": {"秋季": -1}}]},
+        {"trial_mode": True, "forecast_scopes": [{**scope, "additional": {"秋季": 1.5}}]},
+        {
+            "trial_mode": True,
+            "forecast_scopes": [{**scope, "financial": {"秋季": {**financial, "share": 1}}}],
+        },
+        {
+            "trial_mode": True,
+            "forecast_scopes": [{**scope, "financial": {"秋季": {**financial, "price": "NaN"}}}],
+        },
+    ):
+        with pytest.raises(ValidationError):
+            route.Assumptions.model_validate(bad)
+    actor = Actor("owner", "department", frozenset({Role.DATA_MAINTAINER}))
+    summer = route.Assumptions.model_validate(
+        {"trial_mode": True, "forecast_scopes": [{**scope, "financial": {"暑假": financial}}]}
+    ).model_dump()
+    with pytest.raises(HTTPException) as blocked:
+        route._guard_change(None, summer, actor)
+    assert blocked.value.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_forecast_access_reuses_existing_local_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     from apps.api.routes import historical_review
 
