@@ -122,6 +122,63 @@ def test_trial_is_never_confirmable_even_when_calculation_says_ready(tmp_path: P
     assert {path: path.read_bytes() for path in tmp_path.glob("event-*.json")} == before
 
 
+def test_ready_cannot_override_a_remaining_blocking_issue(tmp_path: Path) -> None:
+    store = ForecastStore(tmp_path)
+    result = store.append_version(
+        department="department",
+        actor="owner",
+        request_id="blocked-request",
+        request_hash="blocked",
+        parent_id=None,
+        baseline_hash="immutable-budget",
+        snapshot={"as_of": "2026-10-03", "rows": []},
+        assumptions={"states": {"暑假": "FINALIZED"}},
+        calculation={"ready": True, "issues": [{"code": "FINALIZED_ACTUAL_INVALID", "severity": "BLOCKING"}]},
+        reason="invalid actual remains blocking",
+    )
+    before = {path: path.read_bytes() for path in tmp_path.glob("event-*.json")}
+    with pytest.raises(ForecastStoreError, match="数据阻断"):
+        store.confirm(
+            department="department",
+            actor="owner",
+            version_id=result["version"]["id"],
+            request_id="blocked-confirm",
+            request_hash="confirmation",
+            reason="cannot bypass source checks",
+        )
+    assert {path: path.read_bytes() for path in tmp_path.glob("event-*.json")} == before
+
+
+def test_informational_empty_slot_exemption_can_be_confirmed_without_rewriting_version(
+    tmp_path: Path,
+) -> None:
+    store = ForecastStore(tmp_path)
+    result = store.append_version(
+        department="department",
+        actor="owner",
+        request_id="reviewed-request",
+        request_hash="reviewed",
+        parent_id=None,
+        baseline_hash="immutable-budget",
+        snapshot={"as_of": "2026-10-03", "rows": []},
+        assumptions={"states": {"暑假": "FINALIZED"}},
+        calculation={"ready": True, "issues": [{"code": "FINALIZED_ACTUAL_MISSING", "severity": "INFO"}]},
+        reason="system-reviewed empty budget slot",
+    )
+    before = {path: path.read_bytes() for path in tmp_path.glob("event-*.json")}
+    confirmed = store.confirm(
+        department="department",
+        actor="owner",
+        version_id=result["version"]["id"],
+        request_id="reviewed-confirm",
+        request_hash="confirmation",
+        reason="认可本版预测结果和参数",
+    )
+    assert confirmed["version"]["status"] == "CONFIRMED"
+    assert all(path.read_bytes() == content for path, content in before.items())
+    assert len(list(tmp_path.glob("event-*.json"))) == 2
+
+
 def test_content_tampering_and_deleted_event_are_detected(tmp_path: Path) -> None:
     store = ForecastStore(tmp_path)
     first = version(store)

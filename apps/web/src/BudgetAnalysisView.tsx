@@ -51,7 +51,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [range, setRange] = useState<CellRange | null>(null);
   const [boardSelection, setBoardSelection] = useState<BoardSelection | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(() => state.view === "board");
   const [rawMode, setRawMode] = useState(() => new URLSearchParams(location.search).get("baTable") === "detail");
   const [detailPage, setDetailPage] = useState(0);
   const [showAllProducts, setShowAllProducts] = useState(false);
@@ -70,6 +70,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   const commit = (next: BudgetAnalysisState, replace = false) => {
     const valid = validateAnalysisState(next, facts);
     setState(valid.state); setRecordView(false);
+    if (next.view !== state.view) setDetailOpen(next.view === "board");
     if (next.unit === state.unit || JSON.stringify(next.filters) !== JSON.stringify(state.filters) || JSON.stringify(next.config) !== JSON.stringify(state.config) || next.view !== state.view) clearSelection();
     const url = new URL(location.href);
     url.search = writeAnalysisState(url.search, valid.state);
@@ -84,6 +85,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
     const restore = () => {
       const restored = stateFromLocation(facts, initialFilters);
       setState(restored); clearSelection(); setCollapsed(new Set());
+      setDetailOpen(restored.view === "board");
       setRawMode(new URLSearchParams(location.search).get("baTable") === "detail");
       setRecordView(isRecordLocation());
       onFiltersChange?.(restored.filters);
@@ -94,8 +96,9 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   useEffect(() => {
     if (lastContext.current === contextKey) return;
     lastContext.current = contextKey;
-    setState(stateFromLocation(facts, initialFilters)); clearSelection(); setCollapsed(new Set());
-    setDetailOpen(false); setRawMode(false); setRecordView(false); setNotice("");
+    const restored = stateFromLocation(facts, initialFilters);
+    setState(restored); clearSelection(); setCollapsed(new Set());
+    setDetailOpen(restored.view === "board"); setRawMode(false); setRecordView(false); setNotice("");
   }, [contextKey, facts]);
   useEffect(() => {
     setStorageReady(false);

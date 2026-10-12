@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from packages.forecast.calculation import DIMS, SEASONS
+from packages.forecast.rules import FIXED_RULES_VERSION, build_fixed_assumptions
 from packages.forecast.trial import build_trial_assumptions
 
 Json = dict[str, Any]
@@ -280,3 +281,42 @@ def test_deterministic_order_and_json_compatible_decimal_boundaries() -> None:
     baseline["rows"].reverse()
     assert build_trial_assumptions(baseline, snapshot, prior) == first
     assert first["forecast_scopes"][0]["dims"]["campus"] == "丁"
+
+
+def test_fixed_policy_inherits_every_saved_override_and_does_not_mutate_inputs() -> None:
+    baseline, snapshot, prior = inputs()
+    snapshot["rows"] = [source()]
+    prior = build_trial_assumptions(baseline, snapshot, prior)
+    prior["adjustments"] = [
+        {"season": "秋季", "campus": "甲", "kind": "new_withdrawal", "value": 3, "reason": "人工"}
+    ]
+    prior["forecast_scopes"][0]["financial"]["寒假"]["price"] = "106.00123456789"
+    prior["forecast_scopes"][0]["additional"]["秋季"] = 7
+    prior["minimum_sample"] = 31
+    before = deepcopy((baseline, snapshot, prior))
+    result = build_fixed_assumptions(baseline, snapshot, prior)
+    assert result["trial_mode"] is False
+    assert result["fixed_rules_version"] == FIXED_RULES_VERSION
+    for field in ("forecast_scopes", "mappings", "adjustments", "states", "minimum_sample"):
+        assert result[field] == prior[field]
+    assert build_fixed_assumptions(baseline, snapshot, result) == result
+    assert (baseline, snapshot, prior) == before
+
+
+def test_fixed_policy_adds_missing_scope_without_changing_product_grade_or_frozen_parameters() -> None:
+    baseline, snapshot, prior = inputs()
+    snapshot["rows"] = [source(grade="八年级")]
+    result = build_fixed_assumptions(baseline, snapshot, prior)
+    scope = result["forecast_scopes"][0]
+    assert scope["dims"] == dims(campus="丙", grade="八年级")
+    assert "暑假" not in scope["financial"]
+    assert scope["financial"]["春季"]["renewal"] is None
+    assert scope["additional"] == {"秋季": 0}
+    assert result["mappings"] == []
+
+
+def test_fixed_policy_rejects_unknown_versions_instead_of_replacing_them() -> None:
+    baseline, snapshot, prior = inputs()
+    prior["fixed_rules_version"] = "unknown"
+    with pytest.raises(ValueError, match="未知固定预测规则"):
+        build_fixed_assumptions(baseline, snapshot, prior)

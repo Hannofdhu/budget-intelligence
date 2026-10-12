@@ -11,9 +11,11 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from fractions import Fraction
 from typing import Any
 
+from packages.forecast.rules import FIXED_RULES_VERSION
 from packages.headcount.calculation import _largest_remainder, round_half_up
 
 RULE_VERSION = "natural-forecast-fy27-v3"
+CONFIRMATION_POLICY_VERSION = "fy27-empty-budget-actual-v1"
 SEASONS = ("暑假", "秋季", "寒假", "春季")
 DIMS = ("track", "product", "grade", "subject", "campus")
 STATES = {"FINALIZED", "OPEN", "ENDED", "FUTURE"}
@@ -177,6 +179,37 @@ def _trial_note(
         item["detail"] = detail
     if item not in notes:
         notes.append(item)
+
+
+def _fixed_rule_notes(notes: list[dict[str, Any]], states: dict[str, Any]) -> list[dict[str, Any]]:
+    """Describe only applicable defaults; frozen facts are not forecast rules."""
+    messages = {
+        "PEER_PRODUCT_FINANCIAL_TEMPLATE": "财务参数使用同季度同赛道同产品统一模板",
+        "PEER_GRADE_WEIGHTED": "未来人数使用同季度同赛道同产品同年级加权比例",
+        "TRIAL_SIZE_HELD": "无可用人数比例：沿用上季规模、新生为零；不填造续班率",
+        "UNBUDGETED_ADDITIONAL": "预算未覆盖业务后续新增独立设置，不分摊校区预算缺口",
+        "BASELINE_ESTIMATE": "当季来源缺失：使用原预算人数预估，不是实际招生或实际收入",
+    }
+    return [
+        {
+            **note,
+            "message": "当季来源缺失：预算外业务沿用上季规模、新生为零；未预测退班"
+            if note["code"] == "TRIAL_SIZE_HELD" and "当季无来源" in note["message"]
+            else messages.get(note["code"], note["message"]),
+        }
+        for note in notes
+        if states.get(str(note.get("season") or "")) != "FINALIZED"
+        and note["code"] != "ACTUAL_UNAVAILABLE"
+        and (
+            note["code"] != "UNBUDGETED_ADDITIONAL"
+            or states.get(str(note.get("season") or "")) in {"OPEN", "ENDED"}
+        )
+        and (
+            note["code"] not in {"PEER_GRADE_WEIGHTED", "TRIAL_SIZE_HELD"}
+            or states.get(str(note.get("season") or "")) == "FUTURE"
+            or "当季无来源" in note["message"]
+        )
+    ]
 
 
 def _scope_rows(
@@ -1151,6 +1184,127 @@ def calculate_forecast(
         return _calculate(baseline, snapshot, assumptions)
 
 
+def _review_empty_budget_actuals(
+    indexed: dict[tuple[str, tuple[str, ...]], dict[str, Any]],
+    snapshot: dict[str, Any],
+    assumptions: dict[str, Any],
+    output: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Exempt absent, inactive budget slots from confirmation, never assert actual zero.
+
+    A complete source plus a matching department sum alone cannot prove that a
+    particular missing fact is zero. This narrowly reviews original *contribution*
+    fields as well, and retains every absent fact and issue as informational
+    evidence. Unit prices/rates are not contributions and need not be zero.
+    """
+    if (
+        assumptions.get("trial_mode") is True
+        or assumptions.get("fixed_rules_version") != FIXED_RULES_VERSION
+        or not _signed_actuals_verified(snapshot)
+        or any(
+            issue["severity"] == "BLOCKING" and issue["code"] != "FINALIZED_ACTUAL_MISSING"
+            for issue in issues
+        )
+    ):
+        return []
+    frozen = snapshot.get("frozen_carryins")
+    if not isinstance(frozen, list):
+        return []
+    mappings = {_key(item["source"]): _key(item["target"]) for item in assumptions.get("mappings", [])}
+    carry_keys: set[tuple[str, ...]] = set()
+    for carry in frozen:
+        if not isinstance(carry, dict):
+            return []
+        dims = carry.get("dims", carry)
+        if (
+            not isinstance(dims, dict)
+            or not all(_key(dims))
+            or carry.get("season") not in SEASONS
+            or _decimal(carry.get("revenue")) is None
+        ):
+            return []
+        # Any retained carry input for this business, including future arrivals,
+        # keeps it outside the empty-slot exemption. No netting positive/negative.
+        carry_keys.add(_key(dims))
+        carry_keys.add(mappings.get(_key(dims), _key(dims)))
+    fields = ("old", "new", "total", "opening", "list_revenue", "business", "current", "revenue", "carryout")
+    checks: list[dict[str, Any]] = []
+    for season in SEASONS:
+        missing = [
+            issue
+            for issue in issues
+            if issue["code"] == "FINALIZED_ACTUAL_MISSING" and issue.get("season") == season
+        ]
+        if not missing or assumptions.get("states", {}).get(season) != "FINALIZED":
+            continue
+        empty = True
+        for issue in missing:
+            dims = issue.get("dims", {})
+            key = _key(dims)
+            row = indexed.get((season, key))
+            prior = indexed.get((SEASONS[SEASONS.index(season) - 1], key)) if season != SEASONS[0] else None
+            if (
+                row is None
+                or row.get("_forecast_only")
+                or row.get("_scope_kind", "BUDGETED_BUSINESS") != "BUDGETED_BUSINESS"
+                or key in carry_keys
+                or not all(_decimal(row.get(field)) == 0 for field in fields)
+                or (prior is not None and _decimal(prior.get("carryout")) != 0)
+                or any(source.get("season") == season and _key(source) == key for source in snapshot["rows"])
+            ):
+                empty = False
+                break
+        if not empty:
+            continue
+        totals = snapshot.get("actual_totals", {}).get(season, {})
+        actual_revenue = _decimal(totals.get("actual_revenue"))
+        actual_count = _integer(totals.get("enrollment"))
+        source_rows = [
+            row for row in snapshot["rows"] if row.get("season") == season and not row.get("financial_only")
+        ]
+        source_revenue = _sum([_decimal(row.get("actual_revenue")) for row in source_rows])
+        source_count = _sum([_integer(row.get("enrollment")) for row in source_rows])
+        known = [row for row in output if row["season"] == season and row["method"] != "ACTUAL_UNAVAILABLE"]
+        known_revenue = _sum([_decimal(row.get("forecast_revenue")) for row in known])
+        known_count = _sum([_integer(row.get("forecast_total")) for row in known])
+        if (
+            actual_revenue is None
+            or actual_count is None
+            or source_revenue != actual_revenue
+            or source_count != actual_count
+            # Compare exact Decimal at the engine's retained money precision;
+            # source fractional-cent artefacts are not rounded via binary float.
+            or known_revenue != _decimal(_money(actual_revenue))
+            or known_count != actual_count
+        ):
+            continue
+        checks.append(
+            {
+                "season": season,
+                "as_of": snapshot["as_of"],
+                "source_complete": True,
+                "budget_components_zero": True,
+                "no_frozen_carryins": True,
+                "revenue_matched": True,
+                "enrollment_matched": True,
+                "excluded_empty_rows": len(missing),
+                "known_revenue": _money(known_revenue),
+                "actual_revenue": _money(actual_revenue),
+                "known_enrollment": actual_count,
+                "actual_enrollment": actual_count,
+            }
+        )
+        for issue in missing:
+            issue["severity"] = "INFO"
+            issue["detail"] = {
+                **issue.get("detail", {}),
+                "confirmation_exemption": CONFIRMATION_POLICY_VERSION,
+                "classification": "EMPTY_BUDGET_SLOT_NO_SOURCE_BUSINESS",
+            }
+    return checks
+
+
 def _calculate(
     baseline: dict[str, Any], snapshot: dict[str, Any], assumptions: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1163,6 +1317,13 @@ def _calculate(
         )
     states = assumptions.get("states", {})
     trial = assumptions.get("trial_mode") is True
+    fixed_version = assumptions.get("fixed_rules_version")
+    fixed = fixed_version == FIXED_RULES_VERSION
+    defaults = trial or fixed
+    if fixed_version is not None and fixed_version != FIXED_RULES_VERSION:
+        _issue(issues, "FIXED_RULES_VERSION_INVALID", "未知固定预测规则版本")
+    if fixed and trial:
+        _issue(issues, "FIXED_RULES_TRIAL_CONFLICT", "固定预测规则不能同时声明为试用模式")
     trial_notes: list[dict[str, Any]] = []
     minimum = _integer(assumptions.get("minimum_sample", 30))
     if minimum is None or minimum < 1:
@@ -1206,7 +1367,9 @@ def _calculate(
                 "定版预算明细未完整覆盖四季",
                 row=dict(zip(DIMS, key, strict=True)),
             )
-    scopes = _scope_rows(assumptions.get("forecast_scopes", []), indexed, minimum, trial, trial_notes, issues)
+    scopes = _scope_rows(
+        assumptions.get("forecast_scopes", []), indexed, minimum, defaults, trial_notes, issues
+    )
     indexed.update(scopes)
     all_keys = {key for _, key in indexed}
     financial_only_keys = {key for (_, key), row in scopes.items() if row["_scope_kind"] == "FINANCIAL_ONLY"}
@@ -1232,7 +1395,8 @@ def _calculate(
             source_backed_rows = [
                 row
                 for row in season_rows
-                if row.get("_scope_kind") != "FINANCIAL_ONLY" and (not trial or (season, _key(row)) in source)
+                if row.get("_scope_kind") != "FINANCIAL_ONLY"
+                and (not defaults or (season, _key(row)) in source)
             ]
             counts = _open_counts(
                 season,
@@ -1247,7 +1411,7 @@ def _calculate(
                 evidence,
                 campuses,
             )
-            if trial:
+            if defaults:
                 for row in season_rows:
                     if row.get("_scope_kind") == "FINANCIAL_ONLY" or (season, _key(row)) in source:
                         continue
@@ -1334,7 +1498,7 @@ def _calculate(
                         season=season,
                         row=row,
                     )
-                    if trial:
+                    if defaults:
                         item.update(
                             data_status="ACTUAL_UNAVAILABLE",
                             method="ACTUAL_UNAVAILABLE",
@@ -1409,7 +1573,7 @@ def _calculate(
                     new_withdrawal=values.get("new_withdrawal"),
                     old_withdrawal=values.get("old_withdrawal"),
                 )
-                if trial and state in {"OPEN", "ENDED"} and actual is None:
+                if defaults and state in {"OPEN", "ENDED"} and actual is None:
                     item["data_status"] = (
                         "TRIAL_SIZE_HELD" if row.get("_forecast_only") else "BASELINE_ESTIMATE"
                     )
@@ -1578,23 +1742,28 @@ def _calculate(
                     else "ABOVE_BUDGET",
                 )
         quarters.append({"season": season, "state": states.get(season), **summary})
+    confirmation_checks = _review_empty_budget_actuals(indexed, snapshot, assumptions, output, issues)
     unique_issues: list[dict[str, Any]] = []
     for issue in issues:
         if issue not in unique_issues:
             unique_issues.append(issue)
+    complete = {issue["code"] for issue in unique_issues if issue["severity"] == "BLOCKING"}.issubset(
+        {"FINALIZED_ACTUAL_MISSING"}
+    ) and all(
+        quarter["forecast_revenue"] is not None and quarter["forecast_total"] is not None
+        for quarter in quarters
+    )
     return {
         "rule_version": RULE_VERSION,
+        "confirmation_policy_version": CONFIRMATION_POLICY_VERSION,
+        "confirmation_checks": confirmation_checks,
+        "fixed_rules_version": FIXED_RULES_VERSION if fixed else None,
+        "forecast_complete": complete,
         "ready": not trial and not any(issue["severity"] == "BLOCKING" for issue in unique_issues),
         "trial_mode": trial,
-        "trial_ready": trial
-        and {issue["code"] for issue in unique_issues if issue["severity"] == "BLOCKING"}.issubset(
-            {"FINALIZED_ACTUAL_MISSING"}
-        )
-        and all(
-            quarter["forecast_revenue"] is not None and quarter["forecast_total"] is not None
-            for quarter in quarters
-        ),
-        "trial_assumptions": trial_notes,
+        "trial_ready": trial and complete,
+        "trial_assumptions": trial_notes if trial else [],
+        "rule_notes": _fixed_rule_notes(trial_notes, states) if fixed else [],
         "as_of": snapshot.get("as_of"),
         "rows": output,
         "quarters": quarters,

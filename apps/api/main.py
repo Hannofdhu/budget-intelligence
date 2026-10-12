@@ -10,6 +10,7 @@ from apps.api.routes.forecast import router as forecast_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.historical_review import router as historical_review_router
 from apps.api.routes.local_trial import router as local_trial_router
+from apps.api.routes.next_year import router as next_year_router
 from apps.api.routes.versioning import router as versioning_router
 from apps.api.routes.workspace import router as workspace_router
 from packages.config.settings import get_settings
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(local_trial_router, prefix="/api/v1")
     app.include_router(historical_review_router, prefix="/api/v1")
     app.include_router(forecast_router, prefix="/api/v1")
+    app.include_router(next_year_router, prefix="/api/v1")
     return app
 
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { identityHeaders, parseResponse, type ApiIdentity } from "./api";
-import { BudgetLifecycle } from "./BudgetLifecycle";
+import { FY27Header } from "./FY27Header";
 import { budgetRowsInScope } from "./budgetBrowse";
 import { BudgetAnalysisView } from "./BudgetAnalysisView";
 import { normalizeHistoricalFacts, readAnalysisState, writeAnalysisState } from "./budgetAnalysis";
@@ -75,14 +75,12 @@ export function HistoricalBudgetPage() {
   }
   return <div className="budget-shell decision-shell history-budget">
     <a className="skip-link" href="#history-content">跳到主要内容</a>
-    <header className="decision-topbar">
-      <button className="decision-brand" onClick={() => changeStep(5)}><span aria-hidden="true">智</span><strong>预算智解</strong></button>
+    <FY27Header active="budget" onHome={() => changeStep(5)}>
       <label className="decision-budget-select"><span className="sr-only">年度预算</span><select value="2027" onChange={() => location.assign("/budget/workspace")}><option value="2027">FY27 学校版</option><option value="live">其他年度预算</option></select></label>
       <div className="decision-version"><span className="status-dot is-published"/><span>已定版</span><small>只读回看</small></div>
-    </header>
+    </FY27Header>
     <main className="decision-workspace" id="history-content">
       <nav className="decision-progress" aria-label="预算拆解导航">{steps.map((label, index) => <button key={label} className={`is-done ${step === index + 1 ? "is-active" : ""}`} aria-current={step === index + 1 ? "step" : undefined} onClick={() => changeStep(index + 1)}><span>{index + 1}</span><strong>{label}</strong><em className="decision-progress-short">{label.slice(0, 2)}</em></button>)}</nav>
-      <div className="history-product-nav"><BudgetLifecycle mode="historical" /><a href="/budget/forecast?archive=fy27">达成预测</a></div>
       {error ? <section className="decision-question" role="alert"><p>{error}</p><button onClick={() => location.reload()}>重新读取</button></section> : !data ? <p role="status">正在读取 FY27 预算…</p> : <>
         <header className="history-heading"><div><p>FY27 学校版</p><h1>{steps[step - 1]}</h1></div></header>
         {step !== 5 && <section className="history-filters" aria-label="预算筛选">{Object.entries({ season: "季度", ...dimensions }).filter(([key]) => key !== "season" || step >= 3).map(([key, label]) => <label key={key}>{label}<select aria-label={label} value={filters[key as keyof typeof filters]} onChange={event => updateFilters({ ...filters, [key]: event.target.value })}>{["", ...(key === "season" ? seasons : [...new Set(data.rows.map(row => String(row[key as keyof Line])))].sort((a, b) => a.localeCompare(b, "zh-CN")))].map(value => <option key={value} value={value}>{value || "全部"}</option>)}</select></label>)}</section>}

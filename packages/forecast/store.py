@@ -106,6 +106,24 @@ class ForecastStore:
         with self._lock():
             return self._view(self._events(department))
 
+    def versions(self, department: str) -> list[Json]:
+        """Legacy reader for import verification and isolated contract tests."""
+        with self._lock():
+            return list(reversed(self._versions(self._events(department))))
+
+    def version(self, department: str, version_id: str) -> Json | None:
+        with self._lock():
+            events = self._events(department)
+            view = self._view(events)
+            selected = next((item for item in self._versions(events) if item["id"] == version_id), None)
+            if selected is None:
+                return None
+            return {
+                **view,
+                "version": selected,
+                "latest_version_id": view["version"]["id"] if view["version"] else None,
+            }
+
     def _view(self, events: list[Json]) -> Json:
         versions = self._versions(events)
         return {
@@ -189,7 +207,9 @@ class ForecastStore:
                 raise ForecastStoreError("只能确认当前预测版本")
             if version["assumptions"].get("trial_mode"):
                 raise ForecastStoreError("试用预测不能正式确认；需核实试用假设后生成正式预测")
-            if not version["calculation"].get("ready"):
+            if not version["calculation"].get("ready") or any(
+                issue.get("severity") == "BLOCKING" for issue in version["calculation"].get("issues", [])
+            ):
                 raise ForecastStoreError("尚有数据阻断，不能确认预测")
             if version["status"] == "CONFIRMED":
                 return view

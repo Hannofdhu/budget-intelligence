@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,12 @@ class Settings(BaseSettings):
     guancli_binary: str = "guancli"
     guancli_profile: str = "default"
     guancli_timeout_seconds: float = Field(default=300, gt=0, le=1800)
+    guancli_retry_attempt_timeout_seconds: float = Field(default=60, gt=0, le=1800)
+    guancli_retry_count: int = Field(default=2, ge=0, le=4)
+    guancli_retry_backoff_seconds: float = Field(default=0.5, ge=0, le=10)
+    guancli_max_concurrent_queries: int = Field(default=2, ge=1, le=8)
+    guancli_proxy_url: str | None = Field(default=None, repr=False)
+    forecast_refresh_timeout_seconds: float = Field(default=180, gt=0, le=1800)
     source_preview_max_rows: int = Field(default=500_000, ge=1_000, le=1_000_000)
     source_preview_chunk_max_rows: int = Field(default=60_000, ge=1_000, le=60_000)
     source_preview_target_rows: int = Field(default=10_000, ge=1_000, le=60_000)
@@ -37,6 +44,25 @@ class Settings(BaseSettings):
     def reject_development_auth_in_production(self) -> "Settings":
         if self.environment == "production" and self.auth_mode == "dev_headers":
             raise ValueError("production cannot use dev_headers authentication")
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_proxy(self) -> "Settings":
+        if self.guancli_proxy_url is not None:
+            proxy = urlsplit(self.guancli_proxy_url)
+            if (
+                proxy.scheme not in {"http", "https", "socks5", "socks5h"}
+                or not proxy.hostname
+                or proxy.query
+                or proxy.fragment
+                or proxy.path not in {"", "/"}
+            ):
+                raise ValueError("guancli_proxy_url must be an HTTP(S) or SOCKS proxy URL")
+            # Accessing port also validates malformed/out-of-range values, without echoing the URL.
+            try:
+                _ = proxy.port
+            except ValueError:
+                raise ValueError("guancli_proxy_url contains an invalid port") from None
         return self
 
 

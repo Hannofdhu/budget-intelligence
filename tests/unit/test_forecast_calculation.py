@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 
 from packages.forecast.calculation import SEASONS, calculate_forecast
+from packages.forecast.rules import FIXED_RULES_VERSION
 
 
 def baseline_rows(
@@ -1247,3 +1248,64 @@ def test_verified_zero_financial_only_source_is_allowed_and_closed_income_is_not
     pure_finance = result_row(result, "暑假", campus="pure finance")
     assert pure_finance["forecast_revenue"] == "55.250000"
     assert pure_finance["counts_not_applicable"] and pure_finance["forecast_total"] == 0
+
+
+@pytest.mark.parametrize("missing_current", [False, True])
+def test_fixed_rules_reproduce_trial_amounts_without_removing_frozen_actual_blockers(
+    missing_current: bool,
+) -> None:
+    baseline, snapshot, assumptions = inputs()
+    scope = forecast_scope()
+    add_scope_source(snapshot, scope)
+    if missing_current:
+        snapshot["rows"] = [row for row in snapshot["rows"] if row["grade"] == "八年级"]
+        snapshot["actual_totals"] = {"暑假": {"actual_revenue": "1260", "enrollment": 110}}
+        snapshot["frozen_carryins"] = []
+    assumptions.update(trial_mode=True, forecast_scopes=[scope])
+    before = copy.deepcopy((baseline, snapshot, assumptions))
+    trial = calculate_forecast(baseline, snapshot, assumptions)
+    fixed_inputs = {**assumptions, "trial_mode": False, "fixed_rules_version": FIXED_RULES_VERSION}
+    fixed = calculate_forecast(baseline, snapshot, fixed_inputs)
+    for field in ("rows", "quarters", "annual", "issues", "campuses", "withdrawal_evidence"):
+        assert fixed[field] == trial[field]
+    assert fixed["fixed_rules_version"] == FIXED_RULES_VERSION
+    assert fixed["forecast_complete"] == trial["trial_ready"] is True
+    assert fixed["trial_mode"] is False and fixed["trial_ready"] is False
+    assert fixed["trial_assumptions"] == []
+    assert fixed["ready"] is (not missing_current)
+    assert all(note["season"] != "暑假" for note in fixed["rule_notes"])
+    assert all(
+        "试用" not in note["message"] and "暂用" not in note["message"] for note in fixed["rule_notes"]
+    )
+    if missing_current:
+        assert "FINALIZED_ACTUAL_MISSING" in issue_codes(fixed)
+        assert result_row(fixed, "暑假")["forecast_revenue"] is None
+        assert result_row(fixed, "秋季")["data_status"] == "BASELINE_ESTIMATE"
+    assert (baseline, snapshot, assumptions) == before
+
+
+@pytest.mark.parametrize("failure", ["source", "negative_count", "financial_only_students", "unknown_policy"])
+def test_fixed_policy_cannot_hide_quality_issues_or_claim_formal_readiness(failure: str) -> None:
+    baseline, snapshot, assumptions = inputs()
+    assumptions["fixed_rules_version"] = FIXED_RULES_VERSION
+    if failure == "source":
+        snapshot["issues"] = [{"code": "SOURCE_ISSUE", "message": "incomplete source"}]
+    elif failure == "negative_count":
+        snapshot["rows"][1]["enrollment"] = -1
+    elif failure == "financial_only_students":
+        scope = forecast_scope(kind="FINANCIAL_ONLY")
+        add_scope_source(snapshot, scope)
+        assumptions["forecast_scopes"] = [scope]
+    else:
+        assumptions["fixed_rules_version"] = "unknown"
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert not result["ready"] and not result["forecast_complete"]
+    assert any(issue["severity"] == "BLOCKING" for issue in result["issues"])
+
+
+def test_fixed_and_trial_flags_cannot_be_combined_to_spoof_confirmation() -> None:
+    baseline, snapshot, assumptions = inputs()
+    assumptions.update(trial_mode=True, fixed_rules_version=FIXED_RULES_VERSION)
+    result = calculate_forecast(baseline, snapshot, assumptions)
+    assert "FIXED_RULES_TRIAL_CONFLICT" in issue_codes(result)
+    assert not result["ready"] and not result["forecast_complete"]

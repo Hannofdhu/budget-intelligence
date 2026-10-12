@@ -423,8 +423,30 @@ def aggregate_forecast_rows(
 
 async def extract_forecast_source(settings: Settings, *, adapter: Any = None) -> Row:
     adapter = adapter or GuanCliSourceAdapter(settings)
+    if isinstance(adapter, GuanCliSourceAdapter):
+        async with adapter.query_budget(settings.forecast_refresh_timeout_seconds):
+            await adapter.preflight(
+                (settings.summary_dataset_id, settings.roster_dataset_id, FINANCE_DATASET_ID)
+            )
+            return await _extract_forecast_source(settings, adapter=adapter)
+    return await _extract_forecast_source(settings, adapter=adapter)
+
+
+async def _gather_source(*coroutines: Any) -> list[Any]:
+    """A failing partition must cancel and join its sibling read-only queries."""
+    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+    try:
+        return await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _extract_forecast_source(settings: Settings, *, adapter: Any) -> Row:
     dataset_ids = (settings.summary_dataset_id, settings.roster_dataset_id, FINANCE_DATASET_ID)
-    before = await asyncio.gather(*(adapter._metadata(dataset) for dataset in dataset_ids))
+    before = await _gather_source(*(adapter._metadata(dataset) for dataset in dataset_ids))
     latest = await adapter._preview(
         settings.summary_dataset_id, columns=("dtdate",), limit=1, sort_desc="dtdate"
     )
@@ -439,7 +461,7 @@ async def extract_forecast_source(settings: Settings, *, adapter: Any = None) ->
         *SUMMARY_FIELDS.values(),
         SUMMARY_REVENUE_FIELD,
     )
-    batches = await asyncio.gather(
+    batches = await _gather_source(
         *(
             adapter._complete_partition(
                 settings.summary_dataset_id,
@@ -453,7 +475,7 @@ async def extract_forecast_source(settings: Settings, *, adapter: Any = None) ->
     summary_rows = [row for batch in batches for row in batch]
     if len(summary_rows) > settings.source_preview_max_rows:
         raise SourceAdapterError("SOURCE_PREVIEW_LIMIT_REACHED", "预测来源超过完整抽取安全上限")
-    financial_batches = await asyncio.gather(
+    financial_batches = await _gather_source(
         *(
             adapter._complete_partition(
                 FINANCE_DATASET_ID,
@@ -467,18 +489,23 @@ async def extract_forecast_source(settings: Settings, *, adapter: Any = None) ->
     finance_rows = [row for batch in financial_batches for row in batch]
     if len(finance_rows) > settings.source_preview_max_rows:
         raise SourceAdapterError("SOURCE_PREVIEW_LIMIT_REACHED", "财务来源超过完整抽取安全上限")
-    summary_etl, roster_etl = await asyncio.gather(
-        adapter._run_json("--raw", "etl", "get", SUMMARY_ETL_ID),
-        adapter._run_json("--raw", "etl", "get", settings.roster_etl_id),
+    summary_etl, roster_etl = await _gather_source(
+        # Raw + brief still returns the complete ETL definition (actions/SQL).
+        # Brief skips CLI lineage enrichment, which can fan out across upstream
+        # resources and exhaust the extraction deadline even after all rows arrive.
+        adapter._run_json("--raw", "etl", "get", SUMMARY_ETL_ID, "--brief"),
+        adapter._run_json("--raw", "etl", "get", settings.roster_etl_id, "--brief"),
     )
     formula_verified, mapping = verify_metric_formulas(summary_etl, roster_etl)
-    after = await asyncio.gather(*(adapter._metadata(dataset) for dataset in dataset_ids))
+    after = await _gather_source(*(adapter._metadata(dataset) for dataset in dataset_ids))
     latest_after = await adapter._preview(
         settings.summary_dataset_id, columns=("dtdate",), limit=1, sort_desc="dtdate"
     )
     if before != after or latest_after != latest:
         raise SourceAdapterError(
-            "FORECAST_SOURCE_CHANGED_DURING_EXTRACTION", "来源在抽取期间发生更新，请重新生成预测"
+            "FORECAST_SOURCE_CHANGED_DURING_EXTRACTION",
+            "来源在抽取期间发生更新，请重新生成预测",
+            retryable=True,
         )
     if any(str(row.get("dtdate")) != partition for row in summary_rows):
         raise SourceAdapterError("FORECAST_SOURCE_PARTITION_MIXED", "预测来源包含不同分区，未生成快照")
@@ -527,6 +554,16 @@ async def extract_forecast_source(settings: Settings, *, adapter: Any = None) ->
         "as_of": partition,
         "fiscal_year": FISCAL_YEAR,
         "rows": rows,
+        # Persist the exact, allowlisted business rows used to aggregate this
+        # snapshot. No student identity fields are requested or stored.
+        "source_data": {
+            "summary_rows": [
+                {key: row[key] for key in summary_columns if key in row} for row in summary_rows
+            ],
+            "financial_rows": [
+                {key: row[key] for key in FINANCE_COLUMNS if key in row} for row in finance_rows
+            ],
+        },
         "frozen_carryins": frozen,
         "actual_totals": actual_totals,
         "issues": issues,

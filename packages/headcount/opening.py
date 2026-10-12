@@ -1,12 +1,13 @@
 """Prepare opening students without reading BI or changing finalized FY27 data."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from fractions import Fraction
 
 from packages.headcount.calculation import PPM, HeadcountInvariantError
 
 OPENING_RULE_VERSION = "opening-students-v1"
+FORECAST_OPENING_RULE_VERSION = "forecast-opening-students-v1"
 
 
 @dataclass(frozen=True, order=True)
@@ -46,6 +47,31 @@ class OpeningPreparation:
     source_snapshot_id: str
     rule_version: str
     rows: tuple[OpeningRow, ...]
+
+
+def prepare_forecast_opening(
+    *,
+    fiscal_year: int,
+    source_fiscal_season: int,
+    snapshot_date: date,
+    source_batch: str,
+    source_snapshot_id: str,
+    rows: list[SpringSource],
+) -> OpeningPreparation:
+    """Reuse grade/subject transitions for a forecast-based planning draft.
+
+    These are forecast reference counts, NOT BI actual enrollment. The separate
+    rule tag must not be accepted as the annual publication's actual-source proof.
+    """
+    prepared = prepare_bi_opening(
+        fiscal_year=fiscal_year,
+        source_fiscal_season=source_fiscal_season,
+        snapshot_date=snapshot_date,
+        source_batch=source_batch,
+        source_snapshot_id=source_snapshot_id,
+        rows=rows,
+    )
+    return replace(prepared, rule_version=FORECAST_OPENING_RULE_VERSION)
 
 
 def prepare_bi_opening(

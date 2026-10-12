@@ -12,11 +12,12 @@ SOURCE = ROOT / "【智慧学习部】FY27预算拆解（1.13亿）-备份.xlsx"
 DESTINATION = ROOT / "output/fy27-shadow"
 
 
-def main() -> None:
-    digest = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
-    formulas = openpyxl.load_workbook(SOURCE, data_only=False, read_only=False)
-    cached = openpyxl.load_workbook(SOURCE, data_only=True, read_only=False)
-    payload = {"source_file": SOURCE.name, "sha256": digest,
+def extract_workbook(source: Path) -> dict:
+    """Read saved formulas and caches; do not recalculate, export, or save XLSX."""
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    formulas = openpyxl.load_workbook(source, data_only=False, read_only=False)
+    cached = openpyxl.load_workbook(source, data_only=True, read_only=False)
+    payload = {"source_file": source.name, "sha256": digest,
                "extracted_at": datetime.now(UTC).isoformat(),
                "document_modified_at": str(formulas.properties.modified),
                "source_business_as_of": None, "sheets": {}}
@@ -37,11 +38,24 @@ def main() -> None:
                 rows.append({"row": row[0].row, "cells": populated})
         payload["sheets"][sheet.title] = {"max_row": sheet.max_row, "max_column": sheet.max_column,
                                          "rows": rows, "merged_ranges": [str(r) for r in sheet.merged_cells.ranges]}
-        print(sheet.title, sheet.max_row, sheet.max_column, len(rows))
+    formulas.close()
+    cached.close()
+    if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+        raise ValueError("FY27 Excel 在提取过程中变化，未接受本次提取")
+    return payload
+
+
+def main() -> None:
+    # Keep the first extraction immutable. Later source adoption has an explicit
+    # equivalence check and separate manifest in adopt_source.py.
+    target = DESTINATION / "source-cells.json"
+    if target.exists():
+        raise ValueError("历史提取已存在，不覆盖；重新核对请使用 adopt_source.py")
+    payload = extract_workbook(SOURCE)
     DESTINATION.mkdir(parents=True, exist_ok=True)
-    (DESTINATION / "source-cells.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str)+'\n',encoding='utf-8')
-    assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == digest
-    print('Read-only extraction complete; source SHA-256 unchanged:', digest)
+    with target.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n")
+    print('Read-only extraction complete; source SHA-256 unchanged:', payload["sha256"])
 
 
 if __name__ == '__main__':

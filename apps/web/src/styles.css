@@ -4838,10 +4838,6 @@ input:focus {
 .budget-revision-start input { display: block; width: 100%; margin: 8px 0 14px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); font: inherit; color: var(--ink); }
 .budget-revision-start > div { display: flex; gap: 12px; }
 .budget-lifecycle button:disabled { opacity: .5; cursor: default; }
-.history-product-nav { display: flex; align-items: center; gap: 24px; border-bottom: 1px solid var(--line); }
-.history-product-nav .budget-lifecycle { flex: 1; border-bottom: 0; }
-.history-product-nav > a { color: var(--green); text-decoration: none; font-weight: 600; padding: 12px 0; border-bottom: 2px solid var(--green); }
-.history-product-nav > a:hover { color: var(--green-2); }
 .budget-linked-browser { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(0, 1.5fr); gap: 20px; margin-top: 24px; align-items: start; }
 .budget-linked-browser > section { min-width: 0; margin: 0; }
 .budget-linked-browser .history-section { padding: 20px; }

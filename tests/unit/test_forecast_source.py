@@ -210,6 +210,7 @@ class FakeAdapter:
         formulas: bool = True,
     ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.formula_calls: list[tuple[str, ...]] = []
         self.metadata_calls = 0
         self.preview_calls = 0
         self.change_metadata = change_metadata
@@ -237,8 +238,9 @@ class FakeAdapter:
         return [summary(season, revenue="0", dtdate="mixed" if self.mixed_partition else "2026-10-03")]
 
     async def _run_json(self, *args: str) -> dict[str, Any]:
+        self.formula_calls.append(args)
         wide, roster = etls()
-        return (wide if args[-1].startswith("h991") else roster) if self.formulas else {"data": {}}
+        return (wide if args[3].startswith("h991") else roster) if self.formulas else {"data": {}}
 
 
 async def test_read_only_extraction_is_count_proved_partition_bound_and_has_formula_receipt() -> None:
@@ -250,6 +252,10 @@ async def test_read_only_extraction_is_count_proved_partition_bound_and_has_form
     assert len(snapshot["provenance"]["datasets"]) == 3
     assert len(snapshot["provenance"]["metric_mapping"]["history_fields"]) == 8
     assert adapter.metadata_calls == 6 and len(adapter.calls) == 6
+    assert len(adapter.formula_calls) == 2
+    assert all(
+        call[:3] == ("--raw", "etl", "get") and call[-1] == "--brief" for call in adapter.formula_calls
+    )
     for dataset, request in adapter.calls:
         assert "学员姓名" not in request["columns"]
         if dataset == FINANCE_DATASET_ID:
@@ -258,6 +264,24 @@ async def test_read_only_extraction_is_count_proved_partition_bound_and_has_form
         else:
             assert SUMMARY_REVENUE_FIELD in request["columns"]
             assert "新生人次" in request["columns"] and "当季新招新生" not in request["columns"]
+
+
+async def test_saved_source_rows_omit_unrequested_identity_fields() -> None:
+    class ExtraFieldsAdapter(FakeAdapter):
+        async def _complete_partition(self, dataset: str, **kwargs: Any) -> list[dict[str, Any]]:
+            return [
+                {**row, "学员姓名": "must-not-store", "学员ID": "private-id"}
+                for row in await super()._complete_partition(dataset, **kwargs)
+            ]
+
+    adapter = ExtraFieldsAdapter()
+    snapshot = await extract_forecast_source(Settings(), adapter=adapter)
+    for kind in ("summary_rows", "financial_rows"):
+        assert snapshot["source_data"][kind]
+        for row in snapshot["source_data"][kind]:
+            assert "学员姓名" not in row and "学员ID" not in row
+    assert snapshot["source_data"]["summary_rows"][0]["dtdate"] == "2026-10-03"
+    assert snapshot["source_data"]["summary_rows"][0][SUMMARY_REVENUE_FIELD] == "0"
 
 
 @pytest.mark.parametrize(
@@ -272,6 +296,7 @@ async def test_changing_source_rejects_snapshot(kwargs: dict[str, bool], code: s
     with pytest.raises(SourceAdapterError) as error:
         await extract_forecast_source(Settings(), adapter=FakeAdapter(**kwargs))
     assert error.value.code == code
+    assert error.value.retryable == (code == "FORECAST_SOURCE_CHANGED_DURING_EXTRACTION")
 
 
 async def test_missing_sql_proof_does_not_auto_verify_from_matching_counts() -> None:

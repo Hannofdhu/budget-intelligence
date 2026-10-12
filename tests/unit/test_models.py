@@ -37,6 +37,8 @@ def test_phase_zero_tables_are_registered() -> None:
         "entry_detail_allocation",
         "entry_total_version",
         "formal_plan_confirmation",
+        "forecast_ledger_event",
+        "historical_budget_archive",
         "headcount_result_version",
         "headcount_rounding_trace",
         "headcount_validation_result",

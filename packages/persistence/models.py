@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -2955,3 +2956,79 @@ class AuditEvent(Base):
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     request_id: Mapped[str] = mapped_column(String(100), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class HistoricalBudgetArchive(Base):
+    """Immutable imported evidence, separate from system budget revisions."""
+
+    __tablename__ = "historical_budget_archive"
+    __table_args__ = (
+        CheckConstraint("fiscal_year > 0", name="ck_historical_budget_archive_fiscal_year"),
+        CheckConstraint("char_length(baseline_hash) = 64", name="ck_historical_budget_archive_baseline_hash"),
+        CheckConstraint(
+            "char_length(source_file_hash) = 64", name="ck_historical_budget_archive_source_file_hash"
+        ),
+        CheckConstraint("char_length(business_hash) = 64", name="ck_historical_budget_archive_business_hash"),
+        CheckConstraint("char_length(content_hash) = 64", name="ck_historical_budget_archive_content_hash"),
+        CheckConstraint(
+            "char_length(source_manifest_hash) = 64", name="ck_historical_budget_archive_source_manifest_hash"
+        ),
+        UniqueConstraint(
+            "department_id", "fiscal_year", "source_file_hash", name="uq_historical_budget_archive_source"
+        ),
+        Index("ix_historical_budget_archive_scope_created", "department_id", "fiscal_year", "created_at"),
+    )
+
+    archive_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    department_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    baseline_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    business_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    review: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_workbook: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    original_extraction: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    accepted_extraction: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    acceptance_record: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    import_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ForecastLedgerEvent(Base):
+    """Append-only forecast evidence; canonical bytes preserve exact numeric strings."""
+
+    __tablename__ = "forecast_ledger_event"
+    __table_args__ = (
+        CheckConstraint("event_no > 0", name="ck_forecast_ledger_event_number"),
+        CheckConstraint("kind IN ('VERSION', 'CONFIRMATION')", name="ck_forecast_ledger_event_kind"),
+        CheckConstraint("origin IN ('RUNTIME', 'FILE_IMPORT')", name="ck_forecast_ledger_event_origin"),
+        CheckConstraint("char_length(content_hash) = 64", name="ck_forecast_ledger_event_hash"),
+        CheckConstraint(
+            "previous_event_hash IS NULL OR char_length(previous_event_hash) = 64",
+            name="ck_forecast_ledger_event_previous_hash",
+        ),
+        UniqueConstraint("department_id", "event_no", name="uq_forecast_ledger_event_number"),
+        UniqueConstraint("department_id", "request_id", name="uq_forecast_ledger_event_request"),
+        Index("ix_forecast_ledger_event_version", "department_id", "version_id", "event_no"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    department_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    version_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_event_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    canonical_event: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    origin: Mapped[str] = mapped_column(String(20), nullable=False)
+    persisted_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    persistence_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    persisted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

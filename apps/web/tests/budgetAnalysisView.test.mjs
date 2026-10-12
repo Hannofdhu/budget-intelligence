@@ -76,6 +76,37 @@ test("default analysis markup presents a business board and all four fiscal seas
   assert.doesNotMatch(html, /查看依据|来源与口径|参数来源|secret\.xlsx/);
 });
 
+test("the default budget board expands its detail region but mounts only the first 25 rows", () => {
+  const facts = Array.from({ length: 952 }, (_, index) => fact({
+    id: `detail-${index}`, subject: `明细科目${String(index).padStart(4, "0")}`,
+  }));
+  const before = JSON.stringify(facts), html = render(facts);
+  const detailBody = html.match(/<table class="ba-table ba-detail-table"[^>]*>[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1];
+  assert.ok(detailBody, "预算明细 must already be visible without clicking 查看全部明细");
+  assert.match(html, /<section[^>]*class="ba-panel ba-detail"[^>]*aria-label="构成明细"/);
+  assert.match(html, /<h3>预算明细<\/h3>/);
+  assert.equal((detailBody.match(/<tr\b/g) ?? []).length, 25,
+    "an expanded detail region must not mount all 952 records");
+  assert.match(text(detailBody), /明细科目0000/);
+  assert.match(text(detailBody), /明细科目0024/);
+  assert.doesNotMatch(text(detailBody), /明细科目0025|明细科目0951/);
+  assert.match(text(html), /1 \/ 39 · 每页 25 条/);
+  const buttons = buttonText(html);
+  assert.ok(buttons.some(button => button.text === "收起明细"), "the default board toggle must offer collapse");
+  assert.ok(buttons.some(button => button.text === "收起"), "the expanded detail header keeps its local collapse control");
+  assert.ok(buttons.some(button => button.text === "上一页" && /disabled/.test(button.attrs)));
+  assert.ok(buttons.some(button => button.text === "下一页" && !/disabled/.test(button.attrs)));
+  assert.equal(JSON.stringify(facts), before, "opening a detail view must not modify budget facts");
+});
+
+test("a direct pivot URL keeps detail collapsed until the user selects a value or opens raw details", () => {
+  const html = render(fourQuarters, "baView=pivot&baRows=campus&baMetrics=revenue");
+  assert.match(html, /<h3>预算透视<\/h3>/);
+  assert.match(html, /class="ba-table ba-pivot-table"/);
+  assert.doesNotMatch(html, /class="ba-panel ba-detail"/);
+  assert.doesNotMatch(html, /class="ba-table ba-detail-table"/);
+});
+
 test("business board shows old and new counts plus weighted budget renewal in both chart and quarter table", () => {
   const facts = [fact({ old: 50, new: 12, total: 62, renewal: 0.5, renewalNumerator: 50, renewalDenominator: 100 }),
     fact({ id: "small", old: 7, new: 3, total: 10, renewal: 0.8, renewalNumerator: 8, renewalDenominator: 10 })];
