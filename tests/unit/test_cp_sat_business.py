@@ -8,6 +8,7 @@ from packages.headcount.calculation import CombinationInput, RateInput
 from packages.optimization.cp_sat_business import (
     _calculate_group_kernel,
     _evaluate_group,
+    _KernelRevenue,
     compile_direct_business_problem,
 )
 from packages.optimization.cp_sat_rates import CpSatEntryAndRatesSolver
@@ -24,6 +25,7 @@ from packages.optimization.evaluator import (
     BudgetEvaluationContext,
     RevenueLineTemplate,
     RevenueTarget,
+    _KernelResult,
 )
 from packages.revenue.calculation import CompositeDiscountTargetInput
 
@@ -280,7 +282,12 @@ def test_uncomputable_counterfactuals_still_block_evaluator_and_direct_group() -
     failure = "UPSTREAM_HEADCOUNT_UNAVAILABLE"
 
     class CounterfactualFailureEvaluator(BudgetCandidateEvaluator):
-        def _calculate(self, entry_values, rate_values, discount_values):
+        def _calculate(
+            self,
+            entry_values: dict[str, int],
+            rate_values: dict[str, int],
+            discount_values: dict[str, int],
+        ) -> _KernelResult:
             result = super()._calculate(entry_values, rate_values, discount_values)
             if rate_values == baseline_rates:
                 return replace(result, validation_codes=(*result.validation_codes, failure))
@@ -292,7 +299,9 @@ def test_uncomputable_counterfactuals_still_block_evaluator_and_direct_group() -
     assert failure in result.validation_codes
     assert result.hard_constraints_satisfied is False
 
-    def kernel_lookup(entries, rates):
+    def kernel_lookup(
+        entries: tuple[tuple[str, int], ...], rates: tuple[tuple[str, int], ...]
+    ) -> _KernelRevenue:
         values = dict(rates)
         kernel = _calculate_group_kernel(
             context, combinations=context.combinations, entry_values=dict(entries), rate_values=values

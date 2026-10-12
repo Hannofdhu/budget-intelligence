@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -5,6 +7,7 @@ import os
 import signal
 import sys
 from decimal import Decimal
+from typing import TypedDict, Unpack
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,7 +22,22 @@ from packages.source_snapshot.adapter import (
 )
 
 
-def settings(**overrides: object) -> Settings:
+class SettingsOverrides(TypedDict, total=False):
+    guancli_retry_count: int
+    guancli_retry_attempt_timeout_seconds: float
+    guancli_proxy_url: str | None
+    guancli_max_concurrent_queries: int
+    source_preview_target_rows: int
+
+
+class SubprocessOptions(TypedDict, total=False):
+    stdout: int
+    stderr: int
+    env: dict[str, str]
+    start_new_session: bool
+
+
+def settings(**overrides: Unpack[SettingsOverrides]) -> Settings:
     return Settings(_env_file=None, guancli_retry_backoff_seconds=0, **overrides)
 
 
@@ -203,7 +221,7 @@ async def test_timeout_and_cancellation_kill_wrapper_and_child(
         "print(child.pid,flush=True); time.sleep(60)"
     )
 
-    async def spawn(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+    async def spawn(*args: object, **kwargs: Unpack[SubprocessOptions]) -> asyncio.subprocess.Process:
         process = await real_spawn(sys.executable, "-c", script, **kwargs)
         assert process.stdout is not None
         processes.append(process)
@@ -266,11 +284,13 @@ async def test_full_pipes_are_discarded_before_reaping_on_timeout_or_cancel(
         "[thread.start() for thread in threads]; time.sleep(60)"
     )
 
-    async def unread_communicate() -> tuple[bytes, bytes]:
+    async def unread_communicate(
+        input: bytes | bytearray | memoryview[int] | None = None,
+    ) -> tuple[bytes, bytes]:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
-    async def spawn(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+    async def spawn(*args: object, **kwargs: Unpack[SubprocessOptions]) -> asyncio.subprocess.Process:
         process = await real_spawn(sys.executable, "-c", script, **kwargs)
         processes.append(process)
         assert process.stdout is not None
@@ -282,7 +302,7 @@ async def test_full_pipes_are_discarded_before_reaping_on_timeout_or_cancel(
         except asyncio.CancelledError:
             await _terminate_process(process)
             raise
-        process.communicate = unread_communicate  # type: ignore[method-assign]
+        monkeypatch.setattr(process, "communicate", unread_communicate)
         process_started.set()
         return process
 
@@ -373,9 +393,9 @@ async def test_cleanup_is_bounded_when_escaped_child_keeps_pipe_open(
         assert process.stdout.at_eof()
         assert process.stderr is not None and process.stderr.at_eof()
         assert not any(
-            task.get_coro().__name__ == "_drain_and_reap"
+            coroutine.__name__ == "_drain_and_reap"
             for task in asyncio.all_tasks()
-            if task is not asyncio.current_task()
+            if task is not asyncio.current_task() and (coroutine := task.get_coro()) is not None
         )
     finally:
         # Only this test's explicit escaped process is killed; connector cleanup

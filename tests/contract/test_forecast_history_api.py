@@ -12,9 +12,11 @@ from packages.domain.identity.models import Actor, Role
 from packages.forecast.store import ForecastStore, fingerprint
 from packages.source_snapshot.adapter import SourceAdapterError
 
+HistoryRoute = tuple[Request, Actor, ForecastStore]
+
 
 @pytest.fixture
-def history_route(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Request, Actor, ForecastStore]:
+def history_route(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> HistoryRoute:
     async def access(_: Request, actor: Actor) -> dict[str, Any]:
         return {"sha256": "accepted-budget", "rows": []}
 
@@ -47,7 +49,7 @@ def seed(ledger: ForecastStore, actor: Actor, parent: str | None = None, index: 
 
 
 async def test_history_reads_exact_frozen_results_and_confirmation_without_new_events(
-    history_route: tuple,
+    history_route: HistoryRoute,
 ) -> None:
     request, actor, ledger = history_route
     first = seed(ledger, actor)["version"]
@@ -79,7 +81,7 @@ async def test_history_reads_exact_frozen_results_and_confirmation_without_new_e
     assert ledger._events(actor.department_id) == events
 
 
-async def test_other_department_cannot_read_or_export_saved_forecast(history_route: tuple) -> None:
+async def test_other_department_cannot_read_or_export_saved_forecast(history_route: HistoryRoute) -> None:
     request, actor, ledger = history_route
     first = seed(ledger, actor)["version"]
     other = Actor("other", "other-department", frozenset({Role.DATA_MAINTAINER}))
@@ -90,7 +92,7 @@ async def test_other_department_cannot_read_or_export_saved_forecast(history_rou
 
 
 async def test_failed_refresh_retains_current_confirmed_snapshot_and_sanitized_error(
-    history_route: tuple,
+    history_route: HistoryRoute,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request, actor, ledger = history_route
@@ -112,14 +114,16 @@ async def test_failed_refresh_retains_current_confirmed_snapshot_and_sanitized_e
     with pytest.raises(HTTPException) as exc:
         await route.refresh(request, route.Refresh(reason="retry update"), actor, "refresh-error")
     assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "SOURCE_NETWORK_ERROR"
-    assert exc.value.detail["retained_version"]["id"] == first["id"]
-    assert exc.value.detail["retained_version"]["status"] == "CONFIRMED"
+    detail: object = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "SOURCE_NETWORK_ERROR"
+    assert detail["retained_version"]["id"] == first["id"]
+    assert detail["retained_version"]["status"] == "CONFIRMED"
     assert ledger.current(actor.department_id) == prior
 
 
 async def test_storage_failure_is_safe_and_retryable(
-    history_route: tuple, monkeypatch: pytest.MonkeyPatch
+    history_route: HistoryRoute, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, actor, ledger = history_route
 
@@ -130,14 +134,16 @@ async def test_storage_failure_is_safe_and_retryable(
     with pytest.raises(HTTPException) as exc:
         await route._current(actor)
     assert exc.value.status_code == 503
-    assert exc.value.detail["code"] == "FORECAST_STORAGE_UNAVAILABLE"
-    assert exc.value.detail["retryable"] is True
+    detail: object = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "FORECAST_STORAGE_UNAVAILABLE"
+    assert detail["retryable"] is True
     assert "must-not-leak" not in str(exc.value.detail)
     assert "secret host" not in str(exc.value.detail)
 
 
 async def test_changed_baseline_does_not_silently_rebase_a_historical_snapshot(
-    history_route: tuple,
+    history_route: HistoryRoute,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request, actor, ledger = history_route

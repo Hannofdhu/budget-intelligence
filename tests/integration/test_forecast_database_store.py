@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import Table, delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -42,7 +42,9 @@ async def isolated_store() -> AsyncIterator[
         async with administration.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
         async with engine.begin() as connection:
-            await connection.run_sync(ForecastLedgerEvent.__table__.create)
+            table = ForecastLedgerEvent.__table__
+            assert isinstance(table, Table)
+            await connection.run_sync(table.create)
             await connection.execute(
                 text(
                     "CREATE TRIGGER forecast_ledger_event_immutable BEFORE UPDATE OR DELETE ON "

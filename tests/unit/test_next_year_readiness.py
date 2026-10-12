@@ -1,6 +1,7 @@
 """Class diagnostics are pure, target-independent and do not propose a repair."""
 
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
@@ -10,7 +11,7 @@ from packages.next_year.readiness import class_readiness
 from tests.unit.test_next_year_calculation import _plan_inputs
 
 
-def _small_entry() -> dict:
+def _small_entry() -> dict[str, Any]:
     inputs = _plan_inputs()
     inputs["target_revenue_yuan"] = None
     inputs["track_targets"] = {key: None for key in inputs["track_targets"]}

@@ -82,7 +82,9 @@ class Journey:
             "/optimization-runs",
             {
                 "solver_adapter": "CP_SAT_ENTRY_AND_RATES",
-                "maximum_solver_seconds": 30,
+                # Golden journeys require a completed proof, not a timeout
+                # outcome. Allow for process startup and shared CI CPU load.
+                "maximum_solver_seconds": 120,
             },
         )
 
@@ -381,35 +383,35 @@ async def test_revert_handles_pending_worker_but_preserves_manual_work(
             await release.wait()
             return await original(*args, **kwargs)
 
-        if phase == "running":
-            monkeypatch.setattr(pipeline, "_validate_class_size", paused_class_size)
-            worker_task = asyncio.create_task(
-                handle_one(
-                    JobRepository("undo-racing-worker"), job_id=uuid.UUID(applied["calculation_job_id"])
-                )
-            )
-            await asyncio.wait_for(reached.wait(), timeout=10)
-            async with get_session_factory()() as session:
-                budget = await session.get(AnnualBudget, j.budget_id)
-                assert budget is not None
-                j.revision = str(budget.current_draft_revision_id)
-            assert j.revision != applied_id
-        elif phase == "manual-change":
-            await j.post(
-                "/entry-total:save-and-lock",
-                {"fiscal_year_entry_total": 10, "change_reason": "人工重新保存入口"},
-            )
-
-        status = await j.get(f"revisions/{applied_id}/scenario-application/current")
-        assert status["can_revert"] is (phase != "manual-change")
-        path = (
-            f"/api/v1/revisions/{j.revision}"
-            f"/scenario-applications/{applied['scenario_application_id']}:revert"
-        )
-        key = str(uuid.uuid4())
-        headers = {**j.headers, "If-Match": f'"{j.revision}"', "Idempotency-Key": key}
-        payload = {"reason": "撤销本次测试候选"}
         try:
+            if phase == "running":
+                monkeypatch.setattr(pipeline, "_validate_class_size", paused_class_size)
+                worker_task = asyncio.create_task(
+                    handle_one(
+                        JobRepository("undo-racing-worker"), job_id=uuid.UUID(applied["calculation_job_id"])
+                    )
+                )
+                await asyncio.wait_for(reached.wait(), timeout=60)
+                async with get_session_factory()() as session:
+                    budget = await session.get(AnnualBudget, j.budget_id)
+                    assert budget is not None
+                    j.revision = str(budget.current_draft_revision_id)
+                assert j.revision != applied_id
+            elif phase == "manual-change":
+                await j.post(
+                    "/entry-total:save-and-lock",
+                    {"fiscal_year_entry_total": 10, "change_reason": "人工重新保存入口"},
+                )
+
+            status = await j.get(f"revisions/{applied_id}/scenario-application/current")
+            assert status["can_revert"] is (phase != "manual-change")
+            path = (
+                f"/api/v1/revisions/{j.revision}"
+                f"/scenario-applications/{applied['scenario_application_id']}:revert"
+            )
+            key = str(uuid.uuid4())
+            headers = {**j.headers, "If-Match": f'"{j.revision}"', "Idempotency-Key": key}
+            payload = {"reason": "撤销本次测试候选"}
             if phase == "queued":
                 hidden = await client.post(
                     path, json=payload, headers={**headers, "X-Department-ID": "unrelated"}
@@ -445,7 +447,16 @@ async def test_revert_handles_pending_worker_but_preserves_manual_work(
         finally:
             release.set()
             if worker_task is not None:
-                await asyncio.wait_for(worker_task, timeout=10)
+                # Release even if the initial wait or assertions fail. Do not
+                # let an unresponsive worker make test teardown unbounded.
+                _, pending = await asyncio.wait({worker_task}, timeout=60)
+                if pending:
+                    worker_task.cancel()
+                    _, pending = await asyncio.wait({worker_task}, timeout=5)
+                    assert not pending, "Test worker did not stop after cancellation"
+                    await asyncio.gather(worker_task, return_exceptions=True)
+                    raise TimeoutError("Test worker did not finish within 60 seconds")
+                await worker_task
         old_job = await j.get(f"jobs/{applied['calculation_job_id']}")
         assert old_job["status"] == "CANCELLED", old_job
         assert not await handle_one(

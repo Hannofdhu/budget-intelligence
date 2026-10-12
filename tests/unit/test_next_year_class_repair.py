@@ -3,6 +3,7 @@
 from copy import deepcopy
 from decimal import Decimal
 from itertools import product
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,7 @@ from packages.next_year.planning import _rate_bounds, balance_plan
 from tests.unit.test_next_year_calculation import _id, _plan_inputs
 
 
-def _small_scope() -> dict:
+def _small_scope() -> dict[str, Any]:
     inputs = _plan_inputs()
     inputs["entry_total"] = 100
     inputs["opening_sources"][0]["students"] = 2
@@ -23,7 +24,7 @@ def _small_scope() -> dict:
     return inputs
 
 
-def _two_entries() -> dict:
+def _two_entries() -> dict[str, Any]:
     inputs = _small_scope()
     inputs["opening_sources"][0]["students"] = 0
     first, second = inputs["combinations"]

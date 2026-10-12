@@ -1531,14 +1531,20 @@ async def test_entry_planning_vertical_slice_requires_confirmation_and_balances_
         assert planned_result["theoretical_new_fraction"] == "30/1"
         assert planned_result["new_student_source"] == "LOCKED_MANUAL_PLAN"
         assert planned_result["planned_eligibility_status"] == "APPLICABLE_LOCKED"
-        ignored_later_plan = next(
+        applied_later_plan = next(
             item
             for item in headcount_body["items"]
             if item["fiscal_season"] == 20272
             and item["combination_stable_key"] == positive_detail["combination_stable_key"]
         )
-        assert ignored_later_plan["new_student_source"] == "RATE_INFERRED"
-        assert ignored_later_plan["planned_eligibility_status"] == "NOT_APPLICABLE"
+        # An explicitly locked later-season plan takes priority over rate
+        # inference even when the combination already has returning students.
+        assert applied_later_plan["new_student_source"] == "LOCKED_MANUAL_PLAN"
+        assert applied_later_plan["planned_eligibility_status"] == "APPLICABLE_LOCKED"
+        assert applied_later_plan["theoretical_new_fraction"] == "7/1"
+        assert applied_later_plan["integer_new_students"] == 7
+        assert applied_later_plan["new_student_share_input_ppm"] is None
+        assert applied_later_plan["new_rounding_trace"]["fixed_input"] is True
         headcount_version_id = headcount_body["headcount_result_version_id"]
         revision_id = headcount_body["revision"]["new_revision_id"]
         headcount_read = await client.get(

@@ -1,7 +1,7 @@
 UV_CACHE_DIR ?= $(CURDIR)/.cache/uv
 UV := UV_CACHE_DIR=$(UV_CACHE_DIR) uv
 
-.PHONY: sync db-up db-down migrate migrate-check api worker test test-db lint typecheck audit web-install web-build container-build check
+.PHONY: sync db-up db-down migrate migrate-check api worker test test-db lint typecheck audit web-install web-build web-test container-build check
 
 sync:
 	$(UV) sync --extra dev --frozen
@@ -40,16 +40,19 @@ typecheck:
 	$(UV) run mypy apps packages tests
 
 audit:
-	$(UV) run pip-audit
-	cd apps/web && npm audit --audit-level=high
+	$(UV) run pip-audit --timeout 60
+	cd apps/web && npm audit --audit-level=high --registry=https://registry.npmjs.org
 
 web-install:
-	cd apps/web && npm ci
+	cd apps/web && npm ci --registry=https://registry.npmjs.org
 
 web-build:
 	cd apps/web && npm run build
 
+web-test:
+	cd apps/web && npm test
+
 container-build:
 	bash scripts/build-containers.sh
 
-check: lint typecheck test web-build
+check: lint typecheck test web-build web-test

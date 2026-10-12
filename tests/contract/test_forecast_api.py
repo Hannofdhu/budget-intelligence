@@ -18,9 +18,16 @@ def _event_bytes(root: Path) -> dict[Path, bytes]:
     return {path: path.read_bytes() for path in root.glob("event-*.json")}
 
 
+def _ledger() -> ForecastStore:
+    """These contract tests install the synchronous file-backed fixture store."""
+    ledger = route.store
+    assert isinstance(ledger, ForecastStore)
+    return ledger
+
+
 def _legacy_version(actor: Actor, *, trial: bool = False) -> dict[str, Any]:
     """Historical versions predate automatic fixed-policy refreshes."""
-    return route.store.append_version(
+    return _ledger().append_version(
         department=actor.department_id,
         actor=actor.user_id,
         request_id="legacy-1",
@@ -99,7 +106,7 @@ async def test_changed_archive_blocks_confirmation_without_appending_an_event(
         )
     assert confirmation_error.value.status_code == 409
     assert "预测基准不一致" in confirmation_error.value.detail
-    assert route.store.current(actor.department_id)["version"]["status"] == "DRAFT"
+    assert _ledger().current(actor.department_id)["version"]["status"] == "DRAFT"
     assert _event_bytes(tmp_path) == historical_events
 
 
@@ -276,7 +283,7 @@ async def test_finalization_rejects_new_or_changed_adjustments(
             "request-3",
         )
     assert exc.value.status_code == 409
-    assert route.store.current(actor.department_id)["version"]["id"] == parent["version"]["id"]
+    assert _ledger().current(actor.department_id)["version"]["id"] == parent["version"]["id"]
     assert _event_bytes(tmp_path) == historical_events
 
 
@@ -633,14 +640,16 @@ async def test_refresh_rejects_same_department_inflight_without_queuing_duplicat
         with pytest.raises(HTTPException) as busy:
             await route.refresh(request, body, actor, "request-1" if duplicate_key else "request-2")
         assert busy.value.status_code == 409
-        assert busy.value.detail["code"] == "FORECAST_REFRESH_IN_PROGRESS"
-        assert busy.value.detail["retryable"] is True
+        detail: object = busy.value.detail
+        assert isinstance(detail, dict)
+        assert detail["code"] == "FORECAST_REFRESH_IN_PROGRESS"
+        assert detail["retryable"] is True
         assert busy.value.headers == {"Retry-After": "3"}
         assert calls == 1
     finally:
         release.set()
         saved = await original
-    assert len(route.store.current(actor.department_id)["history"]) == 1
+    assert len(_ledger().current(actor.department_id)["history"]) == 1
     assert actor.department_id not in route._refresh_inflight
     assert await route.refresh(request, body, actor, "request-1") == saved
     assert calls == 1
@@ -663,9 +672,11 @@ async def test_failed_refresh_releases_inflight_and_same_intent_can_retry(
     body = route.Refresh(reason="retry same intent")
     with pytest.raises(HTTPException) as failed:
         await route.refresh(request, body, actor, "request-1")
-    assert failed.value.detail["code"] == "SOURCE_NETWORK_ERROR"
+    detail: object = failed.value.detail
+    assert isinstance(detail, dict)
+    assert detail["code"] == "SOURCE_NETWORK_ERROR"
     assert actor.department_id not in route._refresh_inflight
-    assert route.store.current(actor.department_id)["version"] is None
+    assert _ledger().current(actor.department_id)["version"] is None
     saved = await route.refresh(request, body, actor, "request-1")
     assert saved["version"]["sequence"] == 1 and calls == 2
 
@@ -693,7 +704,7 @@ async def test_cancelled_refresh_releases_inflight_without_saving_a_partial_vers
     with pytest.raises(asyncio.CancelledError):
         await operation
     assert cancelled.is_set() and actor.department_id not in route._refresh_inflight
-    assert route.store.current(actor.department_id)["version"] is None
+    assert _ledger().current(actor.department_id)["version"] is None
 
     async def available_extract(_: Any) -> dict[str, Any]:
         return {"as_of": "2026-10-03", "rows": []}
@@ -723,7 +734,7 @@ async def test_completed_refresh_replay_does_not_wait_for_a_newer_inflight_updat
     finally:
         release.set()
         await operation
-    assert len(route.store.current(actor.department_id)["history"]) == 2
+    assert len(_ledger().current(actor.department_id)["history"]) == 2
 
 
 async def test_refresh_rechecks_replay_after_initial_lookup_races_with_a_committed_request(
@@ -755,7 +766,7 @@ async def test_refresh_rechecks_replay_after_initial_lookup_races_with_a_committ
     monkeypatch.setattr(route, "extract_forecast_source", extract)
     result = await route.refresh(request, body, actor, "request-1")
     assert result == committed and calls == 1
-    assert len(route.store.current(actor.department_id)["history"]) == 1
+    assert len(_ledger().current(actor.department_id)["history"]) == 1
     assert actor.department_id not in route._refresh_inflight
 
 
@@ -790,8 +801,8 @@ async def test_inflight_guard_is_department_scoped(
     finally:
         release.set()
         await asyncio.gather(*operations)
-    assert len(route.store.current(actor.department_id)["history"]) == 1
-    assert len(route.store.current(other.department_id)["history"]) == 1
+    assert len(_ledger().current(actor.department_id)["history"]) == 1
+    assert len(_ledger().current(other.department_id)["history"]) == 1
     assert (
         actor.department_id not in route._refresh_inflight
         and other.department_id not in route._refresh_inflight
@@ -831,6 +842,6 @@ async def test_refresh_still_rejects_stale_parent_if_user_revises_during_extract
     with pytest.raises(HTTPException, match="已变化") as conflict:
         await operation
     assert conflict.value.status_code == 409
-    current = route.store.current(actor.department_id)
+    current = _ledger().current(actor.department_id)
     assert current["version"]["id"] == revised["version"]["id"]
     assert len(current["history"]) == 2 and actor.department_id not in route._refresh_inflight

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from itertools import product
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,7 @@ from scripts.diagnose_next_year_class_bounds import diagnose
 from tests.unit.test_next_year_calculation import _plan_inputs
 
 
-def _draft(*, manual: bool = False, split_entry: bool = False) -> dict:
+def _draft(*, manual: bool = False, split_entry: bool = False) -> dict[str, Any]:
     inputs = _plan_inputs()
     if manual:
         inputs["opening_sources"][0]["students"] = 0

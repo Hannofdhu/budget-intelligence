@@ -164,6 +164,12 @@ make audit
 node analysis/validate_documentation.mjs
 ```
 
+`make check` 与 GitHub CI 均检查完整的 `apps packages tests` 类型，并运行前端测试；不以部分文件检查替代全量验收。CI 将格式、类型、运行测试、构建、依赖审计和文档校验分别展示，任何一项失败仍会使整个检查失败。只有实际生成 JUnit 后才派生并上传验收报告，未执行的测试不会显示通过。
+
+`make migrate-check` 会回退数据库结构，`make test-db` 会写入合成测试数据；**只可对全新隔离测试库执行**。先显式设置 `BUDGET_ENVIRONMENT=test`、`BUDGET_AUTH_MODE=dev_headers` 和指向隔离库的 `BUDGET_DATABASE_URL`，不得使用产品库或已定版预算所在数据库。
+
+前端安装及审计固定使用 npm 官方仓库，避免本机镜像缺失安全审计接口；依赖版本及完整性由锁文件固定，审计失败不得忽略。
+
 AB-050～AB-061 与候选撤销的执行验收（先迁移独立测试库，并设置 `BUDGET_DATABASE_URL`）：
 
 ```bash

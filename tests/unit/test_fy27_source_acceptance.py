@@ -67,9 +67,9 @@ def legacy_payload() -> dict[str, Any]:
         "revenue": 25,
         "carryout": -0.01,
     }
-    for labels, columns in zip(review.SEASON_HEADERS, review.COLUMNS, strict=True):
+    for season_labels, columns in zip(review.SEASON_HEADERS, review.COLUMNS, strict=True):
         for field, column in zip(review.FIELDS, columns.split(), strict=True):
-            headers[column] = cell(labels[field][-1])
+            headers[column] = cell(season_labels[field][-1])
             formula = "=IF(ROUND(1,0),2,0)" if field == "new" else "=0" if field == "old" else None
             values[column] = cell(quarter[field], formula)
     for column, label in review.FIXED_HELPER_HEADERS.items():

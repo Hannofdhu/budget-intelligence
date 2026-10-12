@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from packages.source_snapshot import historical_archive as archive
+from packages.source_snapshot.source_acceptance import read_current_review
 from tests.unit.test_fy27_source_acceptance import (
     adopted_files as adopted_files,
 )
@@ -69,8 +70,19 @@ def test_original_source_without_layout_adoption_can_be_imported(
     "field", ["original_workbook", "original_extraction", "accepted_extraction", "acceptance_record"]
 )
 def test_tampered_source_bytes_are_rejected(prepared: archive.PreparedArchive, field: str) -> None:
+    match field:
+        case "original_workbook":
+            tampered = replace(prepared, original_workbook=b"tampered")
+        case "original_extraction":
+            tampered = replace(prepared, original_extraction=b"tampered")
+        case "accepted_extraction":
+            tampered = replace(prepared, accepted_extraction=b"tampered")
+        case "acceptance_record":
+            tampered = replace(prepared, acceptance_record=b"tampered")
+        case _:
+            raise AssertionError(f"Unexpected byte field: {field}")
     with pytest.raises(ValueError, match="字节校验"):
-        archive.verify_prepared(replace(prepared, **{field: b"tampered"}))
+        archive.verify_prepared(tampered)
 
 
 @pytest.mark.parametrize("field", ["sha256", "source_file_sha256", "annual_revenue", "scope_count"])
@@ -102,7 +114,7 @@ def test_invalid_acceptance_decision_is_not_accepted(prepared: archive.PreparedA
 def test_racing_source_edit_is_rejected_before_persistence(
     adopted_files: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original_reader = archive.read_current_review
+    original_reader = read_current_review
 
     def changed(source: Path, baseline: Path, manifest: Path) -> dict[str, Any]:
         result = original_reader(source, baseline, manifest)

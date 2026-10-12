@@ -181,7 +181,7 @@ def test_initial_draft_requires_nonempty_frozen_snapshot_and_reason(tmp_path: Pa
 
 def test_department_isolation_and_no_shared_mutable_inputs(tmp_path: Path) -> None:
     store = NextYearStore(tmp_path)
-    inputs = {"fiscal_year": 2028, "target_revenue_yuan": "100", "frozen": {"students": 10}}
+    inputs: Json = {"fiscal_year": 2028, "target_revenue_yuan": "100", "frozen": {"students": 10}}
     source = _source()
     result = _append(store, inputs=inputs, source=source)
     saved = deepcopy(result)
@@ -200,12 +200,14 @@ def test_concurrent_same_parent_accepts_only_one_update(tmp_path: Path) -> None:
 
     def append(index: int) -> str:
         try:
-            return _append(
+            identifier = _append(
                 NextYearStore(tmp_path),
                 request=f"revise-{index}",
                 parent=first["draft"]["id"],
                 operation="REVISE",
             )["draft"]["id"]
+            assert isinstance(identifier, str)
+            return identifier
         except NextYearStoreError:
             return "conflict"
 
@@ -314,7 +316,9 @@ def test_version_read_is_department_scoped_read_only_and_preserves_private_snaps
         first["draft"]["id"],
     ]
     selected["draft"]["inputs"]["frozen"]["students"] = 999
-    assert store.version("department", first["draft"]["id"])["draft"] == first["draft"]
+    reread = store.version("department", first["draft"]["id"])
+    assert reread is not None
+    assert reread["draft"] == first["draft"]
     assert _files(tmp_path) == before
 
 

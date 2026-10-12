@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from decimal import Decimal
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -10,6 +10,13 @@ from packages.forecast.calculation import SEASONS
 from packages.forecast.store import fingerprint
 from packages.next_year.calculation import NextYearError, calculate_plan, prepare_inputs, validate_plan_inputs
 from packages.next_year.planning import BalanceOptions, _context, balance_plan, compare_calculations
+from packages.optimization.engine import (
+    CandidateEvaluation,
+    OptimizationOutcome,
+    OptimizationStage,
+    SolveStatus,
+)
+from packages.optimization.evaluator import BudgetEvaluationContext
 from tests.unit.test_next_year_calculation import _forecast_inputs, _plan_inputs
 
 
@@ -79,7 +86,7 @@ def test_plan_class_size_is_not_the_existing_minimum_class_constraint() -> None:
     assert before["annual"]["class_count"] is None
 
 
-def _add_scope(inputs: dict) -> str:
+def _add_scope(inputs: dict[str, Any]) -> str:
     template = inputs["combinations"][0]
     identifier = "new-campus-new-product"
     combo = {
@@ -218,15 +225,23 @@ def test_interactive_solver_reserves_time_for_the_full_kernel_fallback(
     inputs = _plan_inputs()
     inputs["target_revenue_yuan"] = calculate_plan(inputs)["annual"]["revenue_yuan"]
     inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
-    observed: dict = {}
+    observed: dict[str, float] = {}
 
-    def exact(context, **kwargs):
-        observed["exact_budget"] = kwargs["maximum_solver_seconds"]
-        return SimpleNamespace(
-            status="INCOMPLETE", candidates=(), discount_unlock_required=False, attempts=()
+    def exact(
+        context: BudgetEvaluationContext, *, maximum_solver_seconds: float, **kwargs: object
+    ) -> OptimizationOutcome:
+        observed["exact_budget"] = maximum_solver_seconds
+        return OptimizationOutcome(
+            status=SolveStatus.INCOMPLETE,
+            terminal_stage=OptimizationStage.ENTRY_ONLY,
+            candidates=(),
+            discount_unlock_required=False,
+            attempts=(),
         )
 
-    def bounded(context, *, deadline):
+    def bounded(
+        context: BudgetEvaluationContext, *, deadline: float
+    ) -> tuple[CandidateEvaluation | None, int]:
         observed["fallback_deadline"] = deadline
         return None, 0
 
@@ -271,8 +286,12 @@ def test_sampled_warm_start_closes_a_changed_target_without_weakening_gates(
     monkeypatch.setattr(
         planning,
         "optimize_budget",
-        lambda *args, **kwargs: SimpleNamespace(
-            status="INCOMPLETE", candidates=(), discount_unlock_required=False, attempts=()
+        lambda *args, **kwargs: OptimizationOutcome(
+            status=SolveStatus.INCOMPLETE,
+            terminal_stage=OptimizationStage.ENTRY_ONLY,
+            candidates=(),
+            discount_unlock_required=False,
+            attempts=(),
         ),
     )
     result = balance_plan(inputs, {"maximum_seconds": 3})

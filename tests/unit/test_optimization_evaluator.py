@@ -1,10 +1,18 @@
+from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
 from packages.class_size.validation import ClassSizeInput
-from packages.headcount.calculation import CombinationInput, ManualPlanInput, RateInput
+from packages.headcount.calculation import (
+    CombinationInput,
+    HeadcountCalculation,
+    ManualPlanInput,
+    RateInput,
+    RateType,
+    calculate_headcounts,
+)
 from packages.optimization import evaluator as evaluator_module
 from packages.optimization.cp_sat_rates import CpSatEntryAndRatesSolver
 from packages.optimization.engine import (
@@ -26,7 +34,17 @@ from packages.optimization.evaluator import (
     attribution_blocking_codes,
     optimize_budget,
 )
-from packages.revenue.calculation import CompositeDiscountTargetInput
+from packages.revenue.calculation import CompositeDiscountTargetInput, RevenueCalculation, calculate_revenue
+
+
+def _without_final_season[**KernelParameters, KernelOutput: (HeadcountCalculation, RevenueCalculation)](
+    kernel: Callable[KernelParameters, KernelOutput],
+) -> Callable[KernelParameters, KernelOutput]:
+    def incomplete(*args: KernelParameters.args, **kwargs: KernelParameters.kwargs) -> KernelOutput:
+        result = kernel(*args, **kwargs)
+        return replace(result, rows=result.rows[:-1])
+
+    return incomplete
 
 
 def test_candidate_is_recalculated_through_headcount_class_and_revenue_kernels() -> None:
@@ -268,20 +286,22 @@ def test_candidate_rejects_changed_fixed_entry_total_before_recalculation() -> N
 
 
 def _class_repair_context() -> BudgetEvaluationContext:
-    rates = tuple(
-        RateInput(f"{kind}:{season}", kind, season, "track", "product", "grade", "campus", value)
-        for season in (20272, 20273, 20274)
-        for kind, value in (
+    rates: list[RateInput] = []
+    for season in (20272, 20273, 20274):
+        rate_values: tuple[tuple[RateType, int], ...] = (
             ("RENEWAL_RATE", 800_000 if season == 20272 else 1_000_000),
             ("NEW_STUDENT_SHARE", 0),
         )
-    )
+        rates.extend(
+            RateInput(f"{kind}:{season}", kind, season, "track", "product", "grade", "campus", value)
+            for kind, value in rate_values
+        )
     return BudgetEvaluationContext(
         fiscal_year=2027,
         budget_tax_conversion_factor=Decimal(1),
         fixed_entry_total=100,
         combinations=(CombinationInput("a", "track", "product", "ENTRY", "grade", "subject", "campus", 100),),
-        rates=rates,
+        rates=tuple(rates),
         plans=(),
         entry_decisions=(EntryDecision("a", 100, 100, 100),),
         rate_decisions=tuple(
@@ -392,13 +412,11 @@ def test_evaluator_still_rejects_a_final_enabled_combination_with_four_zero_seas
 def test_evaluator_rejects_incomplete_kernel_row_coverage(
     monkeypatch: pytest.MonkeyPatch, kernel: str
 ) -> None:
-    original = getattr(evaluator_module, kernel)
-
-    def missing_final_season(**kwargs):
-        result = original(**kwargs)
-        return replace(result, rows=result.rows[:-1])
-
-    monkeypatch.setattr(evaluator_module, kernel, missing_final_season)
+    if kernel == "calculate_headcounts":
+        monkeypatch.setattr(evaluator_module, kernel, _without_final_season(calculate_headcounts))
+    else:
+        assert kernel == "calculate_revenue"
+        monkeypatch.setattr(evaluator_module, kernel, _without_final_season(calculate_revenue))
     context = _class_repair_context()
     rates = {row.rate_id: row.value_ppm for row in context.rates}
     rates["RENEWAL_RATE:20272"] = 810_000
