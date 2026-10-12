@@ -1357,7 +1357,11 @@ async def test_entry_planning_vertical_slice_requires_confirmation_and_balances_
         positive_detail = next(
             item
             for item in detail_body["items"]
-            if item["entry_initial_value"] > 0 and item["origin_type"] == "HISTORICAL"
+            if item["entry_initial_value"] > 0
+            and item["origin_type"] == "HISTORICAL"
+            # Keep this plan's rounding group separate from the deliberately
+            # incomplete new-product group; stable-key order is not a fixture.
+            and item["campus"] != planned_combination["campus"]
         )
 
         def planned_item(detail: dict[str, object], value: object, reason: str) -> dict[str, object]:
@@ -1915,7 +1919,8 @@ async def test_entry_planning_vertical_slice_requires_confirmation_and_balances_
             headers={**maintainer_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "solver_adapter": "CP_SAT_ENTRY_ONLY",
-                "maximum_solver_seconds": 5,
+                # This checks the candidate limit, not process startup speed.
+                "maximum_solver_seconds": 60,
                 "maximum_candidate_validations": 1,
             },
         )
@@ -1931,7 +1936,7 @@ async def test_entry_planning_vertical_slice_requires_confirmation_and_balances_
             headers={**maintainer_headers, "Idempotency-Key": str(uuid.uuid4())},
             json={
                 "solver_adapter": "CP_SAT_ENTRY_AND_RATES",
-                "maximum_solver_seconds": 5,
+                "maximum_solver_seconds": 60,
                 "maximum_candidate_validations": 1,
             },
         )
