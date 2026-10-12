@@ -1,4 +1,4 @@
-"""Local FY28 preparation drafts, never annual-budget or forecast confirmations.
+"""Local planning drafts, never annual-budget or forecast confirmations.
 
 Reuse the forecast ledger's hash chain, file lock and exclusive append. The
 separate directory makes every saved draft an auditable, reversible preparation
@@ -72,13 +72,22 @@ class NextYearStore(ForecastStore):
             ):
                 if value not in draft or fingerprint(draft[value]) != draft.get(digest):
                     raise NextYearStoreError("下一年预算准备内容指纹不一致")
-            if draft.get("operation") not in {"PREPARE", "REVISE"}:
+            if draft.get("operation") not in {"PREPARE", "REVISE", "RESTORE"}:
                 raise NextYearStoreError("下一年预算准备操作类型无效")
             if draft["operation"] == "REVISE":
                 if not drafts or any(
                     draft[key] != drafts[-1][key] for key in ("source", "source_snapshot", "prepared_inputs")
                 ):
                     raise NextYearStoreError("修订不得替换已冻结的预测来源")
+            elif draft["operation"] == "RESTORE":
+                restored = next(
+                    (item for item in drafts if item["id"] == draft.get("restored_from_id")), None
+                )
+                if restored is None or any(
+                    draft[key] != restored[key]
+                    for key in ("inputs", "source", "source_snapshot", "prepared_inputs", "calculation")
+                ):
+                    raise NextYearStoreError("恢复草稿必须完整保留选定历史版本，不能覆盖或改写历史")
             drafts.append(draft)
             parent = draft.get("id")
             if not isinstance(parent, str) or not parent:
@@ -94,10 +103,41 @@ class NextYearStore(ForecastStore):
             "draft": current,
             "source_changed": _source_changed(source, current),
             "history": [
-                {key: draft[key] for key in ("id", "sequence", "status", "created_at", "reason")}
+                {
+                    **{key: draft[key] for key in ("id", "sequence", "status", "created_at", "reason")},
+                    "created_by": draft["created_by"],
+                    "operation": draft["operation"],
+                    "restored_from_id": draft.get("restored_from_id"),
+                    "fiscal_year": draft["inputs"].get("fiscal_year"),
+                    "source_id": draft["source"]["id"],
+                    "source_sequence": draft["source"].get("sequence"),
+                    "annual": deepcopy(draft["calculation"].get("annual", {})),
+                }
                 for draft in reversed(drafts)
             ],
         }
+
+    def versions(self, department: str) -> list[Json]:
+        """Read validated planning versions, not the inherited forecast schema."""
+        with self._lock():
+            return deepcopy(list(reversed(self._drafts(self._events(department)))))
+
+    def version(self, department: str, version_id: str) -> Json | None:
+        with self._lock():
+            events = self._events(department)
+            selected = next((item for item in self._drafts(events) if item["id"] == version_id), None)
+            if selected is None:
+                return None
+            view = self._view(events)
+            return deepcopy(
+                {
+                    **view,
+                    "draft": selected,
+                    "source_changed": _source_changed(view["source"], selected),
+                    "latest_draft_id": view["draft"]["id"],
+                    "read_only": True,
+                }
+            )
 
     def append_draft(
         self,
@@ -114,8 +154,9 @@ class NextYearStore(ForecastStore):
         operation: str,
         source_snapshot: Json | None = None,
         observed_source: Json | None = None,
+        restored_from_id: str | None = None,
     ) -> Json:
-        if operation not in {"PREPARE", "REVISE"}:
+        if operation not in {"PREPARE", "REVISE", "RESTORE"}:
             raise NextYearStoreError("不支持的下一年预算准备操作")
         if not reason.strip():
             raise NextYearStoreError("必须填写操作原因")
@@ -127,7 +168,23 @@ class NextYearStore(ForecastStore):
             current = view["draft"]
             if (current["id"] if current else None) != parent_id:
                 raise NextYearStoreError("预算准备草稿已变化，请重新读取后操作")
-            if operation == "REVISE":
+            if operation == "RESTORE":
+                restored = next(
+                    (item for item in self._drafts(events) if item["id"] == restored_from_id), None
+                )
+                if restored is None:
+                    raise NextYearStoreError("待恢复的预算版本不存在")
+                if (
+                    source != restored["source"]
+                    or inputs != restored["inputs"]
+                    or calculation != restored["calculation"]
+                ):
+                    raise NextYearStoreError("恢复草稿必须完整保留选定历史版本，不能覆盖或改写历史")
+                if source_snapshot is not None and source_snapshot != restored["source_snapshot"]:
+                    raise NextYearStoreError("恢复草稿不得替换已冻结的预测快照")
+                frozen = restored["source_snapshot"]
+                prepared = restored["prepared_inputs"]
+            elif operation == "REVISE":
                 if current is None:
                     raise NextYearStoreError("请先准备下一年预算草稿")
                 if current["source"] != source:
@@ -159,6 +216,7 @@ class NextYearStore(ForecastStore):
                     "calculation_hash": fingerprint(calculation),
                     "observed_source": observed_source if observed_source is not None else source,
                     "operation": operation,
+                    "restored_from_id": restored_from_id if operation == "RESTORE" else None,
                     "created_at": datetime.now(UTC).isoformat(),
                     "created_by": actor,
                     "reason": reason,

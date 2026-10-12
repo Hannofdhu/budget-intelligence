@@ -296,3 +296,89 @@ def test_invalid_direct_append_is_validated_before_any_event_write(tmp_path: Pat
     with pytest.raises(NextYearStoreError, match="不能创建预测版本"):
         store.append_version(department="department", actor="owner")
     assert _files(tmp_path) == {}
+
+
+def test_version_read_is_department_scoped_read_only_and_preserves_private_snapshot(tmp_path: Path) -> None:
+    store = NextYearStore(tmp_path)
+    first = _append(store)
+    second = _append(store, request="revise-2", parent=first["draft"]["id"], operation="REVISE")
+    before = _files(tmp_path)
+    selected = store.version("department", first["draft"]["id"])
+    assert selected is not None
+    assert selected["draft"] == first["draft"]
+    assert selected["latest_draft_id"] == second["draft"]["id"]
+    assert selected["read_only"] is True
+    assert store.version("other", first["draft"]["id"]) is None
+    assert [item["id"] for item in store.versions("department")] == [
+        second["draft"]["id"],
+        first["draft"]["id"],
+    ]
+    selected["draft"]["inputs"]["frozen"]["students"] = 999
+    assert store.version("department", first["draft"]["id"])["draft"] == first["draft"]
+    assert _files(tmp_path) == before
+
+
+def test_restore_appends_new_draft_and_retains_selected_historical_source(tmp_path: Path) -> None:
+    store = NextYearStore(tmp_path)
+    first = _append(store)
+    latest = _append(store, request="prepare-2", parent=first["draft"]["id"], source=_source("forecast-b"))
+    before = _files(tmp_path)
+    selected = first["draft"]
+    kwargs = {
+        "department": "department",
+        "actor": "owner",
+        "request_id": "restore-3",
+        "request_hash": fingerprint("restore-3"),
+        "parent_id": latest["draft"]["id"],
+        "source": selected["source"],
+        "inputs": selected["inputs"],
+        "calculation": selected["calculation"],
+        "reason": "恢复为新的预算草稿",
+        "operation": "RESTORE",
+        "restored_from_id": selected["id"],
+        "observed_source": _source("forecast-b"),
+    }
+    restored = store.append_draft(**kwargs)
+    draft = restored["draft"]
+    assert draft["id"] not in {first["draft"]["id"], latest["draft"]["id"]}
+    assert draft["parent_id"] == latest["draft"]["id"]
+    assert draft["sequence"] == 3
+    assert draft["operation"] == "RESTORE"
+    assert draft["restored_from_id"] == selected["id"]
+    for field in ("source", "inputs", "prepared_inputs", "source_snapshot", "calculation"):
+        assert draft[field] == selected[field]
+    assert restored["source_changed"] is True
+    assert store.append_draft(**kwargs) == restored
+    assert all(_files(tmp_path)[name] == value for name, value in before.items())
+    assert len(_files(tmp_path)) == len(before) + 1
+    assert NextYearStore(tmp_path).current("department") == restored
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "inputs", "source", "calculation", "snapshot"])
+def test_restore_cannot_invent_or_alter_historical_version(tmp_path: Path, mutation: str) -> None:
+    store = NextYearStore(tmp_path)
+    first = _append(store)
+    selected = first["draft"]
+    before = _files(tmp_path)
+    kwargs: Json = {
+        "department": "department",
+        "actor": "owner",
+        "request_id": "restore-2",
+        "request_hash": fingerprint("restore-2"),
+        "parent_id": selected["id"],
+        "source": deepcopy(selected["source"]),
+        "inputs": deepcopy(selected["inputs"]),
+        "calculation": deepcopy(selected["calculation"]),
+        "reason": "restore",
+        "operation": "RESTORE",
+        "restored_from_id": selected["id"],
+    }
+    if mutation == "unknown":
+        kwargs["restored_from_id"] = "absent"
+    elif mutation == "snapshot":
+        kwargs["source_snapshot"] = {"replacement": True}
+    else:
+        kwargs[mutation]["invented"] = True
+    with pytest.raises(NextYearStoreError):
+        store.append_draft(**kwargs)
+    assert _files(tmp_path) == before

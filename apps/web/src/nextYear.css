@@ -1,5 +1,33 @@
 .next-year-shell { min-height: 100dvh; }
 .ny-year-context { font-size: 13px; font-weight: 600; color: #476b5f; white-space: nowrap; }
+.ny-year-context select { border: 0; background: transparent; color: inherit; font: inherit; padding: 8px; max-width: 170px; }
+.next-year-shell button, .next-year-shell input, .next-year-shell select, .next-year-shell textarea { transition: border-color .18s, background-color .18s, box-shadow .18s; }
+.ny-bulk-panel, .ny-impact, .ny-adjustment { border-top: 1px solid #dce4d9; padding: 24px 0; margin: 0 0 24px; }
+.ny-bulk-panel { padding: 20px; background: #edf3ee; border: 1px solid #dce6dd; border-radius: 12px; }
+.ny-bulk-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.ny-bulk-toolbar label { display: grid; gap: 7px; font-size: 12px; color: #557263; }
+.ny-bulk-toolbar input, .ny-bulk-toolbar select, .ny-field textarea { border: 1px solid #d2ddd4; border-radius: 8px; padding: 10px 12px; min-height: 40px; background: #fff; color: #233b31; font: inherit; }
+.ny-bulk-toolbar input { max-width: 110px; }
+.ny-field textarea { resize: vertical; width: 100%; line-height: 1.5; font-family: ui-monospace, monospace; }
+.ny-bulk-panel details { margin-top: 16px; }
+.ny-bulk-panel details .ny-field { margin: 16px 0 12px; }
+.ny-bulk-panel button, .ny-grade-picks button, .ny-add-business button, .ny-history-banner button, .ny-versions button, .ny-adjustment button:not(.decision-primary) { border: 1px solid #c9d8cd; border-radius: 8px; padding: 10px 14px; min-height: 40px; background: #fff; color: #315a48; font: inherit; font-size: 12px; cursor: pointer; }
+.ny-grade-picks { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 24px; }
+.ny-grade-picks button[aria-pressed=true] { border-color: #4e7c64; background: #dceade; color: #254c38; }
+.ny-impact-metrics { display: grid; grid-template-columns: 1.5fr repeat(4, 1fr); gap: 16px; margin: 20px 0; }
+.ny-impact-metrics > div { display: grid; gap: 12px; padding: 20px; border-left: 2px solid #a8c1ae; background: #eef4ee; }
+.ny-impact-metrics span, .ny-impact-metrics small { font-size: 12px; color: #627a69; }
+.ny-impact-metrics strong { font-size: 28px; color: #234b38; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.ny-impact h2, .ny-adjustment h2 { font-size: 20px; margin: 0; }
+.ny-impact details, .ny-bounds, .ny-add-business { margin: 24px 0; }
+.ny-impact summary, .ny-bounds summary, .ny-add-business summary, .ny-bulk-panel summary { color: #3f6954; cursor: pointer; font-size: 13px; padding: 8px 0; }
+.ny-bounds .ny-data, .ny-impact .ny-data { margin-top: 20px; }
+.ny-add-business .ny-form-grid { margin-top: 20px; }
+.ny-history-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 20px; background: #eaf0e8; border-left: 3px solid #6e9174; border-radius: 8px; margin-bottom: 20px; font-size: 13px; }
+.ny-history-banner strong { margin-right: auto; }
+.ny-table-wrap th small { display: block; margin-top: 6px; color: #64826e; font-size: 11px; }
+.next-year-shell textarea:focus-visible, .next-year-shell select:focus-visible, .next-year-shell summary:focus-visible { outline: 2px solid #4c8363; outline-offset: 3px; }
+@media (max-width: 700px) { .ny-impact-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ny-adjustment .ny-section-heading { align-items: start; flex-direction: column; } .ny-adjustment .ny-heading-actions { flex-wrap: wrap; } .ny-versions .ny-section-heading { align-items: start; } }
 .ny-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px 0; }
 .ny-heading h1 { margin: 0 0 8px; font-size: clamp(28px, 3vw, 42px); font-weight: 700; letter-spacing: -.035em; outline: none; }
 .ny-source-label { color: #708078; font-size: 12px; }
@@ -31,6 +59,9 @@
 .ny-start > .decision-primary { margin-top: 16px; }
 .ny-target-summary { display: flex; align-items: center; gap: 32px; color: #728076; font-size: 12px; margin-bottom: 32px; }
 .ny-target-summary strong { margin-left: 10px; color: #274638; font-variant-numeric: tabular-nums; }
+.ny-class-summary { display: flex; align-items: center; gap: 20px; color: #627b68; margin: -12px 0 24px; font-size: 12px; }
+.ny-class-summary strong { color: #284c37; margin-left: 10px; font-variant-numeric: tabular-nums; }
+.ny-class-summary button { border: 0; background: transparent; color: #35694b; text-decoration: underline; text-underline-offset: 4px; padding: 8px 0; cursor: pointer; font: inherit; }
 .ny-section { margin: 0 0 32px; border-top: 1px solid #dce4d9; padding: 24px 0 0; }
 .ny-section h2 { margin: 0 0 24px; font-size: 20px; }
 .ny-section h3 { margin: 24px 0 16px; font-size: 15px; }
@@ -55,6 +86,9 @@
 .ny-table-wrap thead th { background: #eaf0e7; color: #536f60; font-size: 11px; font-weight: 600; white-space: nowrap; position: sticky; top: 0; }
 .ny-table-wrap tbody th { min-width: 200px; max-width: 380px; font-weight: 500; color: #264b3a; }
 .ny-table-wrap td { white-space: nowrap; }
+.next-year-shell input[type="checkbox"] { appearance: auto; width: 18px; height: 18px; min-width: 18px; min-height: 18px; padding: 0; margin: 0; accent-color: #315f4a; cursor: pointer; }
+.ny-checkbox-target { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; cursor: pointer; border-radius: 8px; }
+.ny-checkbox-target:has(input:disabled) { cursor: not-allowed; }
 .ny-table-wrap .ny-field { min-width: 128px; max-width: 180px; }
 .ny-table-wrap .ny-field > span { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ny-table-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #738278; }
@@ -63,6 +97,14 @@
 .ny-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; max-width: 800px; margin-bottom: 28px; }
 .ny-opening { display: flex; flex-wrap: wrap; gap: 24px; margin: 20px 0 0; color: #728175; font-size: 12px; }
 .ny-opening strong { color: #30513e; margin-left: 10px; font-variant-numeric: tabular-nums; }
+.ny-source-picker { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin-bottom: 24px; }
+.ny-source-picker label { flex: 1; max-width: 520px; min-width: 240px; }
+.ny-source-picker select { min-height: 44px; padding: 10px 12px; border: 1px solid #dbe3d7; border-radius: 8px; background: #fff; color: #30513e; }
+.ny-entry-status { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 18px; font-size: 12px; color: #607564; font-variant-numeric: tabular-nums; }
+.ny-range-note { font-size: 12px; color: #607564; margin: 16px 0; }
+.ny-balance-diagnostics { padding: 20px; margin-bottom: 24px; border: 1px solid #e2d1b4; border-radius: 12px; background: #fffaf2; }
+.ny-balance-diagnostics h2 { font-size: 18px; margin: 0 0 14px; }
+.ny-balance-diagnostics > div:not(.ny-heading-actions) { display: grid; gap: 6px; margin: 10px 0 18px; font-size: 13px; color: #80582b; }
 .ny-opening + .ny-form-grid { margin-top: 20px; }
 .ny-plans { margin-top: 28px; }
 .ny-plans summary, .ny-how summary, .ny-issues summary { cursor: pointer; font-size: 13px; color: #406854; }

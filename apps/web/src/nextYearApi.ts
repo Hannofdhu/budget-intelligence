@@ -7,40 +7,46 @@ export interface ForecastBasis {
   id: string; sequence: number; as_of: string; status: "CONFIRMED";
   forecast_revenue: string; forecast_total: number;
   calculation_hash: string; snapshot_hash: string; baseline_hash: string;
+  fiscal_year?: number;
 }
 export interface NextYearCombination {
   id: string; track: string; product: string; grade: string; subject: string; campus: string;
   entry: boolean; enabled: boolean; source_entry_weight: number;
   source_new_by_season: Record<ForecastSeason, number>; opening_carryover_yuan: string;
+  entry_override?: boolean | null; entry_students?: number | null; entry_locked?: boolean; added?: boolean; reason?: string;
 }
 export interface NextYearRate {
   id: string; season: ForecastSeason; track: string; product: string; grade: string; campus: string;
   renewal_ppm: number; share_ppm: number;
+  locked?: boolean; renewal_lower_ppm?: number; renewal_upper_ppm?: number; share_lower_ppm?: number; share_upper_ppm?: number;
 }
 export interface NextYearFinance { id: string; combination_id: string; season: ForecastSeason; price_yuan: string; discount_ppm: number; recognition_ppm: number }
 export interface NextYearInputs {
-  fiscal_year: 2028; source_as_of: string; target_revenue_yuan: string | null; track_targets: Record<string, string | null>;
+  fiscal_year: number; source_as_of: string; target_revenue_yuan: string | null; track_targets: Record<string, string | null>;
   entry_total: number; tax_factor: string; combinations: NextYearCombination[]; rates: NextYearRate[];
-  finance: NextYearFinance[]; class_sizes: { track: string; product: string; minimum: number }[];
-  plans: { combination_id: string; season: ForecastSeason; students: number }[];
+  finance: NextYearFinance[]; class_sizes: { track: string; product: string; minimum: number; planned_class_size?: number | null }[];
+  plans: { combination_id: string; season: ForecastSeason; students: number; locked?: boolean; reason?: string }[];
   opening_sources: { track: string; product: string; grade: string; subject: string; campus: string; students: number; target_id: string | null; exclusion: string | null }[];
   notes: Record<string, unknown>[];
 }
 export interface NextYearTotals {
   revenue_yuan: NextYearNumber; target_revenue_yuan: NextYearNumber; gap_yuan: NextYearNumber;
   total_students: number | null; old_students: number | null; new_students: number | null; attainment: NextYearNumber;
+  class_count?: number | null;
 }
 export interface NextYearRow {
   combination_id: string; season: ForecastSeason; track: string; product: string; grade: string; subject: string; campus: string; entry: boolean;
   old_students: number | null; new_students: number | null; total_students: number | null; revenue_yuan: NextYearNumber;
   price_yuan: NextYearNumber; discount_ppm: number | null; renewal_ppm: number | null; share_ppm: number | null; class_size_status: string;
   planned_new_applied: boolean;
+  class_count?: number | null; planned_class_size?: number | null; manual_locked?: boolean;
 }
 export interface NextYearCalculation {
-  fiscal_year: 2028; rule_versions: Record<string, string>; annual: NextYearTotals;
+  fiscal_year: number; rule_versions: Record<string, string>; annual: NextYearTotals;
   quarters: (NextYearTotals & { season: ForecastSeason })[]; tracks: (NextYearTotals & { track: string })[];
   campuses: (NextYearTotals & { campus: string })[]; rows: NextYearRow[];
   entry_allocations: { campus: string; students: number; source_weight: number }[];
+  entry_details?: { combination_id: string; campus: string; track: string; product: string; grade: string; subject: string; students: number; locked: boolean }[];
   opening: { spring_students: number; eligible_students: number; graduated_students: number; subject_ended_students: number; summer_old_students: number; carryover_yuan: string };
   issues: { code: string; message: string; season?: string; combination_id?: string; severity: "WARNING" | "BLOCKING"; [key: string]: unknown }[];
   complete: boolean; publication_available: false;
@@ -48,13 +54,24 @@ export interface NextYearCalculation {
 export interface NextYearDraft {
   id: string; sequence: number; parent_id: string | null; status: "DRAFT"; source: ForecastBasis;
   inputs: NextYearInputs; calculation: NextYearCalculation; created_at: string;
+  created_by?: string; reason?: string; operation?: string; restored_from_id?: string | null;
 }
 export interface NextYearEnvelope {
   source: ForecastBasis | null; draft: NextYearDraft | null; source_changed: boolean;
   history: { id: string; sequence: number; created_at: string; [key: string]: unknown }[];
+  latest_draft_id?: string; read_only?: boolean;
+}
+export interface NextYearCatalog {
+  source_fiscal_year: number; sources: ForecastBasis[];
+  fiscal_years: { fiscal_year: number; has_draft: boolean; latest_sequence?: number | null; [key: string]: unknown }[];
+  default_fiscal_year: number;
+}
+export interface NextYearBalanceResult {
+  status: string; message?: string; proposed_inputs: NextYearInputs | null; calculation: NextYearCalculation;
+  impact?: Record<string, unknown>; constraints?: { class_issues?: NextYearCalculation["issues"]; class_diagnostics?: { code: string; count: number; message: string; action: string; [key: string]: unknown }[]; [key: string]: unknown }; attempts?: unknown[];
 }
 
-const base = "/api/v1/next-year-budgets/fy28";
+const baseFor = (year = 2028) => `/api/v1/next-year-budgets/${year < 2100 ? `fy${String(year).slice(-2)}` : year}`;
 async function response<T>(value: Response): Promise<T> {
   if (!value.ok) {
     const payload = await value.clone().json().catch(() => null) as { detail?: unknown } | null;
@@ -62,20 +79,32 @@ async function response<T>(value: Response): Promise<T> {
   }
   return parseResponse<T>(value);
 }
-export async function getNextYearBudget(identity: ApiIdentity, signal?: AbortSignal): Promise<NextYearEnvelope> {
-  return response(await fetch(`${base}/current`, { headers: identityHeaders(identity), signal }));
+export async function getNextYearBudget(identity: ApiIdentity, signal?: AbortSignal, year = 2028): Promise<NextYearEnvelope> {
+  return response(await fetch(`${baseFor(year)}/current`, { headers: identityHeaders(identity), signal }));
 }
-async function command<T>(path: string, identity: ApiIdentity, body: unknown): Promise<T> {
-  return response(await fetch(`${base}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": newRequestId() }, body: JSON.stringify(body) }));
+async function command<T>(path: string, identity: ApiIdentity, body: unknown, year = 2028): Promise<T> {
+  return response(await fetch(`${baseFor(year)}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": newRequestId() }, body: JSON.stringify(body) }));
 }
-export function prepareNextYearBudget(identity: ApiIdentity, forecastId: string, parentId: string | null): Promise<NextYearEnvelope> {
-  return command("/prepare", identity, { forecast_id: forecastId, parent_id: parentId, reason: "基于已确认 FY27 预测生成 FY28 预算草稿" });
+export function prepareNextYearBudget(identity: ApiIdentity, forecastId: string, parentId: string | null, year = 2028): Promise<NextYearEnvelope> {
+  return command("/prepare", identity, { forecast_id: forecastId, parent_id: parentId, reason: `基于已确认 FY${String(year - 1).slice(-2)} 预测生成 FY${String(year).slice(-2)} 预算草稿` }, year);
 }
 export function reviseNextYearBudget(identity: ApiIdentity, parentId: string, inputs: NextYearInputs, reason: string): Promise<NextYearEnvelope> {
-  return command("/revise", identity, { parent_id: parentId, inputs, reason });
+  return command("/revise", identity, { parent_id: parentId, inputs, reason }, inputs.fiscal_year);
 }
 export function previewNextYearBudget(identity: ApiIdentity, parentId: string, inputs: NextYearInputs): Promise<{ source: ForecastBasis; calculation: NextYearCalculation }> {
-  return command("/preview", identity, { parent_id: parentId, inputs });
+  return command("/preview", identity, { parent_id: parentId, inputs }, inputs.fiscal_year);
+}
+export async function getNextYearCatalog(identity: ApiIdentity, signal?: AbortSignal): Promise<NextYearCatalog> {
+  return response(await fetch("/api/v1/next-year-budgets/catalog", { headers: identityHeaders(identity), signal }));
+}
+export async function getNextYearVersion(identity: ApiIdentity, versionId: string, year = 2028): Promise<NextYearEnvelope> {
+  return response(await fetch(`${baseFor(year)}/versions/${encodeURIComponent(versionId)}`, { headers: identityHeaders(identity) }));
+}
+export function restoreNextYearVersion(identity: ApiIdentity, parentId: string, versionId: string, reason: string, year = 2028): Promise<NextYearEnvelope> {
+  return command("/restore", identity, { parent_id: parentId, version_id: versionId, reason }, year);
+}
+export function balanceNextYearBudget(identity: ApiIdentity, parentId: string, inputs: NextYearInputs, options: Record<string, unknown> = {}): Promise<NextYearBalanceResult> {
+  return command("/balance", identity, { parent_id: parentId, inputs, options }, inputs.fiscal_year);
 }
 
 export type NextYearEdits = Record<string, string>;
@@ -91,9 +120,9 @@ const moneyUnits = (value: string) => {
 };
 const moneyString = (value: bigint) => `${value / 1000000n}.${String(value % 1000000n).padStart(6, "0")}`;
 /** Goal allocation only. Never changes student counts, income, or any saved draft. */
-export function allocateNextYearTrackTargets(total: string, original: Record<string, string>): Record<string, string> {
+export function allocateNextYearTrackTargets(total: string, original: Record<string, string>, decimals: 2 | 6 = 6): Record<string, string> {
   const number = forecastNumber(total); if (number === null || number < 0 || number > 1000000000000) throw new Error("收入目标须为非负数且不超过允许范围");
-  const target = moneyUnits(total), names = Object.keys(original).sort(), weights = names.map(name => moneyUnits(original[name]));
+  const scale = decimals === 2 ? 10000n : 1n, target = (moneyUnits(total) + scale / 2n) / scale, names = Object.keys(original).sort(), weights = names.map(name => moneyUnits(original[name]));
   if (!names.length) throw new Error("没有可分配的赛道");
   let denominator = weights.reduce((sum, value) => sum + value, 0n);
   if (denominator === 0n) { weights.fill(1n); denominator = BigInt(names.length); }
@@ -102,7 +131,7 @@ export function allocateNextYearTrackTargets(total: string, original: Record<str
   for (const item of [...allocations].sort((a, b) => a.remainder === b.remainder ? a.name.localeCompare(b.name) : a.remainder > b.remainder ? -1 : 1)) {
     if (remaining === 0n) break; item.value += 1n; remaining -= 1n;
   }
-  return Object.fromEntries(allocations.map(item => [item.name, moneyString(item.value)]));
+  return Object.fromEntries(allocations.map(item => [item.name, decimals === 2 ? moneyString(item.value * scale).slice(0, -4) : moneyString(item.value)]));
 }
 export function applyNextYearEdits(original: NextYearInputs, edits: NextYearEdits): { inputs: NextYearInputs | null; errors: Record<string, string> } {
   const inputs = structuredClone(original), errors: Record<string, string> = {};
@@ -129,17 +158,45 @@ export function applyNextYearEdits(original: NextYearInputs, edits: NextYearEdit
         else if (field === "discount_ppm" && ppm % 1000 !== 0) fail(key, "折扣按0.1个百分点填写");
         else Object.assign(item, { [String(field)]: ppm });
       }
-    } else if (section === "class") {
+    } else if (section === "entry-count") {
+      const item = inputs.combinations.find(row => row.id === id);
+      if (!item) fail(key, "业务范围不存在");
+      else if (!raw.trim()) { item.entry_students = null; item.entry_locked = false; }
+      else if (number === null || !Number.isSafeInteger(number) || number < 0 || number > 10000000) fail(key, "人数须为0至1000万的整数");
+      else { item.entry_students = number; item.entry_locked = true; }
+    } else if (section === "entry-grade") {
+      const members = inputs.combinations.filter(row => row.enabled && row.grade === id && (row.entry_override ?? row.entry)).sort((a, b) => a.id.localeCompare(b.id));
+      if (!raw.trim() && members.length) { for (const item of members) { item.entry_students = null; item.entry_locked = false; } continue; }
+      if (!members.length || number === null || !Number.isSafeInteger(number) || number < 0 || number > 10000000) { fail(key, "年级入口须为0至1000万的整数，并至少选择一个入口业务"); continue; }
+      const originalWeight = members.reduce((sum, row) => sum + row.source_entry_weight, 0), denominator = originalWeight || members.length;
+      const allocations = members.map(row => { const numerator = number * (originalWeight ? row.source_entry_weight : 1); return { row, value: Math.floor(numerator / denominator), remainder: numerator % denominator }; });
+      let remainder = number - allocations.reduce((sum, item) => sum + item.value, 0);
+      for (const item of [...allocations].sort((a, b) => b.remainder - a.remainder || a.row.id.localeCompare(b.row.id))) { if (!remainder) break; item.value++; remainder--; }
+      for (const item of allocations) { item.row.entry_students = item.value; item.row.entry_locked = true; }
+    } else if (section === "class" || section === "class-size") {
       const item = inputs.class_sizes[Number(id)];
-      if (!item || number === null || !Number.isSafeInteger(number) || number < 1 || number > 10000) fail(key, "班均须为1至10000的整数"); else item.minimum = number;
-    } else if (section === "plan") {
+      if (!item || number === null || !Number.isSafeInteger(number) || number < 1 || number > 10000) fail(key, "班均须为1至10000的整数");
+      else if (section === "class-size") item.planned_class_size = number; else item.minimum = number;
+    } else if (section === "plan" || section === "manual") {
       if (!inputs.combinations.some(row => row.id === id) || !forecastSeasons.includes(field as ForecastSeason)) { fail(key, "计划明细不存在"); continue; }
       if (number === null || !Number.isSafeInteger(number) || number < 0 || number > 10000000) { fail(key, "计划新生须为0至1000万的整数"); continue; }
       const plan = inputs.plans.find(row => row.combination_id === id && row.season === field);
-      if (plan) plan.students = number; else inputs.plans.push({ combination_id: String(id), season: field as ForecastSeason, students: number });
+      if (plan) { plan.students = number; if (section === "manual") { plan.locked = true; plan.reason = "预算手动调节"; } }
+      else inputs.plans.push({ combination_id: String(id), season: field as ForecastSeason, students: number, ...(section === "manual" ? { locked: true, reason: "预算手动调节" } : {}) });
+    } else if (section === "bounds") {
+      const item = inputs.rates.find(row => row.id === id);
+      const allowed = ["renewal_lower_ppm", "renewal_upper_ppm", "share_lower_ppm", "share_upper_ppm"];
+      const ppm = number === null ? null : Math.round(number * 10000);
+      if (item && allowed.includes(String(field)) && !raw.trim()) { delete (item as unknown as Record<string, unknown>)[String(field)]; continue; }
+      if (!item || !allowed.includes(String(field)) || ppm === null || ppm % 100 !== 0 || ppm < 0 || ppm > (String(field).startsWith("share") ? 999900 : 1000000)) fail(key, "调整范围按0.01个百分点填写，且不能超过比例上限");
+      else Object.assign(item, { [String(field)]: ppm });
     } else fail(key, "此字段不能修改");
   }
   if (!Object.keys(errors).length) {
+    for (const rate of inputs.rates) {
+      if ((rate.renewal_lower_ppm ?? Math.max(0, rate.renewal_ppm - 50000)) > (rate.renewal_upper_ppm ?? Math.min(1000000, rate.renewal_ppm + 50000))) fail(nextYearEditKey("bounds", rate.id, "renewal_lower_ppm"), "续班率下限不能高于上限");
+      if ((rate.share_lower_ppm ?? Math.max(0, rate.share_ppm - 50000)) > (rate.share_upper_ppm ?? Math.min(999900, rate.share_ppm + 50000))) fail(nextYearEditKey("bounds", rate.id, "share_lower_ppm"), "新生占比下限不能高于上限");
+    }
     const targets = Object.entries(inputs.track_targets), specified = targets.filter(([, value]) => value !== null);
     if (inputs.target_revenue_yuan === null) {
       if (specified.length) fail(nextYearEditKey("target"), "先填写全年经营目标");

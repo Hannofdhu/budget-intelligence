@@ -195,7 +195,9 @@ test("data review refresh is available only through its supplied callback and re
   const tree = ForecastDataReview({ issues: [missing()], onUpdate: () => { calls++; } });
   const [button] = find(tree, node => node.type === "button");
   assert.ok(button); assert.equal(button.props.disabled, false); button.props.onClick(); assert.equal(calls, 1);
-  assert.doesNotMatch(render(ForecastDataReview, { issues: [missing()] }), /<button/);
+  const readonly = render(ForecastDataReview, { issues: [missing()] });
+  assert.doesNotMatch(readonly, /<button[^>]*>更新预测/);
+  assert.match(readonly, />一键复制<|>导出当前表格</);
   assert.match(render(ForecastDataReview, { issues: [missing()], onUpdate() {}, busy: true }), /<button[^>]*disabled=""[^>]*>正在更新…/);
   assert.doesNotMatch(render(ForecastDataReview, { issues: [warning()], onUpdate() {} }), /<button/);
 });

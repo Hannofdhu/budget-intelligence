@@ -9,13 +9,15 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { budgetWorkbook } from "../src/budgetExport.ts";
 import { getNextYearBudget, prepareNextYearBudget, reviseNextYearBudget, previewNextYearBudget,
+  getNextYearCatalog, getNextYearVersion, restoreNextYearVersion, balanceNextYearBudget,
   nextYearEditKey as key, applyNextYearEdits, allocateNextYearTrackTargets, nextYearRowTotal } from "../src/nextYearApi.ts";
 
 const require = createRequire(import.meta.url);
 const bundled = await build({ entryPoints: [fileURLToPath(new URL("../src/NextYearBudgetPage.tsx", import.meta.url))],
   bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react-dom", "exceljs"], loader: { ".css": "empty" }, logLevel: "silent" });
 const compile = loader => { const module = { exports: {} }; new Function("require", "module", "exports", bundled.outputFiles[0].text)(loader, module, module.exports); return module.exports; };
-const { NextYearOverview, NextYearTaskNavigation, nextYearExportColumns, nextYearExportRows, nextYearClassStatus, nextYearRateUsage } = compile(require);
+const { NextYearOverview, NextYearTaskNavigation, nextYearExportColumns, nextYearExportRows, nextYearClassStatus, nextYearRateUsage,
+  effectiveNextYearEntry, parseNextYearParameterPaste, nextYearImpactRows, nextYearAnalysisFacts, nextYearTableData } = compile(require);
 const identity = { userId: "local-budget-owner", departmentId: "trial", roles: ["DEPARTMENT_BUDGET_OWNER"] };
 const seasons = ["暑假", "秋季", "寒假", "春季"];
 const filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
@@ -160,10 +162,10 @@ test("XLSX output is full typed detail in yuan, ratios numeric, null blank and z
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : !tree || typeof tree !== "object" ? [] : [tree, ...nodes(tree.props?.children)];
 function pageHarness({ stateData = envelope(), edited = {}, changedReason = "", activeTask = 5, activeIdentity = identity, activePreview = null } = {}) {
   const state = [activeIdentity, stateData, structuredClone(stateData.draft?.inputs ?? null), edited, "", "", "", activePreview, changedReason, activeTask, { ...filters }, {}, "", false];
-  const refs = []; let cursor = 0, refCursor = 0;
-  const mockReact = { ...React, useState(initial) { const i = cursor++; return [state[i] === undefined ? typeof initial === "function" ? initial() : initial : state[i], value => { state[i] = typeof value === "function" ? value(state[i]) : value; }]; }, useEffect() {}, useMemo(fn) { return fn(); }, useRef(initial) { const i = refCursor++; return refs[i] ??= { current: initial }; } };
+  const refs = [], effects = []; let cursor = 0, refCursor = 0;
+  const mockReact = { ...React, useState(initial) { const i = cursor++; return [state[i] === undefined ? typeof initial === "function" ? initial() : initial : state[i], value => { state[i] = typeof value === "function" ? value(state[i]) : value; }]; }, useEffect(fn) { effects.push(fn); }, useMemo(fn) { return fn(); }, useRef(initial) { const i = refCursor++; return refs[i] ??= { current: initial }; } };
   const { NextYearBudgetPage } = compile(name => name === "react" ? mockReact : require(name));
-  return { state, render() { cursor = 0; refCursor = 0; return NextYearBudgetPage(); }, html() { return renderToStaticMarkup(this.render()); } };
+  return { state, effects, render() { cursor = 0; refCursor = 0; effects.length = 0; return NextYearBudgetPage(); }, html() { return renderToStaticMarkup(this.render()); } };
 }
 const fakeBrowser = () => {
   const saved = { location: globalThis.location, history: globalThis.history, window: globalThis.window, requestAnimationFrame: globalThis.requestAnimationFrame };
@@ -286,7 +288,239 @@ test("track allocation uses calculated budget income only after the annual targe
     const fixture = envelope({ draft: draft({ inputs: withoutTargets, calculation: calculation({ tracks: [{ track: "智慧空间", ...totals({ revenue_yuan: "300000", target_revenue_yuan: null }) }, { track: "智慧伴学", ...totals({ revenue_yuan: "100000", target_revenue_yuan: null }) }] }) }) });
     const harness = pageHarness({ stateData: fixture, activeTask: 1, edited: { [key("target")]: "800000" } });
     button(harness.render(), "按预算收入分配赛道目标").props.onClick();
-    assert.equal(harness.state[3][key("track-target", "智慧空间")], "600000.000000"); assert.equal(harness.state[3][key("track-target", "智慧伴学")], "200000.000000");
+    assert.equal(harness.state[3][key("track-target", "智慧空间")], "600000.00"); assert.equal(harness.state[3][key("track-target", "智慧伴学")], "200000.00");
     assert.equal(harness.state[2].target_revenue_yuan, null); assert.equal(harness.state[2].entry_total, 100); assert.deepEqual(harness.state[2].finance, withoutTargets.finance);
   } finally { restore(); }
+});
+
+test("new API commands keep the real fiscal year and restoration creates a draft rather than editing history", async () => {
+  const original = globalThis.fetch, requests = [];
+  globalThis.fetch = async (url, options = {}) => { requests.push({ url, ...options }); return Response.json(envelope()); };
+  try {
+    await getNextYearCatalog(identity); await getNextYearVersion(identity, "N 1", 2029);
+    await restoreNextYearVersion(identity, "N2", "N1", "恢复试算", 2029);
+    await balanceNextYearBudget(identity, "N2", inputs({ fiscal_year: 2029 }), { rate_step_limit_ppm: 10000 });
+    await getNextYearBudget(identity, undefined, 2100);
+    assert.equal(requests[0].url, "/api/v1/next-year-budgets/catalog");
+    assert.equal(requests[1].url, "/api/v1/next-year-budgets/fy29/versions/N%201");
+    assert.deepEqual(JSON.parse(requests[2].body), { parent_id: "N2", version_id: "N1", reason: "恢复试算" });
+    assert.equal(requests[3].url, "/api/v1/next-year-budgets/fy29/balance");
+    assert.equal(JSON.parse(requests[3].body).options.rate_step_limit_ppm, 10000);
+    assert.equal(requests[4].url, "/api/v1/next-year-budgets/2100/current");
+    assert.ok(requests.slice(2, 4).every(request => request.method === "POST" && request.headers["Idempotency-Key"]));
+  } finally { globalThis.fetch = original; }
+});
+
+test("entry membership, exact grade allocations and manual zero are draft attributes, not altered source fields", () => {
+  assert.equal(effectiveNextYearEntry(combination({ entry: true, entry_override: false })), false);
+  assert.equal(effectiveNextYearEntry(combination({ entry: false, entry_override: true })), true);
+  const original = inputs({ combinations: [combination({ id: "a", source_entry_weight: 2 }), combination({ id: "b", source_entry_weight: 1 }), combination({ id: "c", grade: "八年级", entry: false, entry_override: true, source_entry_weight: 0 })] });
+  const edited = applyNextYearEdits(original, { [key("entry-grade", "七年级")]: "10", [key("entry-grade", "八年级")]: "5", [key("manual", "a", "秋季")]: "0", [key("class-size", 0)]: "16" });
+  assert.deepEqual(edited.errors, {}); assert.deepEqual(edited.inputs.combinations.map(row => row.entry_students), [7, 3, 5]);
+  assert.ok(edited.inputs.combinations.every(row => row.entry_locked));
+  assert.equal(edited.inputs.plans.find(row => row.combination_id === "a" && row.season === "秋季").students, 0);
+  assert.equal(edited.inputs.plans.find(row => row.combination_id === "a" && row.season === "秋季").locked, true);
+  assert.equal(edited.inputs.class_sizes[0].minimum, 10); assert.equal(edited.inputs.class_sizes[0].planned_class_size, 16);
+  assert.equal(original.combinations[0].entry_students, undefined); assert.equal(edited.inputs.combinations[0].source_entry_weight, 2);
+  assert.equal(applyNextYearEdits(original, { [key("entry-weight", "a")]: "999" }).inputs, null);
+});
+
+test("parameter TSV paste validates the whole batch and does not accept out-of-scope or duplicated identifiers", () => {
+  const rows = inputs().rates;
+  assert.deepEqual(parseNextYearParameterPaste("参数ID\t续班率\t新生占比\nrate-1\t76%\t20.5\nrate-2\t\t0", rows), {
+    [key("rates", "rate-1", "renewal_ppm")]: "76", [key("rates", "rate-1", "share_ppm")]: "20.5", [key("rates", "rate-2", "share_ppm")]: "0",
+  });
+  assert.throws(() => parseNextYearParameterPaste("unknown\t76\t20", rows), /不在当前筛选范围/);
+  assert.throws(() => parseNextYearParameterPaste("rate-1\t76\t20\nrate-1\t75\t21", rows), /重复/);
+  assert.throws(() => parseNextYearParameterPaste("rate-1\t76", rows), /三列/);
+  assert.equal(applyNextYearEdits(inputs(), { [key("bounds", "rate-1", "renewal_lower_ppm")]: "90", [key("bounds", "rate-1", "renewal_upper_ppm")]: "80" }).inputs, null);
+});
+
+test("copy and export projection covers the full filtered table with numeric values and active edit inputs", () => {
+  const rows = Array.from({ length: 31 }, (_, index) => ({ name: `业务${index}`, value: index }));
+  const projected = nextYearTableData(rows, ["业务", "人次"], row => React.createElement(React.Fragment, null,
+    React.createElement("th", null, row.name), React.createElement("td", null, React.createElement("label", null, React.createElement("span", null, "隐藏标签"), React.createElement("input", { value: String(row.value), readOnly: true })))));
+  assert.equal(projected.length, 31); assert.deepEqual(projected[30], { c0: "业务30", c1: 30 });
+  const page = fs.readFileSync(new URL("../src/NextYearBudgetPage.tsx", import.meta.url), "utf8");
+  assert.match(page, /exportData=\{\{ columns:/); assert.match(page, /copyRows=\{\[headers/);
+});
+
+test("impact comparison preserves unknown values and detects added rows without treating decimal formatting as change", () => {
+  const before = calculation({ rows: [row({ revenue_yuan: "90000" })] });
+  assert.equal(nextYearImpactRows(before, calculation({ rows: [row({ revenue_yuan: "90000.000000" })] })).length, 0);
+  const changed = nextYearImpactRows(before, calculation({ rows: [row({ revenue_yuan: "91000", total_students: 101 }), row({ combination_id: "new", revenue_yuan: "2000", total_students: 2 })] }));
+  assert.equal(changed.length, 2); assert.equal(changed[0].revenue_delta, 1000); assert.equal(changed[0].student_delta, 1); assert.equal(changed[1].revenue_delta, 2000);
+  const unknown = nextYearImpactRows(before, calculation({ rows: [row({ revenue_yuan: null })] })); assert.equal(unknown[0].revenue_delta, null);
+  const facts = nextYearAnalysisFacts(calculation(), inputs()); assert.equal(facts.length, 4); assert.equal(facts[1].renewalDenominator, 100); assert.equal(facts[1].renewalNumerator, 80);
+});
+
+test("historical view uses the selected source, parameters and notes and cannot save into that version", () => {
+  const restore = fakeBrowser();
+  try {
+    const historical = envelope({ draft: draft({ id: "history-N1", sequence: 1, source: { ...source, sequence: 3 }, inputs: inputs({ plans: [{ combination_id: "combo-1", season: "秋季", students: 777 }], notes: [{ message: "历史参数说明" }] }), calculation: calculation({ rows: [row({ season: "秋季", old_students: 0, planned_new_applied: true })] }) }), read_only: true });
+    const harness = pageHarness({ activeTask: 3 }); harness.state[16] = historical;
+    const html = harness.html(); assert.match(html, /FY27 预测 P3/); assert.match(html, /历史参数说明/); assert.match(html, /value="777"/);
+    assert.doesNotMatch(html, /保存并重算|按经营目标自动调平/); assert.match(html, /以此版本恢复新草稿/);
+  } finally { restore(); }
+});
+
+test("infeasible balancing preserves input edits and the saved version, while partial proposals remain unsaved previews", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch;
+  try {
+    const harness = pageHarness({ edited: { [key("entry")]: "125" } });
+    globalThis.fetch = async () => Response.json({ status: "INCOMPLETE", proposed_inputs: null, message: "尚未找到方案" });
+    button(harness.render(), "按经营目标自动调平").props.onClick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.state[3][key("entry")], "125"); assert.equal(harness.state[1].draft.sequence, 1); assert.match(harness.state[5], /尚未找到方案/);
+    globalThis.fetch = async () => Response.json({ status: "PARTIAL", proposed_inputs: inputs({ entry_total: 125 }), calculation: calculation({ annual: totals({ revenue_yuan: "380000", gap_yuan: "20000" }) }), message: "改善建议，尚未达到经营目标" });
+    button(harness.render(), "按经营目标自动调平").props.onClick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.state[2].entry_total, 125); assert.equal(harness.state[7].annual.revenue_yuan, "380000"); assert.equal(harness.state[1].draft.sequence, 1);
+    assert.match(harness.html(), /未保存预览|修改影响对比/); assert.match(harness.state[22], /尚未达到经营目标/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("overview uses one shared filter system and unset class planning is not displayed as zero", () => {
+  const restore = fakeBrowser();
+  try { const harness = pageHarness(), tree = harness.render(), html = harness.html();
+    assert.doesNotMatch(html, /aria-label="FY28预算筛选"/); assert.match(html, /设置计划班额/);
+    const analysis = nodes(tree).find(node => typeof node.type === "function" && node.type.name === "BudgetAnalysisView"); assert.ok(analysis); assert.equal(analysis.props.hideSummary, true);
+    assert.equal(analysis.props.facts.length, 4); assert.equal(analysis.props.fiscalYear, 2028);
+  } finally { restore(); }
+});
+
+const paged = (tree, label) => nodes(tree).find(node => typeof node.type === "function" && node.props?.label === label);
+const pagedRow = (tree, label, index = 0) => { const table = paged(tree, label); assert.ok(table, label); return table.props.render(table.props.rows[index], index); };
+const labeledInput = (tree, label) => { const item = nodes(tree).find(node => node.type === "label" && text(renderToStaticMarkup(node)) === label); assert.ok(item, label); return nodes(item).find(node => node.type === "input"); };
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test("editing entry counts then cancelling membership clears pending counts rather than putting them back", () => {
+  const restore = fakeBrowser();
+  try {
+    const harness = pageHarness({ activeTask: 2 });
+    let cells = pagedRow(harness.render(), "入口分配明细");
+    nodes(cells).find(node => node.type === "input" && node.props.type === "text").props.onChange({ target: { value: "80" } });
+    assert.equal(harness.state[3][key("entry-count", "combo-1")], "80");
+    cells = pagedRow(harness.render(), "入口分配明细");
+    nodes(cells).find(node => node.type === "input" && node.props.type === "checkbox").props.onChange({ target: { checked: false } });
+    assert.equal(harness.state[2].combinations[0].entry_override, false); assert.equal(harness.state[2].combinations[0].entry_students, null);
+    assert.equal(harness.state[2].combinations[0].entry_locked, false); assert.deepEqual(harness.state[3], {}); assert.equal(harness.state[5], "");
+    const grade = pageHarness({ activeTask: 2 });
+    nodes(pagedRow(grade.render(), "年级入口分配")).find(node => node.type === "input").props.onChange({ target: { value: "100" } });
+    button(grade.render(), "七年级 ✓").props.onClick();
+    assert.equal(grade.state[2].combinations[0].entry_override, false); assert.equal(grade.state[2].combinations[0].entry_students, null); assert.deepEqual(grade.state[3], {});
+  } finally { restore(); }
+});
+
+test("typing a manual count then cancelling its lock clears the pending manual override", () => {
+  const restore = fakeBrowser();
+  try {
+    const harness = pageHarness(); button(harness.render(), "手动调节").props.onClick();
+    let cells = pagedRow(harness.render(), "预算手动调节明细");
+    nodes(cells).find(node => node.type === "input" && node.props.type === "text").props.onChange({ target: { value: "0" } });
+    cells = pagedRow(harness.render(), "预算手动调节明细");
+    const lock = nodes(cells).find(node => node.type === "input" && node.props.type === "checkbox"); assert.equal(lock.props.checked, true);
+    lock.props.onChange({ target: { checked: false } });
+    assert.equal(harness.state[2].plans.find(item => item.season === "秋季").locked, false); assert.deepEqual(harness.state[3], {});
+    assert.equal(nodes(pagedRow(harness.render(), "预算手动调节明细")).find(node => node.type === "input" && node.props.type === "checkbox").props.checked, false);
+  } finally { restore(); }
+});
+
+test("new non-entry business is editable before its first preview and applies shared product class planning", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const requests = [];
+  try {
+    globalThis.fetch = async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return Response.json({ source, calculation: calculation() }); };
+    const harness = pageHarness({ activeTask: 1 });
+    for (const [label, value] of [["校区", "新校区"], ["赛道", "智慧空间"], ["产品", "常规班"], ["年级", "八年级"], ["科目", "英语"], ["学费（元）", "1200"], ["产品计划班额（共用）", "16"], ["新增原因", "新增校区试算"]]) labeledInput(harness.render(), label).props.onChange({ target: { value } });
+    button(harness.render(), "加入预算范围").props.onClick();
+    const added = harness.state[2].combinations.find(item => item.added); assert.ok(added); assert.equal(added.entry_override, false);
+    assert.equal(harness.state[2].class_sizes[0].planned_class_size, 16); assert.equal(harness.state[2].class_sizes[0].minimum, 10);
+    assert.equal(harness.state[1].draft.inputs.combinations.length, 1); assert.equal(requests.length, 0);
+    let table = paged(harness.render(), "预算手动调节明细"), index = table.props.rows.findIndex(item => item.combination_id === added.id && item.season === "暑假"); assert.ok(index >= 0);
+    nodes(table.props.render(table.props.rows[index], index)).find(node => node.type === "input" && node.props.type === "text").props.onChange({ target: { value: "30" } });
+    harness.state[9] = 3; table = paged(harness.render(), "FY28 计划新生"); assert.equal(table.props.rows.filter(item => item.combination.id === added.id).length, 4);
+    button(harness.render(), "预览").props.onClick(); await flush();
+    assert.equal(requests.length, 1); assert.match(requests[0].url, /preview$/); assert.equal(requests[0].body.inputs.plans.find(item => item.combination_id === added.id && item.season === "暑假").students, 30);
+    assert.equal(harness.state[1].draft.sequence, 1);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("choosing a historical version uses its source, plans and notes after the actual version request", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch;
+  try {
+    const historical = envelope({ draft: draft({ id: "history-N0", sequence: 0, source: { ...source, sequence: 3 }, inputs: inputs({ plans: [{ combination_id: "combo-1", season: "秋季", students: 777 }], notes: [{ message: "来自历史N0的说明" }] }), calculation: calculation({ rows: [row({ season: "秋季", old_students: 0, planned_new_applied: true })] }) }), read_only: true });
+    globalThis.fetch = async url => { assert.match(url, /versions\/history-N0$/); return Response.json(historical); };
+    const harness = pageHarness({ stateData: envelope({ history: [{ id: "history-N0", sequence: 0, created_at: "2026-10-01T00:00:00Z" }] }) });
+    button(harness.render(), "版本记录").props.onClick(); button(pagedRow(harness.render(), "FY28预算版本"), "查看").props.onClick(); await flush();
+    harness.state[9] = 3; const html = harness.html(); assert.match(html, /FY27 预测 P3/); assert.match(html, /value="777"/); assert.match(html, /来自历史N0的说明/); assert.doesNotMatch(html, /保存并重算|基准预测版本/);
+    assert.equal(harness.state[1].draft.source.sequence, 16);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("selecting an older confirmed forecast sends that exact source while preserving the current parent", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let sent;
+  try {
+    const old = { ...source, id: "forecast-P3", sequence: 3, fiscal_year: 2027 };
+    const harness = pageHarness({ activeTask: 1 }); harness.state[14] = { source_fiscal_year: 2027, default_fiscal_year: 2028, sources: [source, old], fiscal_years: [{ fiscal_year: 2028, has_draft: true }] };
+    nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本").props.onChange({ target: { value: old.id } });
+    globalThis.fetch = async (url, options) => { sent = { url, body: JSON.parse(options.body) }; return Response.json(envelope({ draft: draft({ id: "new-N2", sequence: 2, parent_id: "next-year-N1", source: old }) })); };
+    button(harness.render(), "以此预测生成新草稿").props.onClick(); await flush();
+    assert.match(sent.url, /prepare$/); assert.equal(sent.body.forecast_id, old.id); assert.equal(sent.body.parent_id, "next-year-N1"); assert.equal(harness.state[1].draft.sequence, 2); assert.equal(harness.state[1].draft.source.sequence, 3);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("year switching commits the URL only on successful loading and popstate reloads the selected ledger", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const urls = [], listeners = {};
+  try {
+    globalThis.history = { pushState(_a, _b, url) { urls.push(String(url)); globalThis.location = { href: String(url), search: url.search }; }, replaceState(_a, _b, url) { globalThis.location = { href: String(url), search: url.search }; } };
+    globalThis.window.addEventListener = (name, fn) => { listeners[name] = fn; }; globalThis.window.removeEventListener = () => {};
+    const harness = pageHarness(); harness.state[14] = { source_fiscal_year: 2027, sources: [], default_fiscal_year: 2028, fiscal_years: [{ fiscal_year: 2028 }, { fiscal_year: 2029 }] };
+    globalThis.fetch = async url => Response.json(url.endsWith("session") ? identity : { detail: "读取下一年度失败" }, { status: url.endsWith("session") ? 200 : 503 });
+    nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "预算财年").props.onChange({ target: { value: "2029" } }); await flush();
+    assert.equal(urls.length, 0); assert.equal(harness.state[1].draft.inputs.fiscal_year, 2028); assert.match(harness.state[5], /读取下一年度失败/);
+    const next = envelope({ draft: draft({ inputs: inputs({ fiscal_year: 2029 }), calculation: calculation({ fiscal_year: 2029 }) }) });
+    globalThis.fetch = async url => Response.json(url.endsWith("session") ? identity : url.endsWith("catalog") ? { source_fiscal_year: 2027, sources: [], fiscal_years: [{ fiscal_year: 2028 }, { fiscal_year: 2029 }] } : next);
+    nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "预算财年").props.onChange({ target: { value: "2029" } }); await flush();
+    assert.equal(harness.state[15], 2029); assert.match(urls[0], /year=2029/);
+    harness.render(); harness.effects[1](); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=2", search: "?year=2028&nyTask=2" };
+    globalThis.fetch = async url => Response.json(url.endsWith("session") ? identity : url.endsWith("catalog") ? { sources: [], fiscal_years: [{ fiscal_year: 2028 }] } : envelope());
+    await listeners.popstate(); assert.equal(harness.state[15], 2028); assert.equal(harness.state[9], 2); assert.equal(harness.state[1].draft.inputs.fiscal_year, 2028);
+    harness.state[3] = { [key("entry")]: "125" }; harness.render(); harness.effects[1](); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?year=2029", search: "?year=2029" };
+    await listeners.popstate(); assert.match(globalThis.location.search, /year=2028/); assert.equal(harness.state[3][key("entry")], "125"); assert.match(harness.state[5], /先保存或放弃修改/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("default adjustment bounds are the real five-point range, clearable, and use Chinese field labels", () => {
+  const restore = fakeBrowser();
+  try {
+    const harness = pageHarness({ activeTask: 3 }), cells = pagedRow(harness.render(), "自动调平参数范围", 1), fields = nodes(cells).filter(node => node.type === "input");
+    assert.deepEqual(fields.map(item => item.props.placeholder), ["默认 75", "默认 85", "默认 20", "默认 30"]); assert.deepEqual(fields.map(item => item.props.value), ["", "", "", ""]);
+    assert.match(renderToStaticMarkup(cells), /续班率下限（%）/); assert.doesNotMatch(renderToStaticMarkup(cells), /renewal_lower_ppm/);
+    fields[0].props.onChange({ target: { value: "70" } }); assert.equal(applyNextYearEdits(harness.state[2], harness.state[3]).inputs.rates[1].renewal_lower_ppm, 700000);
+    const original = inputs(); original.rates[1].renewal_lower_ppm = 700000;
+    assert.equal(applyNextYearEdits(original, { [key("bounds", "rate-1", "renewal_lower_ppm")]: "" }).inputs.rates[1].renewal_lower_ppm, undefined);
+  } finally { restore(); }
+});
+
+test("allocation shows unspecified grades as automatic rather than silently displaying old numbers as the new target", () => {
+  const restore = fakeBrowser();
+  try {
+    const harness = pageHarness({ activeTask: 2, edited: { [key("entry")]: "10000" } });
+    const cells = pagedRow(harness.render(), "年级入口分配"), input = nodes(cells).find(node => node.type === "input");
+    assert.equal(input.props.value, ""); assert.equal(input.props.placeholder, "自动分配"); assert.match(text(harness.html()), /年度入口 10,000 已指定 0 余下 10,000 自动分配/); assert.match(harness.html(), /已计算列为上次结果/);
+    const plans = inputs({ combinations: [combination({ entry_students: 100, entry_locked: true })] });
+    const cleared = applyNextYearEdits(plans, { [key("entry-grade", "七年级")]: "" }).inputs; assert.equal(cleared.combinations[0].entry_students, null); assert.equal(cleared.combinations[0].entry_locked, false);
+  } finally { restore(); }
+});
+
+test("class diagnostics remain actionable without weakening rules and disappear when changes are discarded", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch;
+  try {
+    const harness = pageHarness({ edited: { [key("entry")]: "125" } });
+    globalThis.fetch = async () => Response.json({ status: "INCOMPLETE", proposed_inputs: null, message: "未满足最低成班人数", constraints: { class_diagnostics: [{ code: "BELOW_MINIMUM_CLASS_SIZE", count: 3, message: "未达到最低成班人数", action: "调整人次或关闭业务范围" }] } });
+    button(harness.render(), "按经营目标自动调平").props.onClick(); await flush();
+    assert.match(harness.html(), /先处理成班问题/); assert.ok(button(harness.render(), "查看成班明细")); assert.ok(button(harness.render(), "调整业务范围"));
+    button(harness.render(), "查看成班明细").props.onClick(); assert.equal(harness.state[9], 4);
+    button(harness.render(), "放弃修改").props.onClick(); assert.deepEqual(harness.state[25], []); assert.doesNotMatch(harness.html(), /先处理成班问题/);
+    const changed = nextYearImpactRows(calculation({ rows: [row({ class_count: null })] }), calculation({ rows: [row({ total_students: 110, class_count: null })] })); assert.equal(changed[0].class_delta, null);
+    const rounded = allocateNextYearTrackTargets("100.01", { A: "1", B: "1", C: "1" }, 2); assert.deepEqual(rounded, { A: "33.34", B: "33.34", C: "33.33" });
+  } finally { globalThis.fetch = original; restore(); }
 });

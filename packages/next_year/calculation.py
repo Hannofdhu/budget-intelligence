@@ -63,6 +63,11 @@ class Combination(StrictModel):
     source_entry_weight: StrictInt = Field(ge=0, le=10_000_000)
     source_new_by_season: dict[Season, StrictInt]
     opening_carryover_yuan: StrictStr
+    entry_override: StrictBool | None = None
+    entry_students: StrictInt | None = Field(default=None, ge=0, le=10_000_000)
+    entry_locked: StrictBool = False
+    added: StrictBool = False
+    reason: StrictStr = Field(default="", max_length=1000)
 
 
 class Rate(StrictModel):
@@ -74,6 +79,11 @@ class Rate(StrictModel):
     campus: StrictStr
     renewal_ppm: StrictInt = Field(ge=0, le=1_000_000, multiple_of=100)
     share_ppm: StrictInt = Field(ge=0, le=999_900, multiple_of=100)
+    locked: StrictBool = False
+    renewal_lower_ppm: StrictInt = Field(default=0, ge=0, le=1_000_000, multiple_of=100)
+    renewal_upper_ppm: StrictInt = Field(default=1_000_000, ge=0, le=1_000_000, multiple_of=100)
+    share_lower_ppm: StrictInt = Field(default=0, ge=0, le=999_900, multiple_of=100)
+    share_upper_ppm: StrictInt = Field(default=999_900, ge=0, le=999_900, multiple_of=100)
 
 
 class Finance(StrictModel):
@@ -89,12 +99,15 @@ class ClassSize(StrictModel):
     track: StrictStr
     product: StrictStr
     minimum: StrictInt = Field(ge=1, le=10000)
+    planned_class_size: StrictInt | None = Field(default=None, ge=1, le=10000)
 
 
 class Plan(StrictModel):
     combination_id: StrictStr
     season: Season
     students: StrictInt = Field(ge=0, le=10_000_000)
+    locked: StrictBool = False
+    reason: StrictStr = Field(default="", max_length=1000)
 
 
 class OpeningSource(StrictModel):
@@ -109,7 +122,7 @@ class OpeningSource(StrictModel):
 
 
 class Inputs(StrictModel):
-    fiscal_year: Literal[2028]
+    fiscal_year: StrictInt = Field(ge=2028, le=2100)
     source_as_of: StrictStr
     target_revenue_yuan: StrictStr | None
     track_targets: dict[StrictStr, StrictStr | None]
@@ -170,7 +183,11 @@ def forecast_basis(forecast: Json) -> Json:
     }
 
 
-def prepare_inputs(baseline: Json, forecast: Json) -> Json:
+def prepare_inputs(baseline: Json, forecast: Json, fiscal_year: int | None = None) -> Json:
+    source_year = baseline.get("fiscal_year", 2027)
+    fiscal_year = source_year + 1 if fiscal_year is None else fiscal_year
+    if type(fiscal_year) is not int or not 2028 <= fiscal_year <= 2100 or fiscal_year != source_year + 1:
+        raise NextYearError("预算财年必须是已确认预测的下一财年")
     if (
         forecast.get("status") != "CONFIRMED"
         or forecast["assumptions"].get("trial_mode")
@@ -218,8 +235,8 @@ def prepare_inputs(baseline: Json, forecast: Json) -> Json:
         source = dict(zip(DIMS, key, strict=True))
         # The shared opening adapter owns promotion/graduation/subject endings.
         transition = prepare_forecast_opening(
-            fiscal_year=2028,
-            source_fiscal_season=20274,
+            fiscal_year=fiscal_year,
+            source_fiscal_season=source_year * 10 + 4,
             snapshot_date=date.fromisoformat(forecast["as_of"]),
             source_batch=forecast["id"],
             source_snapshot_id=forecast["snapshot_hash"],
@@ -471,7 +488,7 @@ def prepare_inputs(baseline: Json, forecast: Json) -> Json:
             raise NextYearError("预测收入未知，不能生成完整新年度目标")
         track_targets[row["track"]] += value
     inputs = {
-        "fiscal_year": 2028,
+        "fiscal_year": fiscal_year,
         "source_as_of": forecast["as_of"],
         "target_revenue_yuan": None,
         "track_targets": {k: None for k in sorted(track_targets)},
@@ -537,6 +554,21 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
         carry = number(row["opening_carryover_yuan"])
         if not row["enabled"] and carry > 0:
             raise NextYearError("该范围有预计期初结转，不能关闭并丢弃金额")
+        if not all(isinstance(row[k], str) and row[k].strip() for k in ("id", *DIMS)):
+            raise NextYearError("预算业务维度和编号不能为空")
+        if row.get("entry_locked") and row.get("entry_students") is None:
+            raise NextYearError("请先填写入口人次再锁定")
+        if row.get("entry_students") is not None and not effective_entry(row):
+            raise NextYearError("非入口范围不能分配入口人次")
+    for row in inputs["rates"]:
+        for kind in ("renewal", "share"):
+            lower = row.get(kind + "_lower_ppm", 0)
+            upper = row.get(kind + "_upper_ppm", 1_000_000 if kind == "renewal" else 999_900)
+            if not lower <= row[kind + "_ppm"] <= upper:
+                raise NextYearError("当前招生参数必须位于设置的上下限内")
+    for row in inputs["plans"]:
+        if row.get("locked") and not row.get("reason", "").strip():
+            raise NextYearError("锁定手动新生人次时请填写调整原因")
     immutable = ("fiscal_year", "source_as_of", "opening_sources", "notes")
     if any(inputs[k] != original[k] for k in immutable):
         raise NextYearError("预测来源不可修改，请从已确认预测重新生成草稿")
@@ -558,11 +590,34 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
     def project(value: list[Json], keys: tuple[str, ...]) -> list[str]:
         return sorted(fingerprint({k: r[k] for k in keys}) for r in value)
 
+    original_ids = {r["id"] for r in original["combinations"]}
+    added_ids = combination_ids - original_ids
+    if not original_ids <= combination_ids:
+        raise NextYearError("已有预算业务不能删除，请明确关闭业务范围")
+    for row in combinations:
+        if row["id"] in added_ids and (
+            not row.get("added")
+            or not row.get("reason", "").strip()
+            or row["source_entry_weight"] != 0
+            or any(row["source_new_by_season"].values())
+            or number(row["opening_carryover_yuan"]) != 0
+        ):
+            raise NextYearError("新增业务必须说明原因，且不能伪造历史人次或期初结转")
     for name, keys in fixed.items():
-        if project(inputs[name], keys) != project(original[name], keys):
+        if name == "combinations":
+            current = [r for r in inputs[name] if r["id"] in original_ids]
+        elif name in {"finance", "plans"}:
+            current = [r for r in inputs[name] if r["combination_id"] in original_ids]
+        elif name == "rates":
+            original_keys = {tuple(r[k] for k in keys[1:]) for r in original[name]}
+            current = [r for r in inputs[name] if tuple(r[k] for k in keys[1:]) in original_keys]
+        else:
+            original_keys = {tuple(r[k] for k in keys) for r in original[name]}
+            current = [r for r in inputs[name] if tuple(r[k] for k in keys) in original_keys]
+        if project(current, keys) != project(original[name], keys):
             raise NextYearError("预算业务范围或来源已变化，不能静默替换")
     target = number(inputs["target_revenue_yuan"]) if inputs["target_revenue_yuan"] is not None else None
-    if set(inputs["track_targets"]) != set(original["track_targets"]):
+    if set(inputs["track_targets"]) != {r["track"] for r in combinations}:
         raise NextYearError("收入目标必须覆盖全部赛道")
     track_values = list(inputs["track_targets"].values())
     if any(value is not None for value in track_values):
@@ -585,45 +640,70 @@ def calculate_plan(inputs: Json) -> Json:
         return _calculate_plan(inputs)
 
 
-def _calculate_plan(inputs: Json) -> Json:
-    validate_plan_inputs(inputs, inputs)
-    active = [r for r in inputs["combinations"] if r["enabled"]]
-    by_id = {r["id"]: r for r in active}
-    rates = {(r["season"], r["track"], r["product"], r["grade"], r["campus"]): r for r in inputs["rates"]}
+def effective_entry(row: Json) -> bool:
+    """An editable draft attribute, separate from the immutable source attribute."""
+    return bool(row["entry"] if row.get("entry_override") is None else row["entry_override"])
+
+
+def allocate_entry_counts(inputs: Json) -> tuple[dict[str, int], dict[str, int], Json]:
+    entries = [r for r in inputs["combinations"] if r["enabled"] and effective_entry(r)]
+    explicit = {r["id"]: r["entry_students"] for r in entries if r.get("entry_students") is not None}
+    remaining = inputs["entry_total"] - sum(explicit.values())
+    if remaining < 0:
+        raise NextYearError("已分配入口人次超过财年入口总量")
+    unassigned = [r for r in entries if r["id"] not in explicit]
     weights: dict[str, int] = defaultdict(int)
-    entries = [r for r in active if r["entry"]]
     for row in entries:
         weights[row["campus"]] += row["source_entry_weight"]
-    total_weight = sum(weights.values())
-    if inputs["entry_total"] > 0 and total_weight == 0:
-        raise NextYearError("启用范围没有入口参考人次，请调整业务范围或入口总量")
+    historical_weights: dict[str, int] = defaultdict(int)
+    for row in unassigned:
+        historical_weights[row["campus"]] += row["source_entry_weight"]
+    total_weight = sum(historical_weights.values())
+    if remaining > 0 and total_weight == 0:
+        raise NextYearError("剩余入口人次没有分配依据，请填写新增入口范围的人次或调整总量")
     campus_values: dict[str, Fraction | None] = {
-        k: Fraction(inputs["entry_total"] * v, total_weight) if total_weight else Fraction(0)
-        for k, v in weights.items()
+        campus: Fraction(remaining * value, total_weight) if total_weight else Fraction(0)
+        for campus, value in historical_weights.items()
     }
     campus_allocated = _largest_remainder(campus_values, fixed_ids=set(), student_type="NEW")
-    entry_counts: dict[str, int] = {}
+    counts = dict(explicit)
     for campus, (students, _) in campus_allocated.items():
-        members = [r for r in entries if r["campus"] == campus]
-        denominator = weights[campus]
+        members = [r for r in unassigned if r["campus"] == campus]
+        denominator = historical_weights[campus]
         values: dict[str, Fraction | None] = {
             r["id"]: Fraction((students or 0) * r["source_entry_weight"], denominator)
             if denominator
             else Fraction(0)
             for r in members
         }
-        entry_counts.update(
+        counts.update(
             {
-                k: value or 0
-                for k, (value, _) in _largest_remainder(values, fixed_ids=set(), student_type="NEW").items()
+                key: value or 0
+                for key, (value, _) in _largest_remainder(values, fixed_ids=set(), student_type="NEW").items()
             }
         )
+    if sum(counts.values()) != inputs["entry_total"]:
+        raise NextYearError("入口分配合计必须等于财年入口总量")
+    allocated_by_campus: dict[str, int] = defaultdict(int)
+    for row in entries:
+        allocated_by_campus[row["campus"]] += counts.get(row["id"], 0)
+    campus_result = {campus: (students, None) for campus, students in allocated_by_campus.items()}
+    return counts, dict(weights), campus_result
+
+
+def _calculate_plan(inputs: Json) -> Json:
+    validate_plan_inputs(inputs, inputs)
+    active = [r for r in inputs["combinations"] if r["enabled"]]
+    by_id = {r["id"]: r for r in active}
+    rates = {(r["season"], r["track"], r["product"], r["grade"], r["campus"]): r for r in inputs["rates"]}
+    fiscal_year = inputs["fiscal_year"]
+    entry_counts, weights, campus_allocated = allocate_entry_counts(inputs)
     combinations = [
         CombinationInput(
             r["id"],
             r["track"],
             r["product"],
-            "ENTRY" if r["entry"] else "NON_ENTRY",
+            "ENTRY" if effective_entry(r) else "NON_ENTRY",
             r["grade"],
             r["subject"],
             r["campus"],
@@ -649,8 +729,8 @@ def _calculate_plan(inputs: Json) -> Json:
             )
         )
     prepared = prepare_forecast_opening(
-        fiscal_year=2028,
-        source_fiscal_season=20274,
+        fiscal_year=fiscal_year,
+        source_fiscal_season=(fiscal_year - 1) * 10 + 4,
         snapshot_date=date.fromisoformat(inputs["source_as_of"]),
         source_batch="frozen-forecast-inputs",
         source_snapshot_id=fingerprint(inputs["opening_sources"]),
@@ -673,7 +753,7 @@ def _calculate_plan(inputs: Json) -> Json:
                 RateInput(
                     row["id"] + field,
                     kind,
-                    20280 + SEASONS.index(row["season"]) + 1,
+                    fiscal_year * 10 + SEASONS.index(row["season"]) + 1,
                     row["track"],
                     row["product"],
                     row["grade"],
@@ -682,12 +762,22 @@ def _calculate_plan(inputs: Json) -> Json:
                 )
             )
     seeds = {(r["combination_id"], r["season"]): r["students"] for r in inputs["plans"]}
-    planned: dict[tuple[int, str], ManualPlanInput] = {}
+    planned: dict[tuple[int, str], ManualPlanInput] = {
+        (fiscal_year * 10 + SEASONS.index(row["season"]) + 1, row["combination_id"]): ManualPlanInput(
+            "manual-" + row["combination_id"] + row["season"],
+            row["combination_id"],
+            fiscal_year * 10 + SEASONS.index(row["season"]) + 1,
+            row["students"],
+            True,
+        )
+        for row in inputs["plans"]
+        if row.get("locked") and row["combination_id"] in by_id
+    }
     # Supply absolute plans only where the unchanged engine requires zero-old plans.
     # A seed is NOT a formal manual lock; all outputs remain unconfirmed planning drafts.
     for _ in range(5):
         headcounts = calculate_headcounts(
-            fiscal_year=2028,
+            fiscal_year=fiscal_year,
             combinations=combinations,
             rates=engine_rates,
             plans=list(planned.values()),
@@ -701,7 +791,9 @@ def _calculate_plan(inputs: Json) -> Json:
             season = SEASONS[item.fiscal_season % 10 - 1]
             # An ENTRY with a zero allocation must remain zero, not resurrect a seed.
             value = (
-                0 if item.fiscal_season == 20281 and by_id[identifier]["entry"] else seeds[identifier, season]
+                0
+                if item.fiscal_season == fiscal_year * 10 + 1 and effective_entry(by_id[identifier])
+                else seeds[identifier, season]
             )
             planned[item.fiscal_season, identifier] = ManualPlanInput(
                 "draft-" + identifier + season, identifier, item.fiscal_season, value, True
@@ -749,7 +841,7 @@ def _calculate_plan(inputs: Json) -> Json:
             )
         )
     revenue = calculate_revenue(
-        fiscal_year=2028,
+        fiscal_year=fiscal_year,
         budget_tax_conversion_factor=number(inputs["tax_factor"], positive=True),
         lines=lines,
         composite_targets=[],
@@ -765,6 +857,10 @@ def _calculate_plan(inputs: Json) -> Json:
     class_index = {
         (r.headcount.combination_stable_key, r.headcount.fiscal_season): r for r in class_sizes.rows
     }
+    planned_class_sizes = {
+        (r["track"], r["product"]): r.get("planned_class_size") for r in inputs["class_sizes"]
+    }
+    manual_locks = {(r["combination_id"], r["season"]) for r in inputs["plans"] if r.get("locked")}
     rows: list[Json] = []
     for row in revenue.rows:
         combo = by_id[row.source.combination_stable_key]
@@ -772,12 +868,18 @@ def _calculate_plan(inputs: Json) -> Json:
         head = headcount_index[combo["id"], fiscal_season]
         season = SEASONS[fiscal_season % 10 - 1]
         rate = rates[season, combo["track"], combo["product"], combo["grade"], combo["campus"]]
+        planned_size = planned_class_sizes[combo["track"], combo["product"]]
+        class_count = (
+            (head.integer_total_students + planned_size - 1) // planned_size
+            if planned_size and head.integer_total_students is not None
+            else None
+        )
         rows.append(
             {
                 "combination_id": combo["id"],
                 "season": season,
                 **{k: combo[k] for k in DIMS},
-                "entry": combo["entry"],
+                "entry": effective_entry(combo),
                 "old_students": head.integer_old_students,
                 "new_students": head.integer_new_students,
                 "total_students": head.integer_total_students,
@@ -789,6 +891,9 @@ def _calculate_plan(inputs: Json) -> Json:
                 "renewal_ppm": rate["renewal_ppm"],
                 "share_ppm": head.realized_new_student_share_ppm,
                 "class_size_status": class_index[combo["id"], fiscal_season].status,
+                "planned_class_size": planned_size,
+                "class_count": class_count,
+                "manual_locked": (combo["id"], season) in manual_locks,
                 "planned_new_applied": (fiscal_season, combo["id"]) in planned,
             }
         )
@@ -807,6 +912,9 @@ def _calculate_plan(inputs: Json) -> Json:
                 field: sum(r[field] for r in members) if all(r[field] is not None for r in members) else None
                 for field in ("total_students", "old_students", "new_students")
             },
+            "class_count": sum(r["class_count"] for r in members)
+            if all(r["class_count"] is not None for r in members)
+            else None,
         }
 
     target = number(inputs["target_revenue_yuan"]) if inputs["target_revenue_yuan"] is not None else None
@@ -861,7 +969,7 @@ def _calculate_plan(inputs: Json) -> Json:
     if closure:
         target_status = closure.closure_status
     return {
-        "fiscal_year": 2028,
+        "fiscal_year": fiscal_year,
         "rule_versions": {
             "adapter": RULE_VERSION,
             "headcount": headcounts.rule_version,
@@ -881,6 +989,16 @@ def _calculate_plan(inputs: Json) -> Json:
         "entry_allocations": [
             {"campus": c, "students": v[0], "source_weight": weights[c]}
             for c, v in sorted(campus_allocated.items())
+        ],
+        "entry_details": [
+            {
+                "combination_id": r["id"],
+                **{key: r[key] for key in DIMS},
+                "students": entry_counts.get(r["id"], 0),
+                "locked": r.get("entry_locked", False),
+            }
+            for r in active
+            if effective_entry(r)
         ],
         "opening": {
             "spring_students": sum(r["students"] for r in inputs["opening_sources"]),

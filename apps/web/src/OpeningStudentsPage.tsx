@@ -1,3 +1,4 @@
+import { ActionTable } from "./ActionTable";
 import { useEffect, useRef, useState } from "react";
 import { fetchOpeningWorkspace, newRequestId, saveOpening, type OpeningDimension, type OpeningWorkspace, type ApiIdentity } from "./api";
 
@@ -70,9 +71,9 @@ export function OpeningStudentsPage() {
           {data.sources.length === 0 && <p role="alert">快照缺少上一财年春季普通口径招生人次，请先维护来源快照；不可替用出勤口径或目标值。</p>}
           {source && <><p>快照日期：{source.snapshot_date}　来源批次：{source.source_batch}</p><p className="opening-hash">来源指纹：{source.content_hash}</p>
             <label>筛选校区、产品或科目<input value={query} onChange={e => setQuery(e.target.value)} placeholder="输入关键词" /></label>
-            <div className="opening-table"><table><thead><tr>{["校区", "赛道 / 产品", "科目", "来源年级", "续入年级", "招生人次", "春续暑续班率", "理论老生人次"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>
+            <div className="opening-table"><ActionTable><thead><tr>{["校区", "赛道 / 产品", "科目", "来源年级", "续入年级", "招生人次", "春续暑续班率", "理论老生人次"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>
               {source.rows.filter(r => [r.campus, r.product, r.track, r.subject, r.grade].join(" ").includes(query)).map((r, i) => <tr key={i}><td>{r.campus}</td><td>{r.track} / {r.product}</td><td>{r.subject}</td><td>{r.grade}</td><td>{target(r)?.grade ?? (r.grade === "九年级" ? "毕业，不续入" : "学科结束，不续入")}</td><td>{r.enrollment ?? "缺失"}</td><td>{r.renewal_rate_ppm === null ? "待维护" : `${r.renewal_rate_ppm / 10000}%`}</td><td>{r.enrollment === null || r.renewal_rate_ppm === null ? "无法计算" : target(r) ? (r.enrollment * r.renewal_rate_ppm / 1000000).toLocaleString("zh-CN", { maximumFractionDigits: 6 }) : "—"}</td></tr>)}
-            </tbody></table></div><p>共 {source.rows.length} 条来源</p></>}
+            </tbody></ActionTable></div><p>共 {source.rows.length} 条来源</p></>}
         </section>
         {source && <section className="ledger opening-section"><h2>无来源覆盖的明细 · {uncovered.length} 条</h2>
           <div className="opening-zero-list">{uncovered.map(c => <label key={c.combination_id}><input type="checkbox" disabled={busy || !data.is_current_draft} checked={zeros.includes(c.combination_id)} onChange={e => setZeros(e.target.checked ? [...zeros, c.combination_id] : zeros.filter(id => id !== c.combination_id))} />{c.campus} / {c.track} / {c.product} / {c.grade} / {c.subject}：确认期初为 0</label>)}</div>

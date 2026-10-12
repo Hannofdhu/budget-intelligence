@@ -1,3 +1,4 @@
+import { ActionTable } from "./ActionTable";
 import { useEffect, useMemo, useState } from "react";
 import { meanings, type Value } from "./BusinessForm";
 
@@ -73,7 +74,7 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <label>上限<input inputMode="decimal" placeholder="例如 90" value={batchUpper} onChange={event => setBatchUpper(event.target.value)} /></label>
       <button type="button" disabled={disabled || (!batchCurrent && !batchLower && !batchUpper)} onClick={applyBatch}>应用到选中项</button>
     </section>}
-    <div className="rate-table-wrap"><table className="rate-table"><thead><tr>
+    <div className="rate-table-wrap"><ActionTable className="rate-table"><thead><tr>
       <th><input type="checkbox" aria-label="选择当前筛选结果" checked={allVisibleSelected} onChange={() => setSelected(current => { const next = new Set(current); for (const row of filtered) allVisibleSelected ? next.delete(row.key) : next.add(row.key); return next; })} /></th>
       <th>季节</th><th>校区与业务</th><th>年级</th><th>指标</th><th>历史参考</th><th>当前值</th><th>允许范围</th><th>调整依据</th><th>状态</th>
     </tr></thead><tbody>{filtered.map(({ item, index, key, meta }) => <tr key={key}>
@@ -86,7 +87,7 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <td><div className="rate-range"><PercentInput label="比例下限" disabled={disabled} value={item.lower_bound_ppm} onCommit={next => updateRow(index, "lower_bound_ppm", next)} /><span>至</span><PercentInput label="比例上限" disabled={disabled} value={item.upper_bound_ppm} onCommit={next => updateRow(index, "upper_bound_ppm", next)} /></div></td>
       <td><div className="rate-reasons"><input disabled={disabled} aria-label="范围依据" value={String(item.boundary_reason ?? "")} placeholder="范围依据" onChange={event => updateRow(index, "boundary_reason", event.target.value)} /><input disabled={disabled} aria-label="人工调整原因" value={String(item.manual_reason ?? "")} placeholder="调整原因" onChange={event => updateRow(index, "manual_reason", event.target.value)} /></div></td>
       <td><span className={`status-tag ${meta.locked === true ? "status-tag--locked" : ""}`}>{meta.locked === true ? "已锁定" : meta.boundary_confirmed === true ? "已确认" : "待确认"}</span></td>
-    </tr>)}</tbody></table></div>
+    </tr>)}</tbody></ActionTable></div>
     {selected.size > 0 && <section className="rate-lockbar" aria-label="选中比例的锁定操作"><div><strong>管理选中比例</strong>{dirty && <span role="status">请先保存比例</span>}</div><label><span className="sr-only">锁定或解锁原因</span><input disabled={dirty || disabled} placeholder="填写锁定或解锁原因" value={reason} onChange={event => setReason(event.target.value)} /></label><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("lock", selectedStableKeys, reason.trim())}>锁定选中项</button><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("unlock", selectedStableKeys, reason.trim())}>解锁选中项</button></section>}
   </div>;
 }

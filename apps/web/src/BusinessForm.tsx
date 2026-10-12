@@ -1,4 +1,6 @@
+import { ActionTable } from "./ActionTable";
 import { useState } from "react";
+import { tableExportData } from "./tableTransfer";
 
 export type Value = null | boolean | string | number | Value[] | { [key: string]: Value };
 export type Schema = { [key: string]: any };
@@ -94,5 +96,6 @@ export function ReadTable({ rows }: { rows: Record<string, Value>[] }) {
     if (/_at$/.test(key) && !Number.isNaN(new Date(text).getTime())) return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(text));
     return text;
   };
-  return <><input aria-label="筛选结果明细" placeholder="筛选校区、科目或状态" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} /><div className="trial-table"><table><thead><tr>{keys.map(k => <th key={k}>{labels[k] ?? k}</th>)}</tr></thead><tbody>{filtered.slice(n * 25, (n + 1) * 25).map((r, i) => <tr key={i}>{keys.map(k => <td key={k}>{displayValue(k, r[k])}</td>)}</tr>)}</tbody></table></div><div className="trial-pager"><button disabled={n === 0} onClick={() => setPage(n - 1)}>上一页</button><span>{filtered.length} 条 · 第 {n + 1} 页</span><button disabled={(n + 1) * 25 >= filtered.length} onClick={() => setPage(n + 1)}>下一页</button></div></>;
+  const transfer = { ...tableExportData(keys.map(key => labels[key] ?? key), filtered.map(row => keys.map(key => displayValue(key, row[key]).replace(/ 元$/, "")))), filename: "结果明细" };
+  return <><input aria-label="筛选结果明细" placeholder="筛选校区、科目或状态" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} /><div className="trial-table"><ActionTable exportData={transfer}><thead><tr>{keys.map(k => <th key={k}>{labels[k] ?? k}</th>)}</tr></thead><tbody>{filtered.slice(n * 25, (n + 1) * 25).map((r, i) => <tr key={i}>{keys.map(k => <td key={k}>{displayValue(k, r[k])}</td>)}</tr>)}</tbody></ActionTable></div><div className="trial-pager"><button disabled={n === 0} onClick={() => setPage(n - 1)}>上一页</button><span>{filtered.length} 条 · 第 {n + 1} 页</span><button disabled={(n + 1) * 25 >= filtered.length} onClick={() => setPage(n + 1)}>下一页</button></div></>;
 }
