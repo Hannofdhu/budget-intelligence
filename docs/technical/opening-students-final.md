@@ -41,6 +41,6 @@ FY28 起，以上一财年春季普通 `招生人次` 为来源，不使用 `招
 - 单元：实际口径过滤、空值/负数、升年级/学科退出、完整覆盖、锁定边界、跨年取整、版本过期、权限及幂等、CP-SAT与穷举、多校区、折扣阶段。
 - 数据库/API：冻结来源、期初保存重放、四季计算与收入、候选应用新期初版本、撤销恢复、再应用、负责人确认、隔离发布。UPDATE/DELETE 被数据库不可变触发器拒绝。
 - 回归：现有 FY27、比例复制、来源构建、原优化和撤销、正式发布、审计导出均纳入全量测试。
-- 测试报告：[JUnit 记录](../../output/opening-students-final-tests.xml)。静态检查使用 Ruff、mypy；前端通过 TypeScript 和 Vite 构建。
+- 历史 JUnit 记录为本机生成文件 `output/opening-students-final-tests.xml`，不纳入 Git。当前复验按 [CI 工作流](../../.github/workflows/ci.yml) 执行，在对应 GitHub Actions 运行中下载 `acceptance-execution` 工件查看 JUnit 与验收报告。静态检查使用 Ruff、mypy；前端通过 TypeScript 和 Vite 构建。
 
 已实现不等于真实 FY28 数据已准备或线上已部署。本轮仅在本机隔离库使用合成数据；需要实际使用时，仍由数据维护人员确认真实来源与业务参数，再按既有负责人确认流程发布。
