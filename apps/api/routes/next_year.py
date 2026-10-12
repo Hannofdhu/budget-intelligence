@@ -529,3 +529,49 @@ async def balance(request: Request, body: Balance, actor: ActorDep, fiscal_year:
         raise HTTPException(409, str(exc)) from exc
     except NextYearError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/next-year-budgets/{fiscal_year}/class-readiness")
+async def class_readiness(
+    request: Request, body: Preview, actor: ActorDep, fiscal_year: str = "fy28"
+) -> Json:
+    from packages.next_year.readiness import class_readiness as diagnose_classes
+
+    baseline = await forecast_routes._access(request, actor)
+    try:
+        parent = _parent(actor, body.parent_id, fiscal_year)
+        _validate_bound_source(parent, baseline)
+        _digest("class-readiness", body)
+        validate_plan_inputs(body.inputs, parent["prepared_inputs"])
+        return {"source": deepcopy(parent["source"]), **diagnose_classes(body.inputs)}
+    except ForecastStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except NextYearError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/next-year-budgets/{fiscal_year}/class-repair")
+async def class_repair(request: Request, body: Preview, actor: ActorDep, fiscal_year: str = "fy28") -> Json:
+    from packages.next_year.class_repair import repair_class_plan
+
+    baseline = await forecast_routes._access(request, actor)
+    try:
+        parent = _parent(actor, body.parent_id, fiscal_year)
+        _validate_bound_source(parent, baseline)
+        _digest("class-repair", body)
+        validate_plan_inputs(body.inputs, parent["prepared_inputs"])
+        result = repair_class_plan(body.inputs)
+        proposed = result.get("proposed_inputs")
+        if proposed is not None:
+            # A generated proposal receives the same frozen-source validation
+            # as a user-edited draft. Generation is not an apply/save action.
+            validate_plan_inputs(proposed, parent["prepared_inputs"])
+        return {
+            **result,
+            "source": deepcopy(parent["source"]),
+            "input_changes": _input_changes(body.inputs, proposed if proposed is not None else body.inputs),
+        }
+    except ForecastStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except NextYearError as exc:
+        raise HTTPException(422, str(exc)) from exc

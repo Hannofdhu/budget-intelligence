@@ -5,6 +5,11 @@ import pytest
 
 from packages.class_size.validation import ClassSizeInput
 from packages.headcount.calculation import CombinationInput, RateInput
+from packages.optimization.cp_sat_business import (
+    _calculate_group_kernel,
+    _evaluate_group,
+    compile_direct_business_problem,
+)
 from packages.optimization.cp_sat_rates import CpSatEntryAndRatesSolver
 from packages.optimization.engine import (
     DecisionVector,
@@ -12,6 +17,7 @@ from packages.optimization.engine import (
     RateDecision,
     ScenarioProfile,
     SolveStatus,
+    symmetric_rate_contributions,
 )
 from packages.optimization.evaluator import (
     BudgetCandidateEvaluator,
@@ -19,6 +25,7 @@ from packages.optimization.evaluator import (
     RevenueLineTemplate,
     RevenueTarget,
 )
+from packages.revenue.calculation import CompositeDiscountTargetInput
 
 
 def _direct_context() -> BudgetEvaluationContext:
@@ -221,3 +228,141 @@ def test_direct_business_table_keeps_largest_remainder_at_track_campus_group_lev
     headcounts = dict(result.candidates[0].headcount_signature)
     assert headcounts["a:20272"] == 3_126
     assert headcounts["b:20272"] == 3_124
+
+
+def _repair_context() -> BudgetEvaluationContext:
+    # Both individual attribution levers remain below 6253. Only the final
+    # combined decision satisfies the unchanged minimum-class constraint.
+    return replace(
+        _direct_context(),
+        class_size_parameters=(ClassSizeInput("class-size", "track", "product", 6253),),
+    )
+
+
+def test_counterfactual_class_gaps_do_not_reject_a_fully_legal_final_candidate() -> None:
+    context = _repair_context()
+    evaluator = BudgetCandidateEvaluator(context)
+    rates = {item.stable_id: item.current_value_ppm for item in context.rate_decisions}
+    baseline = evaluator.evaluate(DecisionVector((("combination", 10000),), tuple(sorted(rates.items()))))
+    assert baseline.validation_codes == ("BELOW_MINIMUM_CLASS_SIZE",)
+    assert baseline.hard_constraints_satisfied is False
+    rates.update({"RENEWAL_RATE:20272": 500100, "NEW_STUDENT_SHARE:20272": 200200})
+    repaired = evaluator.evaluate(DecisionVector((("combination", 10000),), tuple(sorted(rates.items()))))
+    assert repaired.hard_constraints_satisfied is True
+    assert repaired.targets_closed is True
+    assert repaired.validation_codes == ()
+    renewal, new_share = symmetric_rate_contributions(
+        r00=repaired.revenue_r00_yuan,
+        r10=repaired.revenue_r10_yuan,
+        r01=repaired.revenue_r01_yuan,
+        r11=repaired.revenue_r11_yuan,
+    )
+    assert renewal + new_share == repaired.revenue_r11_yuan - repaired.revenue_r00_yuan
+    assert all(value >= 6253 for _, value in repaired.headcount_signature)
+
+    direct = CpSatEntryAndRatesSolver(maximum_time_seconds=10).solve(
+        entries=context.entry_decisions,
+        rates=context.rate_decisions,
+        fixed_total=context.fixed_entry_total,
+        track_directions={"track": "UP"},
+        profile=ScenarioProfile.BALANCED,
+        evaluator=evaluator.evaluate,
+        business_context=context,
+    )
+    assert direct.status == SolveStatus.OPTIMAL
+    assert direct.candidates[0].result_hash == repaired.result_hash
+
+
+def test_uncomputable_counterfactuals_still_block_evaluator_and_direct_group() -> None:
+    context = _repair_context()
+    baseline_rates = {item.rate_id: item.value_ppm for item in context.rates}
+    selected = {**baseline_rates, "RENEWAL_RATE:20272": 500100, "NEW_STUDENT_SHARE:20272": 200200}
+    failure = "UPSTREAM_HEADCOUNT_UNAVAILABLE"
+
+    class CounterfactualFailureEvaluator(BudgetCandidateEvaluator):
+        def _calculate(self, entry_values, rate_values, discount_values):
+            result = super()._calculate(entry_values, rate_values, discount_values)
+            if rate_values == baseline_rates:
+                return replace(result, validation_codes=(*result.validation_codes, failure))
+            return result
+
+    result = CounterfactualFailureEvaluator(context).evaluate(
+        DecisionVector((("combination", 10000),), tuple(sorted(selected.items())))
+    )
+    assert failure in result.validation_codes
+    assert result.hard_constraints_satisfied is False
+
+    def kernel_lookup(entries, rates):
+        values = dict(rates)
+        kernel = _calculate_group_kernel(
+            context, combinations=context.combinations, entry_values=dict(entries), rate_values=values
+        )
+        return (
+            replace(kernel, validation_codes=(*kernel.validation_codes, failure))
+            if values == baseline_rates
+            else kernel
+        )
+
+    assert (
+        _evaluate_group(
+            context,
+            combinations=context.combinations,
+            entry_values={"combination": 10000},
+            rate_values=selected,
+            kernel_lookup=kernel_lookup,
+        )
+        is None
+    )
+
+
+def test_unavailable_kernel_outputs_are_not_treated_as_zero_for_attribution() -> None:
+    original = _direct_context()
+    removed_id = "NEW_STUDENT_SHARE:20272"
+    context = replace(
+        original,
+        rates=tuple(item for item in original.rates if item.rate_id != removed_id),
+        rate_decisions=tuple(item for item in original.rate_decisions if item.stable_id != removed_id),
+    )
+    result = BudgetCandidateEvaluator(context).evaluate(
+        DecisionVector(
+            (("combination", 10000),),
+            tuple((item.stable_id, item.current_value_ppm) for item in context.rate_decisions),
+        )
+    )
+    assert "KERNEL_OUTPUT_UNAVAILABLE" in result.validation_codes
+    assert "NEW_STUDENT_SHARE_MISSING" in result.validation_codes
+    assert result.hard_constraints_satisfied is False
+
+
+def test_composite_discount_gate_applies_to_final_candidate_not_counterfactuals() -> None:
+    context = replace(
+        _direct_context(),
+        composite_discount_targets=(
+            CompositeDiscountTargetInput("target", "DEPARTMENT", None, "ANNUAL", None, 1_000_000),
+        ),
+    )
+    compiled = compile_direct_business_problem(
+        context,
+        track_directions={"track": "UP"},
+        profile=ScenarioProfile.BALANCED,
+        maximum_group_table_rows=100,
+    )
+    composite_ids = [
+        item.stable_id for item in compiled.problem.constraints if item.stable_id.startswith("composite-")
+    ]
+    assert len(composite_ids) == 3
+    assert all(identifier.endswith(":3") for identifier in composite_ids)
+    illegal = replace(
+        context,
+        revenue_line_templates=tuple(
+            replace(item, detail_discount_rate_ppm=900000) for item in context.revenue_line_templates
+        ),
+    )
+    result = BudgetCandidateEvaluator(illegal).evaluate(
+        DecisionVector(
+            (("combination", 10000),),
+            tuple((item.stable_id, item.current_value_ppm) for item in illegal.rate_decisions),
+        )
+    )
+    assert result.hard_constraints_satisfied is False
+    assert "COMPOSITE_DISCOUNT_OUT_OF_TOLERANCE" in result.validation_codes

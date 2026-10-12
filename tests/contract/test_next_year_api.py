@@ -717,7 +717,7 @@ def test_blank_reason_and_unknown_body_fields_fail_before_commands(model: Any, p
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["current", "preview", "revise"])
+@pytest.mark.parametrize("command", ["current", "preview", "revise", "class-repair"])
 async def test_rehashed_frozen_input_tampering_is_not_adopted_as_new_original(
     setup_route: tuple, command: str
 ) -> None:
@@ -736,6 +736,10 @@ async def test_rehashed_frozen_input_tampering_is_not_adopted_as_new_original(
             await route.current(request, actor)
         elif command == "preview":
             await route.preview(
+                request, route.Preview(parent_id=first["draft"]["id"], inputs=draft["inputs"]), actor
+            )
+        elif command == "class-repair":
+            await route.class_repair(
                 request, route.Preview(parent_id=first["draft"]["id"], inputs=draft["inputs"]), actor
             )
         else:
@@ -935,7 +939,18 @@ async def test_restore_cannot_use_stale_parent_missing_version_or_permission_adm
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "command", ["catalog", "versions", "version", "compare", "restore", "impact", "balance"]
+    "command",
+    [
+        "catalog",
+        "versions",
+        "version",
+        "compare",
+        "restore",
+        "impact",
+        "balance",
+        "class-readiness",
+        "class-repair",
+    ],
 )
 async def test_new_planning_routes_keep_real_local_only_source_guard(
     setup_route: tuple, monkeypatch: pytest.MonkeyPatch, command: str
@@ -973,6 +988,10 @@ async def test_new_planning_routes_keep_real_local_only_source_guard(
             )
         elif command == "impact":
             await route.impact(external, route.Preview(parent_id="draft", inputs=_inputs()), actor)
+        elif command == "class-readiness":
+            await route.class_readiness(external, route.Preview(parent_id="draft", inputs=_inputs()), actor)
+        elif command == "class-repair":
+            await route.class_repair(external, route.Preview(parent_id="draft", inputs=_inputs()), actor)
         else:
             await route.balance(external, route.Balance(parent_id="draft", inputs=_inputs()), actor)
     assert error.value.status_code == 403
@@ -1041,7 +1060,7 @@ async def test_real_balance_reuses_solver_without_saving_or_changing_frozen_data
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["preview", "impact", "balance"])
+@pytest.mark.parametrize("command", ["preview", "impact", "balance", "class-readiness", "class-repair"])
 @pytest.mark.parametrize("failure", ["none", "immutable_input", "stale_parent", "other_year"])
 async def test_planning_previews_never_append_on_success_or_rejection(
     setup_route: tuple[Request, Actor, Json],
@@ -1049,7 +1068,7 @@ async def test_planning_previews_never_append_on_success_or_rejection(
     command: str,
     failure: str,
 ) -> None:
-    from packages.next_year import planning
+    from packages.next_year import class_repair, planning
 
     request, actor, baseline = setup_route
     first = await _prepare(request, actor)
@@ -1068,6 +1087,7 @@ async def test_planning_previews_never_append_on_success_or_rejection(
         }
 
     monkeypatch.setattr(planning, "balance_plan", solve)
+    monkeypatch.setattr(class_repair, "repair_class_plan", lambda candidate: solve(candidate, {}))
     draft_before = _bytes(route.store.root)
     forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
     original = fingerprint((first, baseline))
@@ -1076,6 +1096,10 @@ async def test_planning_previews_never_append_on_success_or_rejection(
         if command == "balance":
             return await route.balance(request, route.Balance(parent_id=parent, inputs=inputs), actor, year)
         body = route.Preview(parent_id=parent, inputs=inputs)
+        if command == "class-readiness":
+            return await route.class_readiness(request, body, actor, year)
+        if command == "class-repair":
+            return await route.class_repair(request, body, actor, year)
         if command == "preview":
             return await route.preview(request, body, actor, year)
         return await route.impact(request, body, actor, year)
@@ -1083,7 +1107,11 @@ async def test_planning_previews_never_append_on_success_or_rejection(
     if failure == "none":
         result = await invoke()
         assert result["source"] == first["draft"]["source"]
-        assert result["calculation"]["annual"]["new_students"] > 0
+        if command == "class-readiness":
+            assert result["calculation_complete"] is True
+            assert result["issue_count"] == 0
+        else:
+            assert result["calculation"]["annual"]["new_students"] > 0
     else:
         with pytest.raises(HTTPException) as error:
             await invoke()
@@ -1209,6 +1237,376 @@ def test_http_year_aliases_share_one_chain_and_invalid_routes_cannot_write(
             assert client.get("/api/v1/next-year-budgets/fy28/versions/unknown").status_code == 404
             assert client.get("/api/v1/next-year-budgets/fy29/current").json()["source"] is None
             assert _bytes(route.store.root) == before
+            assert not list(route.store.root.glob("fy*/event-*.json"))
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_class_readiness_has_no_target_requirement_and_keeps_every_frozen_value(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, baseline = setup_route
+    inputs = _inputs()
+    inputs["target_revenue_yuan"] = None
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    inputs["class_sizes"][0]["minimum"] = 24
+    inputs["entry_total"] = 15
+    inputs["combinations"][0]["opening_carryover_yuan"] = "123.45"
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    first = await _prepare(request, actor)
+    before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    frozen = fingerprint((inputs, first, baseline))
+    result = await route.class_readiness(
+        request, route.Preview(parent_id=first["draft"]["id"], inputs=inputs), actor
+    )
+    assert result["source"] == first["draft"]["source"]
+    assert result["issue_count"] == 4
+    assert result["combination_count"] == result["carry_protected_count"] == 1
+    assert result["closure_allowed_count"] == 0
+    assert all(row["carryover_yuan"] == "123.45" for row in result["rows"])
+    assert not {"source_snapshot", "prepared_inputs", "proposed_inputs"} & result.keys()
+    assert _bytes(route.store.root) == before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+    assert fingerprint((inputs, first, baseline)) == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["minimum", "frozen_source", "other_department"])
+async def test_class_readiness_rejects_invalid_parameters_and_source_without_writes(
+    setup_route: tuple[Request, Actor, Json], invalid: str
+) -> None:
+    request, actor, _ = setup_route
+    first = await _prepare(request, actor)
+    inputs = deepcopy(first["draft"]["inputs"])
+    caller = actor
+    if invalid == "minimum":
+        inputs["class_sizes"][0]["minimum"] = 0
+    elif invalid == "frozen_source":
+        inputs["opening_sources"][0]["students"] += 1
+    else:
+        caller = Actor("other", "other-department", actor.roles)
+    before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    with pytest.raises(HTTPException) as error:
+        await route.class_readiness(
+            request, route.Preview(parent_id=first["draft"]["id"], inputs=inputs), caller
+        )
+    assert error.value.status_code == (403 if invalid == "other_department" else 422)
+    assert _bytes(route.store.root) == before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+
+def test_class_readiness_http_reuses_preview_body_and_rejects_unsupported_options(setup_route: tuple) -> None:
+    _, actor, _ = setup_route
+    source = _forecast(actor)
+    app = create_app()
+    app.dependency_overrides[current_actor] = lambda: actor
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/next-year-budgets/fy28/prepare",
+                headers={"Idempotency-Key": "prepare-readiness-http"},
+                json={"forecast_id": source["id"], "reason": "readiness contract"},
+            )
+            draft = response.json()["draft"]
+            inputs = deepcopy(draft["inputs"])
+            inputs["target_revenue_yuan"] = None
+            inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+            body = {"parent_id": draft["id"], "inputs": inputs}
+            before = _bytes(route.store.root)
+            endpoint = "/api/v1/next-year-budgets/fy28/class-readiness"
+            result = client.post(endpoint, json=body)
+            assert result.status_code == 200
+            assert result.json()["calculation_complete"] is True
+            assert client.post(endpoint, json={**body, "options": {"adjust_entry": True}}).status_code == 422
+            assert client.post("/api/v1/next-year-budgets/fy29/class-readiness", json=body).status_code == 404
+            assert client.post("/api/v1/next-year-budgets/fy27/class-readiness", json=body).status_code == 422
+            assert _bytes(route.store.root) == before
+            assert not list(route.store.root.glob("fy*/event-*.json"))
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["READY", "PARTIAL"])
+async def test_class_repair_only_generates_a_proposal_and_save_still_appends_a_new_draft(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    from packages.next_year import class_repair
+    from packages.next_year.planning import compare_calculations
+
+    request, actor, baseline = setup_route
+    inputs = _inputs()
+    inputs["target_revenue_yuan"] = None
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    first = await _prepare(request, actor)
+    body = route.Preview(parent_id=first["draft"]["id"], inputs=deepcopy(inputs))
+
+    def solve(candidate: Json) -> Json:
+        proposed = deepcopy(candidate)
+        proposed["plans"][-1]["students"] += 1
+        calculation = calculate_plan(proposed)
+        return {
+            "status": status,
+            "message": "proposal only",
+            "proposed_inputs": proposed,
+            "calculation": calculation,
+            "impact": compare_calculations(calculate_plan(candidate), calculation),
+            "issue_count": {"before": 1, "after": int(status == "PARTIAL")},
+            "constraints": {"operating_target_unchanged": True},
+        }
+
+    monkeypatch.setattr(class_repair, "repair_class_plan", solve)
+    draft_before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    original = fingerprint((body.model_dump(), baseline, first))
+    reader = Actor("reader", actor.department_id, frozenset())
+    result = await route.class_repair(request, body, reader)
+    assert result["status"] == status
+    assert result["source"] == first["draft"]["source"]
+    assert result["input_changes"]["count"] == 1
+    assert result["proposed_inputs"]["target_revenue_yuan"] is None
+    assert result["calculation"]["target_status"] == "NOT_SET"
+    assert result["calculation"] == calculate_plan(result["proposed_inputs"])
+    assert result["impact"]["annual"]["before"] == calculate_plan(inputs)["annual"]
+    assert result["impact"]["annual"]["after"] == result["calculation"]["annual"]
+    assert not {"source_snapshot", "prepared_inputs"} & result.keys()
+    assert fingerprint((body.model_dump(), baseline, first)) == original
+    assert _bytes(route.store.root) == draft_before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+    save_body = route.Revise(
+        parent_id=first["draft"]["id"],
+        inputs=result["proposed_inputs"],
+        reason="reviewed whole class proposal",
+    )
+    with pytest.raises(HTTPException) as denied:
+        await route.revise(request, save_body, reader, "repair-reader-save")
+    assert denied.value.status_code == 403
+    assert _bytes(route.store.root) == draft_before
+
+    saved = await route.revise(request, save_body, actor, "repair-owner-save")
+    assert saved["draft"]["sequence"] == 2
+    assert saved["draft"]["parent_id"] == first["draft"]["id"]
+    assert saved["draft"]["status"] == "DRAFT"
+    assert saved["draft"]["inputs"] == result["proposed_inputs"]
+    assert saved["draft"]["calculation"] == result["calculation"]
+    assert len(_bytes(route.store.root)) == len(draft_before) + 1
+    assert all(_bytes(route.store.root)[name] == value for name, value in draft_before.items())
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["notes", "carryover", "missing_season"])
+async def test_class_repair_validates_generated_inputs_against_the_frozen_original(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    from packages.next_year import class_repair
+
+    request, actor, _ = setup_route
+    first = await _prepare(request, actor)
+    inputs = deepcopy(first["draft"]["inputs"])
+    # User-editable changes in the request must not become a new historical basis.
+    inputs["plans"][-1]["students"] += 1
+
+    def corrupt_proposal(candidate: Json) -> Json:
+        proposed = deepcopy(candidate)
+        if mutation == "notes":
+            proposed["notes"] = [{"message": "spoofed historical evidence"}]
+        elif mutation == "carryover":
+            proposed["combinations"][0]["opening_carryover_yuan"] = "1"
+        else:
+            proposed["finance"].pop()
+        return {"status": "READY", "proposed_inputs": proposed}
+
+    monkeypatch.setattr(class_repair, "repair_class_plan", corrupt_proposal)
+    before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    with pytest.raises(HTTPException) as error:
+        await route.class_repair(request, route.Preview(parent_id=first["draft"]["id"], inputs=inputs), actor)
+    assert error.value.status_code == 422
+    assert _bytes(route.store.root) == before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+
+@pytest.mark.asyncio
+async def test_real_class_repair_preserves_user_locks_and_targets_minimum_carryover(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, _ = setup_route
+    inputs = _inputs()
+    inputs["target_revenue_yuan"] = None
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    inputs["class_sizes"][0]["minimum"] = 24
+    inputs["combinations"][0].update(
+        {"entry_locked": True, "entry_students": 10, "opening_carryover_yuan": "123.45"}
+    )
+    inputs["plans"][0].update({"students": 1, "locked": True, "reason": "explicit user lock"})
+    inputs["rates"][0]["locked"] = True
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    first = await _prepare(request, actor)
+    before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    original = fingerprint(inputs)
+    result = await route.class_repair(
+        request, route.Preview(parent_id=first["draft"]["id"], inputs=inputs), actor
+    )
+    proposed = result["proposed_inputs"]
+    assert result["status"] == "PARTIAL"
+    assert result["issue_count"]["before"] >= result["issue_count"]["after"] > 0
+    assert proposed["target_revenue_yuan"] is None
+    for field in (
+        "fiscal_year",
+        "entry_total",
+        "track_targets",
+        "class_sizes",
+        "finance",
+        "opening_sources",
+        "notes",
+    ):
+        assert proposed[field] == inputs[field]
+    assert proposed["combinations"][0]["entry_students"] == 10
+    assert proposed["combinations"][0]["entry_locked"] is True
+    assert proposed["plans"][0] == inputs["plans"][0]
+    assert proposed["rates"][0] == inputs["rates"][0]
+    assert all(row["enabled"] is True for row in proposed["combinations"])
+    assert [row["opening_carryover_yuan"] for row in proposed["combinations"]] == ["123.45", "0"]
+    assert all(result["constraints"].values())
+    route.validate_plan_inputs(proposed, first["draft"]["inputs"])
+    assert result["calculation"] == calculate_plan(proposed)
+    assert result["impact"]["annual"]["before"] == calculate_plan(inputs)["annual"]
+    assert result["impact"]["annual"]["after"] == result["calculation"]["annual"]
+    assert fingerprint(inputs) == original
+    assert _bytes(route.store.root) == before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+
+@pytest.mark.asyncio
+async def test_real_class_repair_contract_reports_stability_scope_and_all_parameter_changes(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from packages.next_year.planning import _rate_bounds
+
+    request, actor, _ = setup_route
+    inputs = _inputs()
+    inputs["target_revenue_yuan"] = None
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    inputs["entry_total"] = 100
+    inputs["opening_sources"][0]["students"] = 25
+    inputs["class_sizes"][0]["minimum"] = 25
+    locked = next(
+        row
+        for row in inputs["plans"]
+        if row["combination_id"] == inputs["combinations"][1]["id"] and row["season"] == "秋季"
+    )
+    locked.update(students=0, locked=True, reason="business-approved absolute new-student target")
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    first = await _prepare(request, actor)
+    draft_before = _bytes(route.store.root)
+    forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+    original = deepcopy(inputs)
+
+    result = await route.class_repair(
+        request, route.Preview(parent_id=first["draft"]["id"], inputs=inputs), actor
+    )
+
+    assert result["status"] == "READY"
+    assert result["adjustable_range_class_safe"] is True
+    assert result["stability_unresolved"] == []
+    assert result["stability_scope"] == {
+        "entry_allocation_fixed": True,
+        "rate_bounds": "EXPLICIT_OR_DEFAULT_PLUS_MINUS_5PP",
+        "user_and_zero_old_seed_rate_locks_preserved": True,
+        "integer_rounding_guard": "SEPARATE_OLD_NEW_FLOOR_AND_CEILING",
+        "not_a_revenue_target_reachability_proof": True,
+    }
+    proposed = result["proposed_inputs"]
+    rates_before = {row["id"]: row for row in inputs["rates"]}
+    rate_fields = (
+        "renewal_ppm",
+        "renewal_lower_ppm",
+        "renewal_upper_ppm",
+        "share_lower_ppm",
+        "share_upper_ppm",
+    )
+    changes = 0
+    for rate in proposed["rates"]:
+        old = rates_before[rate["id"]]
+        assert rate["share_ppm"] == old["share_ppm"]
+        for field in rate_fields:
+            if old.get(field) == rate.get(field):
+                continue
+            before = old.get(field)
+            if before is None:
+                kind, side = field.split("_")[:2]
+                before = _rate_bounds(old, kind, 50_000)[0 if side == "lower" else 1]
+            actions = [
+                row for row in result["actions"] if row.get("rate_id") == rate["id"] and row["field"] == field
+            ]
+            assert len(actions) == 1
+            assert (actions[0]["before"], actions[0]["after"]) == (before, rate[field])
+            changes += 1
+    assert changes > 0
+    assert any(row["kind"] == "RENEWAL_ADJUSTMENT" for row in result["actions"])
+    assert any(row["field"] == "renewal_lower_ppm" for row in result["actions"])
+    assert (
+        next(
+            row
+            for row in proposed["plans"]
+            if (row["combination_id"], row["season"]) == (locked["combination_id"], locked["season"])
+        )
+        == locked
+    )
+    assert result["input_changes"] == route._input_changes(inputs, proposed)
+    assert result["source"] == first["draft"]["source"]
+    assert proposed["target_revenue_yuan"] is None and all(result["constraints"].values())
+    assert inputs == original
+    assert _bytes(route.store.root) == draft_before
+    assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
+
+
+def test_class_repair_http_has_no_target_or_options_and_keeps_year_and_input_boundaries(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = _inputs()
+    inputs["target_revenue_yuan"] = None
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    _, actor, _ = setup_route
+    source = _forecast(actor)
+    app = create_app()
+    app.dependency_overrides[current_actor] = lambda: actor
+    try:
+        with TestClient(app) as client:
+            prepared = client.post(
+                "/api/v1/next-year-budgets/fy28/prepare",
+                headers={"Idempotency-Key": "prepare-class-repair-http"},
+                json={"forecast_id": source["id"], "reason": "class repair HTTP"},
+            )
+            draft = prepared.json()["draft"]
+            body = {"parent_id": draft["id"], "inputs": draft["inputs"]}
+            endpoint = "/api/v1/next-year-budgets/fy28/class-repair"
+            before = _bytes(route.store.root)
+            forecast_before = _bytes(cast(ForecastStore, forecast_routes.store).root)
+            result = client.post(endpoint, json=body)
+            assert result.status_code == 200
+            assert result.json()["proposed_inputs"]["target_revenue_yuan"] is None
+            assert client.post(endpoint, json={**body, "options": {}}).status_code == 422
+            assert client.post(endpoint, json={**body, "parent_id": "old-version"}).status_code == 409
+            invalid = deepcopy(body)
+            invalid["inputs"]["class_sizes"][0]["minimum"] = 0
+            assert client.post(endpoint, json=invalid).status_code == 422
+            invalid["inputs"]["class_sizes"][0]["minimum"] = 5
+            invalid["inputs"]["notes"] = [{"message": "replaced historical note"}]
+            assert client.post(endpoint, json=invalid).status_code == 422
+            assert client.post("/api/v1/next-year-budgets/fy29/class-repair", json=body).status_code == 404
+            assert client.post("/api/v1/next-year-budgets/fy27/class-repair", json=body).status_code == 422
+            assert client.post("/api/v1/next-year-budgets/fy28/publish", json={}).status_code == 404
+            assert _bytes(route.store.root) == before
+            assert _bytes(cast(ForecastStore, forecast_routes.store).root) == forecast_before
             assert not list(route.store.root.glob("fy*/event-*.json"))
     finally:
         app.dependency_overrides.clear()

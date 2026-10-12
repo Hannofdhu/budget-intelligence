@@ -1,8 +1,11 @@
 from dataclasses import replace
 from decimal import Decimal
 
+import pytest
+
 from packages.class_size.validation import ClassSizeInput
-from packages.headcount.calculation import CombinationInput, RateInput
+from packages.headcount.calculation import CombinationInput, ManualPlanInput, RateInput
+from packages.optimization import evaluator as evaluator_module
 from packages.optimization.cp_sat_rates import CpSatEntryAndRatesSolver
 from packages.optimization.engine import (
     DecisionVector,
@@ -13,12 +16,14 @@ from packages.optimization.engine import (
     RateDecision,
     ScenarioProfile,
     SolveStatus,
+    symmetric_rate_contributions,
 )
 from packages.optimization.evaluator import (
     BudgetCandidateEvaluator,
     BudgetEvaluationContext,
     RevenueLineTemplate,
     RevenueTarget,
+    attribution_blocking_codes,
     optimize_budget,
 )
 from packages.revenue.calculation import CompositeDiscountTargetInput
@@ -260,3 +265,147 @@ def test_candidate_rejects_changed_fixed_entry_total_before_recalculation() -> N
     )
     assert result.hard_constraints_satisfied is False
     assert result.validation_codes == ("ENTRY_TOTAL_CHANGED",)
+
+
+def _class_repair_context() -> BudgetEvaluationContext:
+    rates = tuple(
+        RateInput(f"{kind}:{season}", kind, season, "track", "product", "grade", "campus", value)
+        for season in (20272, 20273, 20274)
+        for kind, value in (
+            ("RENEWAL_RATE", 800_000 if season == 20272 else 1_000_000),
+            ("NEW_STUDENT_SHARE", 0),
+        )
+    )
+    return BudgetEvaluationContext(
+        fiscal_year=2027,
+        budget_tax_conversion_factor=Decimal(1),
+        fixed_entry_total=100,
+        combinations=(CombinationInput("a", "track", "product", "ENTRY", "grade", "subject", "campus", 100),),
+        rates=rates,
+        plans=(),
+        entry_decisions=(EntryDecision("a", 100, 100, 100),),
+        rate_decisions=tuple(
+            RateDecision(
+                rate.rate_id,
+                rate.track,
+                rate.rate_type,
+                rate.value_ppm,
+                rate.value_ppm,
+                rate.value_ppm + (10_000 if rate.rate_id == "RENEWAL_RATE:20272" else 0),
+                locked=rate.rate_id != "RENEWAL_RATE:20272",
+            )
+            for rate in rates
+        ),
+        class_size_parameters=(ClassSizeInput("minimum", "track", "product", 81),),
+        revenue_line_templates=tuple(
+            RevenueLineTemplate(
+                "a",
+                season,
+                "track",
+                "product",
+                "ENTRY",
+                "grade",
+                "subject",
+                "campus",
+                Decimal(100),
+                1_000_000,
+                1_000_000,
+                Decimal(0),
+            )
+            for season in (20271, 20272, 20273, 20274)
+        ),
+        composite_discount_targets=(),
+        revenue_targets=(
+            RevenueTarget("department", "DEPARTMENT", None, Decimal(34_300)),
+            RevenueTarget("track", "TRACK", "track", Decimal(34_300)),
+        ),
+    )
+
+
+def test_evaluator_allows_repair_from_infeasible_attribution_baseline_without_relaxing_final_class() -> None:
+    context = _class_repair_context()
+    evaluator = BudgetCandidateEvaluator(context)
+    baseline_rates = {rate.rate_id: rate.value_ppm for rate in context.rates}
+    baseline = evaluator.evaluate(DecisionVector((("a", 100),), tuple(sorted(baseline_rates.items()))))
+    assert baseline.validation_codes == ("BELOW_MINIMUM_CLASS_SIZE",)
+    assert not baseline.hard_constraints_satisfied
+    selected = {**baseline_rates, "RENEWAL_RATE:20272": 810_000}
+    repaired = evaluator.evaluate(DecisionVector((("a", 100),), tuple(sorted(selected.items()))))
+    assert repaired.hard_constraints_satisfied and repaired.targets_closed
+    assert repaired.revenue_r00_yuan == Decimal(34_000)
+    assert repaired.revenue_r11_yuan == Decimal(34_300)
+    assert dict(repaired.headcount_signature) == {
+        "a:20271": 100,
+        "a:20272": 81,
+        "a:20273": 81,
+        "a:20274": 81,
+    }
+    renewal, acquisition = symmetric_rate_contributions(
+        r00=repaired.revenue_r00_yuan,
+        r10=repaired.revenue_r10_yuan,
+        r01=repaired.revenue_r01_yuan,
+        r11=repaired.revenue_r11_yuan,
+    )
+    assert renewal + acquisition == repaired.revenue_r11_yuan - repaired.revenue_r00_yuan
+
+
+def test_attribution_filter_retains_missing_inputs_unavailable_outputs_and_unknown_errors() -> None:
+    assert attribution_blocking_codes(
+        (
+            "BELOW_MINIMUM_CLASS_SIZE",
+            "ENABLED_COMBINATION_ALL_SEASONS_ZERO",
+            "COMPOSITE_DISCOUNT_OUT_OF_TOLERANCE",
+            "COMPOSITE_DISCOUNT_DENOMINATOR_ZERO",
+            "CLASS_SIZE_PARAMETER_MISSING",
+            "RENEWAL_RATE_MISSING",
+            "KERNEL_OUTPUT_UNAVAILABLE",
+            "UNRECOGNIZED_KERNEL_FAILURE",
+        )
+    ) == (
+        "CLASS_SIZE_PARAMETER_MISSING",
+        "RENEWAL_RATE_MISSING",
+        "KERNEL_OUTPUT_UNAVAILABLE",
+        "UNRECOGNIZED_KERNEL_FAILURE",
+    )
+
+
+def test_evaluator_still_rejects_a_final_enabled_combination_with_four_zero_seasons() -> None:
+    base = _class_repair_context()
+    context = replace(
+        base,
+        fixed_entry_total=0,
+        combinations=(replace(base.combinations[0], entry_initial_value=0),),
+        entry_decisions=(EntryDecision("a", 0, 0, 0),),
+        plans=tuple(
+            ManualPlanInput(f"plan:{season}", "a", season, 0, True) for season in (20271, 20272, 20273, 20274)
+        ),
+    )
+    result = BudgetCandidateEvaluator(context).evaluate(
+        DecisionVector((("a", 0),), tuple((row.rate_id, row.value_ppm) for row in context.rates))
+    )
+    assert not result.hard_constraints_satisfied
+    assert "ENABLED_COMBINATION_ALL_SEASONS_ZERO" in result.validation_codes
+    assert "KERNEL_OUTPUT_UNAVAILABLE" not in result.validation_codes
+
+
+@pytest.mark.parametrize("kernel", ["calculate_headcounts", "calculate_revenue"])
+def test_evaluator_rejects_incomplete_kernel_row_coverage(
+    monkeypatch: pytest.MonkeyPatch, kernel: str
+) -> None:
+    original = getattr(evaluator_module, kernel)
+
+    def missing_final_season(**kwargs):
+        result = original(**kwargs)
+        return replace(result, rows=result.rows[:-1])
+
+    monkeypatch.setattr(evaluator_module, kernel, missing_final_season)
+    context = _class_repair_context()
+    rates = {row.rate_id: row.value_ppm for row in context.rates}
+    rates["RENEWAL_RATE:20272"] = 810_000
+    result = BudgetCandidateEvaluator(context).evaluate(
+        DecisionVector((("a", 100),), tuple(sorted(rates.items())))
+    )
+    assert not result.hard_constraints_satisfied
+    assert "KERNEL_OUTPUT_UNAVAILABLE" in result.validation_codes
+    if kernel == "calculate_headcounts":
+        assert "INCOMPLETE_REVENUE_SEASONS" in result.validation_codes

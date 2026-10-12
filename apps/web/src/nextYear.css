@@ -105,6 +105,40 @@
 .ny-balance-diagnostics { padding: 20px; margin-bottom: 24px; border: 1px solid #e2d1b4; border-radius: 12px; background: #fffaf2; }
 .ny-balance-diagnostics h2 { font-size: 18px; margin: 0 0 14px; }
 .ny-balance-diagnostics > div:not(.ny-heading-actions) { display: grid; gap: 6px; margin: 10px 0 18px; font-size: 13px; color: #80582b; }
+.ny-class-check { background: #fff; border: 1px solid #dce5dc; border-radius: 16px; padding: 24px; margin-bottom: 32px; scroll-margin-top: 112px; }
+.ny-class-check h2 { margin: 0 0 7px; font-size: 20px; color: #254c3b; }
+.ny-class-check .ny-section-heading > div > span { color: #718175; font-size: 12px; }
+.ny-class-check-summary { display: flex; flex-wrap: wrap; gap: 12px 28px; padding: 16px 0 22px; border-bottom: 1px solid #e3eae1; font-size: 12px; color: #647a69; }
+.ny-class-check-summary strong { color: #244d37; margin-left: 8px; font-size: 18px; font-variant-numeric: tabular-nums; }
+.ny-class-check-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin: 22px 0; }
+.ny-class-check-filters label { display: grid; gap: 8px; min-width: 130px; color: #667c6a; font-size: 12px; }
+.ny-class-check-filters select { min-height: 40px; background: #f9fbf7; color: #30513c; border: 1px solid #d8e1d5; border-radius: 8px; padding: 8px 12px; font: inherit; }
+.ny-class-check .ny-table-wrap tbody th { min-width: 80px; }
+.ny-class-check .ny-table-wrap td:nth-child(3) { min-width: 240px; max-width: 310px; white-space: normal; line-height: 1.65; }
+.ny-class-actions { min-width: 260px; max-width: 400px; display: grid; gap: 12px; white-space: normal; font-size: 12px; line-height: 1.65; }
+.ny-class-actions > strong { color: #79572f; font-weight: 600; }
+.ny-class-actions summary { color: #50735b; cursor: pointer; }
+.ny-class-actions p { margin: 10px 0; color: #6a7b6b; }
+.ny-class-actions > div { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ny-class-actions button { min-height: 36px; padding: 5px 0; border: 0; background: transparent; font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+.ny-class-check select:focus-visible, .ny-class-actions summary:focus-visible { outline: 2px solid #4c8363; outline-offset: 3px; }
+.ny-class-proposal { border: 1px solid #b8cdbb; border-radius: 16px; background: #f8fbf6; padding: 26px; margin-bottom: 32px; }
+.ny-class-proposal h2 { font-size: 22px; color: #254c3b; margin: 0 0 8px; scroll-margin-top: 112px; }
+.ny-class-proposal .ny-section-heading > div > span { color: #7b6a4b; font-size: 12px; }
+.ny-class-proposal .ny-class-check-summary small { display: block; margin-top: 6px; font-size: 12px; color: #647a69; }
+.ny-proposal-outcome { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; margin: 28px 0 18px; }
+.ny-proposal-outcome > div { display: grid; gap: 10px; }
+.ny-proposal-outcome > div > span { color: #687e68; font-size: 12px; }
+.ny-proposal-outcome strong { font-size: 32px; color: #28533b; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.ny-proposal-outcome strong > span { color: #91a690; font-weight: 400; margin: 0 9px; }
+.ny-proposal-outcome p { max-width: 65ch; font-size: 13px; line-height: 1.7; color: #5d745d; }
+.ny-class-proposal .ny-impact { border-top: 0; padding-top: 24px; }
+.ny-repair-changes > details, .ny-repair-problems { padding: 18px 0; border-top: 1px solid #dce5d8; }
+.ny-repair-changes summary, .ny-repair-problems summary { cursor: pointer; color: #355d41; font-size: 13px; font-weight: 600; }
+.ny-repair-changes .ny-data, .ny-repair-problems .ny-data { margin-top: 18px; }
+.ny-repair-changes .ny-table-wrap td:last-child, .ny-repair-problems .ny-table-wrap td:last-child { min-width: 240px; max-width: 400px; white-space: normal; line-height: 1.6; }
+.ny-proposal-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; border-top: 1px solid #d4e0cf; padding-top: 22px; margin-top: 18px; }
+.ny-proposal-footer > span { font-size: 12px; color: #6a7f66; }
 .ny-opening + .ny-form-grid { margin-top: 20px; }
 .ny-plans { margin-top: 28px; }
 .ny-plans summary, .ny-how summary, .ny-issues summary { cursor: pointer; font-size: 13px; color: #406854; }
@@ -141,5 +175,5 @@
 .ny-loading > div:nth-child(2) { height: 220px; }
 .ny-loading p { font-size: 12px; color: #74836f; }
 @media (max-width: 1000px) { .ny-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ny-metrics { grid-template-columns: 1.5fr 1fr; } .ny-metrics > div { border-bottom: 1px solid #e1e8df; } .ny-quarter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ny-quarter-grid > div { border-bottom: 1px solid #e0e7dd; } }
-@media (max-width: 600px) { .ny-heading { padding: 22px 0; } .ny-heading-actions button { padding: 8px 12px; } .ny-year-context { font-size: 11px; } .ny-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ny-form-grid { grid-template-columns: minmax(0, 1fr); } .ny-metrics > div, .ny-quarter-grid > div { padding: 18px 16px; } .ny-metrics strong { font-size: 25px; } .ny-save-bar > div { flex-wrap: wrap; } .ny-save-actions { width: 100%; } .ny-save-actions label { width: 100%; } .ny-message { flex-wrap: wrap; } .ny-target-summary { gap: 16px; flex-wrap: wrap; } }
+@media (max-width: 600px) { .ny-heading { padding: 22px 0; } .ny-heading-actions button { padding: 8px 12px; } .ny-year-context { font-size: 11px; } .ny-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ny-form-grid { grid-template-columns: minmax(0, 1fr); } .ny-metrics > div, .ny-quarter-grid > div { padding: 18px 16px; } .ny-metrics strong { font-size: 25px; } .ny-save-bar > div { flex-wrap: wrap; } .ny-save-actions { width: 100%; } .ny-save-actions label { width: 100%; } .ny-message { flex-wrap: wrap; } .ny-target-summary { gap: 16px; flex-wrap: wrap; } .ny-class-check { padding: 18px 14px; } .ny-class-check .ny-section-heading { align-items: flex-start; flex-wrap: wrap; } .ny-class-check-filters label { flex: 1 1 40%; } }
 @media (prefers-reduced-motion: reduce) { .next-year-shell button:active:not(:disabled) { transform: none; } }

@@ -70,6 +70,45 @@ export interface NextYearBalanceResult {
   status: string; message?: string; proposed_inputs: NextYearInputs | null; calculation: NextYearCalculation;
   impact?: Record<string, unknown>; constraints?: { class_issues?: NextYearCalculation["issues"]; class_diagnostics?: { code: string; count: number; message: string; action: string; [key: string]: unknown }[]; [key: string]: unknown }; attempts?: unknown[];
 }
+export interface NextYearRateBoundary {
+  id: string; current_ppm: number; lower_bound_ppm: number; upper_bound_ppm: number; locked: boolean;
+  lock_source: string | null; bound_source: string;
+}
+export interface NextYearClassReadinessRow {
+  code: string; combination_id: string; season: string | null; track: string; product: string; campus: string; grade: string; subject: string;
+  current_students: number | null; old_students: number | null; new_students: number | null; minimum: number | null; gap: number | null;
+  carryover_yuan: NextYearNumber; closure_allowed: boolean | null; plan_locked: boolean; seed_plan: boolean; entry_locked: boolean; rate_locked: boolean;
+  combination_locked: boolean; lock_reasons: string[];
+  rate_parameters: { season: string; rate_id: string; renewal: NextYearRateBoundary; share: NextYearRateBoundary }[];
+  bound_proof?: { scope: string; entry_adjustment: boolean; lower_students: number; upper_students: number; minimum: number; unreachable: boolean; message: string } | null;
+  actions: string[];
+}
+export interface NextYearClassReadiness {
+  source: ForecastBasis; calculation_complete: boolean; blocking_issue_count: number; issue_count: number; combination_count: number; closure_allowed_count: number; carry_protected_count: number;
+  rows: NextYearClassReadinessRow[];
+}
+export interface NextYearClassRepairAction {
+  kind: "ENTRY_REALLOCATION" | "NEW_STUDENT_TARGET" | "RATE_BOUNDARY" | "RENEWAL_ADJUSTMENT";
+  combination_id?: string; season?: string | null; track?: string; product?: string; campus?: string; grade?: string; subject?: string;
+  field: string; before: NextYearNumber; after: NextYearNumber; reason: string;
+  before_input?: NextYearNumber; before_total_students?: number; after_total_students?: number; old_students?: number; minimum?: number;
+  additional_students?: number; stable_old_floor?: number; stability_reserve_students?: number; plan_is_not_actual?: boolean; manual_target_priority?: boolean; [key: string]: unknown;
+}
+export interface NextYearClassRepairProblem {
+  code: string; message: string; combination_id?: string; season?: string | null; track?: string; product?: string; campus?: string; grade?: string; subject?: string;
+  [key: string]: unknown;
+}
+export interface NextYearClassRepairResult {
+  source: ForecastBasis; status: "READY" | "PARTIAL"; message: string; proposed_inputs: NextYearInputs | null;
+  before_calculation: NextYearCalculation; calculation: NextYearCalculation; impact: Record<string, unknown>;
+  actions: NextYearClassRepairAction[]; issue_count: { before: number; after: number };
+  before_issues: NextYearCalculation["issues"]; after_issues: NextYearCalculation["issues"]; unresolved: NextYearClassRepairProblem[]; lock_conflicts: NextYearClassRepairProblem[];
+  stability_unresolved?: NextYearClassRepairProblem[]; adjustable_range_class_safe?: boolean;
+  stability_scope?: { entry_allocation_fixed: boolean; rate_bounds: string; user_and_zero_old_seed_rate_locks_preserved: boolean; integer_rounding_guard: string; not_a_revenue_target_reachability_proof: boolean };
+  entry_soft_deviations: { combination_id: string; track: string; product: string; campus: string; grade: string; subject: string; before: number; after: number; soft_lower: number; soft_upper: number; deviation_students: number; reason: string }[];
+  summary: { entry_reallocated_students: number; new_target_count: number; additional_new_students: number; changed_rate_bound_count: number; stability_reserve_students?: number };
+  constraints: Record<string, boolean>; input_changes?: Record<string, unknown>;
+}
 
 const baseFor = (year = 2028) => `/api/v1/next-year-budgets/${year < 2100 ? `fy${String(year).slice(-2)}` : year}`;
 async function response<T>(value: Response): Promise<T> {
@@ -105,6 +144,12 @@ export function restoreNextYearVersion(identity: ApiIdentity, parentId: string, 
 }
 export function balanceNextYearBudget(identity: ApiIdentity, parentId: string, inputs: NextYearInputs, options: Record<string, unknown> = {}): Promise<NextYearBalanceResult> {
   return command("/balance", identity, { parent_id: parentId, inputs, options }, inputs.fiscal_year);
+}
+export function checkNextYearClassReadiness(identity: ApiIdentity, parentId: string, inputs: NextYearInputs): Promise<NextYearClassReadiness> {
+  return command("/class-readiness", identity, { parent_id: parentId, inputs }, inputs.fiscal_year);
+}
+export function proposeNextYearClassRepair(identity: ApiIdentity, parentId: string, inputs: NextYearInputs): Promise<NextYearClassRepairResult> {
+  return command("/class-repair", identity, { parent_id: parentId, inputs }, inputs.fiscal_year);
 }
 
 export type NextYearEdits = Record<string, string>;

@@ -3,8 +3,13 @@ from decimal import Decimal
 
 from packages.class_size.validation import ClassSizeInput
 from packages.headcount.calculation import CombinationInput, RateInput
-from packages.optimization.cp_sat_discount import CpSatEntryRatesAndDiscountSolver
+from packages.optimization.cp_sat_discount import (
+    CpSatEntryRatesAndDiscountSolver,
+    _evaluate_group_headcounts,
+    compile_direct_discount_problem,
+)
 from packages.optimization.engine import (
+    DecisionVector,
     DiscountDecision,
     EntryDecision,
     OptimizationSolverAdapter,
@@ -12,6 +17,7 @@ from packages.optimization.engine import (
     RateDecision,
     ScenarioProfile,
     SolveStatus,
+    symmetric_rate_contributions,
 )
 from packages.optimization.evaluator import (
     BudgetCandidateEvaluator,
@@ -152,6 +158,139 @@ def test_discount_stage_uses_exact_step_and_recalculates_formal_kernels() -> Non
     assert result.candidates[0].targets_closed is True
     assert result.candidates[0].discount_adjustments_ppm == (100_000,) * 4
     assert result.evaluated_state_count == 1
+
+
+def _discount_class_repair_context() -> BudgetEvaluationContext:
+    base = _discount_context()
+    rates = tuple(
+        replace(
+            rate,
+            value_ppm=(
+                (500_000 if rate.rate_type == "RENEWAL_RATE" else 200_000)
+                if rate.fiscal_season == 20272
+                else rate.value_ppm
+            ),
+        )
+        for rate in base.rates
+    )
+    return replace(
+        base,
+        fixed_entry_total=10_000,
+        combinations=(replace(base.combinations[0], entry_initial_value=10_000),),
+        entry_decisions=(EntryDecision("combination", 10_000, 10_000, 10_000),),
+        rates=rates,
+        rate_decisions=tuple(
+            RateDecision(
+                rate.rate_id,
+                rate.track,
+                rate.rate_type,
+                rate.value_ppm,
+                rate.value_ppm,
+                rate.value_ppm + (200 if rate.fiscal_season == 20272 else 0),
+                locked=rate.fiscal_season != 20272,
+            )
+            for rate in rates
+        ),
+        class_size_parameters=(ClassSizeInput("minimum", "track", "product", 6253),),
+        revenue_line_templates=tuple(
+            replace(item, list_price_yuan=Decimal(100), detail_discount_rate_ppm=600_000)
+            for item in base.revenue_line_templates
+        ),
+        discount_decisions=tuple(
+            replace(
+                item, current_value_ppm=600_000, lower_bound_ppm=600_000, upper_bound_ppm=600_000, locked=True
+            )
+            for item in base.discount_decisions
+        ),
+        revenue_targets=(
+            RevenueTarget("department", "DEPARTMENT", None, Decimal(1_725_540)),
+            RevenueTarget("track", "TRACK", "track", Decimal(1_725_540)),
+        ),
+    )
+
+
+def test_discount_stage_keeps_counterfactual_class_gaps_but_rejects_final_class_gaps() -> None:
+    context = _discount_class_repair_context()
+    evaluator = BudgetCandidateEvaluator(context)
+    result = CpSatEntryRatesAndDiscountSolver(maximum_time_seconds=10).solve(
+        context=context,
+        track_directions={"track": "UP"},
+        profile=ScenarioProfile.BALANCED,
+        evaluator=evaluator.evaluate,
+    )
+    assert result.status == SolveStatus.OPTIMAL
+    candidate = result.candidates[0]
+    assert candidate.hard_constraints_satisfied and candidate.targets_closed
+    assert all(value >= 6253 for _, value in candidate.headcount_signature)
+    assert candidate.revenue_r00_yuan < candidate.revenue_r11_yuan
+    renewal, acquisition = symmetric_rate_contributions(
+        r00=candidate.revenue_r00_yuan,
+        r10=candidate.revenue_r10_yuan,
+        r01=candidate.revenue_r01_yuan,
+        r11=candidate.revenue_r11_yuan,
+    )
+    assert renewal + acquisition == candidate.revenue_r11_yuan - candidate.revenue_r00_yuan
+    baseline_rates = {rate.rate_id: rate.value_ppm for rate in context.rates}
+    assert (
+        _evaluate_group_headcounts(
+            context,
+            combinations=context.combinations,
+            entry_values={"combination": 10000},
+            rate_values=baseline_rates,
+        )
+        is None
+    )
+    illegal = replace(context, class_size_parameters=(ClassSizeInput("min", "track", "product", 10001),))
+    failed = CpSatEntryRatesAndDiscountSolver(maximum_time_seconds=10).solve(
+        context=illegal,
+        track_directions={"track": "UP"},
+        profile=ScenarioProfile.BALANCED,
+        evaluator=BudgetCandidateEvaluator(illegal).evaluate,
+    )
+    assert failed.status == SolveStatus.INFEASIBLE
+    assert failed.candidates == ()
+
+
+def test_discount_stage_counterfactual_missing_input_is_not_silently_zero_filled() -> None:
+    base = _discount_class_repair_context()
+    missing = "NEW_STUDENT_SHARE:20272"
+    context = replace(
+        base,
+        rates=tuple(row for row in base.rates if row.rate_id != missing),
+        rate_decisions=tuple(row for row in base.rate_decisions if row.stable_id != missing),
+    )
+    rates = {rate.rate_id: rate.value_ppm for rate in context.rates}
+    assert (
+        _evaluate_group_headcounts(
+            context,
+            combinations=context.combinations,
+            entry_values={"combination": 10000},
+            rate_values=rates,
+        )
+        is None
+    )
+    evaluation = BudgetCandidateEvaluator(context).evaluate(
+        DecisionVector((("combination", 10000),), tuple(sorted(rates.items())))
+    )
+    assert not evaluation.hard_constraints_satisfied
+    assert "NEW_STUDENT_SHARE_MISSING" in evaluation.validation_codes
+    assert "KERNEL_OUTPUT_UNAVAILABLE" in evaluation.validation_codes
+
+
+def test_discount_model_composite_gate_is_for_final_scenario_only() -> None:
+    compiled = compile_direct_discount_problem(
+        _discount_context(),
+        track_directions={"track": "UP"},
+        profile=ScenarioProfile.BALANCED,
+        maximum_group_table_rows=100,
+    )
+    constraints = [
+        row.stable_id
+        for row in compiled.problem.constraints
+        if row.stable_id.startswith("discount-composite-")
+    ]
+    assert len(constraints) == 18
+    assert all(identifier.endswith(":3") for identifier in constraints)
 
 
 def test_confirmed_unlock_allows_the_staged_optimizer_to_reach_discount() -> None:

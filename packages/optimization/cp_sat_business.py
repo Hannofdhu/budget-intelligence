@@ -407,9 +407,13 @@ def _evaluate_group(
     except (ClassSizeInvariantError, RevenueInvariantError, KeyError) as exc:
         code = getattr(exc, "code", type(exc).__name__)
         raise BusinessCompilationError(f"group kernel rejected the context: {code}") from exc
-    if any(item.validation_codes for item in results):
-        return None
     r00, r10, r01, r11 = results
+    from packages.optimization.evaluator import attribution_blocking_codes
+
+    if r11.validation_codes or any(
+        attribution_blocking_codes(item.validation_codes) for item in (r00, r10, r01)
+    ):
+        return None
     return _GroupOutput(
         r00.recognized_annual,
         r10.recognized_annual,
@@ -486,12 +490,33 @@ def _calculate_group_kernel(
         lines=revenue_lines,
         composite_targets=[],
     )
+    expected_keys = {
+        (item.stable_id, context.fiscal_year * 10 + season) for item in combinations for season in range(1, 5)
+    }
+    complete_output = (
+        len(headcounts.rows) == len(expected_keys)
+        and {(row.combination.stable_id, row.fiscal_season) for row in headcounts.rows} == expected_keys
+        and len(revenue.rows) == len(expected_keys)
+        and {(row.source.combination_stable_key, row.source.fiscal_season) for row in revenue.rows}
+        == expected_keys
+    )
     validation_codes = tuple(
         sorted(
             {
                 *(item.code for item in headcounts.validations),
                 *(item.code for item in class_result.validations),
                 *(item.code for item in revenue.validations),
+                *(
+                    ("KERNEL_OUTPUT_UNAVAILABLE",)
+                    if not complete_output
+                    or any(row.integer_total_students is None for row in headcounts.rows)
+                    or not revenue.rows
+                    or any(
+                        row.calculation_status != "CALCULATED" or row.quarter_recognized_revenue_yuan is None
+                        for row in revenue.rows
+                    )
+                    else ()
+                ),
             }
         )
     )
@@ -613,7 +638,9 @@ def _add_composite_discount_constraints(
             for (track, _), outputs in groups
             if target.scope_level == "DEPARTMENT" or target.track == track
         ]
-        for scenario_index in range(4):
+        # r00/r10/r01 are attribution counterfactuals, not publishable plans.
+        # Only final r11 must satisfy the existing composite-discount gate.
+        for scenario_index in (3,):
             list_terms = tuple((item[f"list:{scenario_index}:{period_index}"], 1) for item in selected)
             business_terms = tuple(
                 (item[f"business:{scenario_index}:{period_index}"], 1) for item in selected

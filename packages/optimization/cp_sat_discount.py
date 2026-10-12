@@ -387,8 +387,9 @@ def _evaluate_group_headcounts(
                 combinations=combinations,
                 entry_values=entry_values,
                 rate_values=values,
+                final_scenario=scenario == 3,
             )
-            for values in (baseline, renewal, new_share, selected)
+            for scenario, values in enumerate((baseline, renewal, new_share, selected))
         )
     except HeadcountInvariantError as exc:
         if exc.code in {"ROUNDING_FIXED_TOTAL_EXCEEDS_TARGET", "ROUNDING_TAIL_INVALID"}:
@@ -406,9 +407,10 @@ def _one_headcount_scenario(
     combinations: tuple[CombinationInput, ...],
     entry_values: dict[str, int],
     rate_values: dict[str, int],
+    final_scenario: bool = True,
 ) -> tuple[int, ...]:
     combination_ids = {item.stable_id for item in combinations}
-    from packages.optimization.evaluator import candidate_opening_values
+    from packages.optimization.evaluator import attribution_blocking_codes, candidate_opening_values
 
     opening = candidate_opening_values(context, rate_values)
     rows = calculate_headcounts(
@@ -447,10 +449,24 @@ def _one_headcount_scenario(
         ],
         parameters=list(context.class_size_parameters),
     )
-    if rows.validations or class_result.validations:
+    codes = (
+        *tuple(item.code for item in rows.validations),
+        *tuple(item.code for item in class_result.validations),
+    )
+    blocking_codes = codes if final_scenario else attribution_blocking_codes(codes)
+    if blocking_codes:
         raise _InvalidLocalState
     by_key = {(row.combination.stable_id, row.fiscal_season): row.integer_total_students for row in rows.rows}
-    if any(value is None for value in by_key.values()):
+    expected = {
+        (combination.stable_id, context.fiscal_year * 10 + season)
+        for combination in combinations
+        for season in range(1, 5)
+    }
+    if (
+        len(rows.rows) != len(expected)
+        or set(by_key) != expected
+        or any(value is None for value in by_key.values())
+    ):
         raise BusinessCompilationError("headcount kernel returned an unavailable integer result")
     return tuple(
         cast(int, by_key[(combination.stable_id, context.fiscal_year * 10 + season)])
@@ -696,7 +712,9 @@ def _add_composite_constraints(
             if (target.track is None or item.track == target.track)
             and (target.fiscal_season is None or item.fiscal_season == target.fiscal_season)
         ]
-        for scenario in range(4):
+        # ADR-0147: the other scenarios only explain parallel-rate contributions.
+        # Composite-discount closure is a hard requirement of final r11 alone.
+        for scenario in (3,):
             business_terms = tuple(
                 (
                     outputs[(scenario, item.combination_stable_key, item.fiscal_season)].business_id,

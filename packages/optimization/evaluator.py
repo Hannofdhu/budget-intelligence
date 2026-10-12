@@ -7,6 +7,7 @@ from fractions import Fraction
 
 from packages.class_size.validation import (
     ClassSizeInput,
+    ClassSizeInvariantError,
     HeadcountInput,
     validate_class_sizes,
 )
@@ -36,10 +37,30 @@ from packages.optimization.engine import (
 )
 from packages.revenue.calculation import (
     CompositeDiscountTargetInput,
+    RevenueInvariantError,
     RevenueLineInput,
     calculate_revenue,
 )
 from packages.target_closure.calculation import TargetRevenueInput, calculate_target_closure
+
+ATTRIBUTION_FEASIBILITY_CODES = frozenset(
+    {
+        "BELOW_MINIMUM_CLASS_SIZE",
+        "ENABLED_COMBINATION_ALL_SEASONS_ZERO",
+        "COMPOSITE_DISCOUNT_OUT_OF_TOLERANCE",
+        "COMPOSITE_DISCOUNT_DENOMINATOR_ZERO",
+    }
+)
+
+
+def attribution_blocking_codes(codes: tuple[str, ...]) -> tuple[str, ...]:
+    """ADR-0147: attribution counterfactuals must compute, not satisfy final feasibility.
+
+    Unknown validations, missing parameters, incomplete headcounts and unavailable
+    revenue remain blocking. Only known feasibility checks that do not prevent
+    exact headcount/revenue calculation are excluded from counterfactuals.
+    """
+    return tuple(code for code in codes if code not in ATTRIBUTION_FEASIBILITY_CODES)
 
 
 @dataclass(frozen=True)
@@ -159,7 +180,6 @@ class BudgetCandidateEvaluator:
                 validation_codes=validation_codes,
             )
 
-        r11 = self._calculate(entry_values, rate_values, discount_values)
         baseline_rates = {item.rate_id: item.value_ppm for item in self.context.rates}
         renewal_only = dict(baseline_rates)
         new_share_only = dict(baseline_rates)
@@ -169,16 +189,27 @@ class BudgetCandidateEvaluator:
                 renewal_only[rate_id] = value
             else:
                 new_share_only[rate_id] = value
-        r00 = self._calculate(entry_values, baseline_rates, discount_values)
-        r10 = self._calculate(entry_values, renewal_only, discount_values)
-        r01 = self._calculate(entry_values, new_share_only, discount_values)
+        try:
+            r11 = self._calculate(entry_values, rate_values, discount_values)
+            r00 = self._calculate(entry_values, baseline_rates, discount_values)
+            r10 = self._calculate(entry_values, renewal_only, discount_values)
+            r01 = self._calculate(entry_values, new_share_only, discount_values)
+        except (HeadcountInvariantError, ClassSizeInvariantError, RevenueInvariantError) as exc:
+            # Known kernel failures are explicit blocked evaluations, never a
+            # zero-revenue candidate or an uncaught interactive-preview error.
+            return CandidateEvaluation(
+                decision=canonical,
+                target_variances_yuan=(),
+                hard_constraints_satisfied=False,
+                validation_codes=tuple(sorted({"KERNEL_OUTPUT_UNAVAILABLE", exc.code})),
+            )
         all_validation_codes = tuple(
             sorted(
                 {
                     *r11.validation_codes,
-                    *r00.validation_codes,
-                    *r10.validation_codes,
-                    *r01.validation_codes,
+                    *attribution_blocking_codes(r00.validation_codes),
+                    *attribution_blocking_codes(r10.validation_codes),
+                    *attribution_blocking_codes(r01.validation_codes),
                 }
             )
         )
@@ -347,12 +378,36 @@ class BudgetCandidateEvaluator:
             for item in revenue.aggregates
             if item.period_type == "ANNUAL"
         }
+        expected_keys = {
+            (item.stable_id, self.context.fiscal_year * 10 + season)
+            for item in combinations
+            for season in range(1, 5)
+        }
+        complete_output = (
+            len(headcounts.rows) == len(expected_keys)
+            and {(row.combination.stable_id, row.fiscal_season) for row in headcounts.rows} == expected_keys
+            and len(revenue.rows) == len(expected_keys)
+            and {(row.source.combination_stable_key, row.source.fiscal_season) for row in revenue.rows}
+            == expected_keys
+        )
         validation_codes = tuple(
             sorted(
                 {
                     *(item.code for item in headcounts.validations),
                     *(item.code for item in class_result.validations),
                     *(item.code for item in revenue.validations),
+                    *(
+                        ("KERNEL_OUTPUT_UNAVAILABLE",)
+                        if not complete_output
+                        or any(row.integer_total_students is None for row in headcounts.rows)
+                        or not revenue.rows
+                        or any(
+                            row.calculation_status != "CALCULATED"
+                            or row.quarter_recognized_revenue_yuan is None
+                            for row in revenue.rows
+                        )
+                        else ()
+                    ),
                 }
             )
         )

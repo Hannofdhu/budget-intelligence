@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -208,6 +209,37 @@ def test_real_optimizer_returns_a_pure_preview_and_preserves_manual_locks() -> N
     assert fingerprint(inputs) == before
 
 
+@pytest.mark.parametrize("seconds", [1, 12])
+def test_interactive_solver_reserves_time_for_the_full_kernel_fallback(
+    monkeypatch: pytest.MonkeyPatch, seconds: int
+) -> None:
+    from packages.next_year import planning
+
+    inputs = _plan_inputs()
+    inputs["target_revenue_yuan"] = calculate_plan(inputs)["annual"]["revenue_yuan"]
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    observed: dict = {}
+
+    def exact(context, **kwargs):
+        observed["exact_budget"] = kwargs["maximum_solver_seconds"]
+        return SimpleNamespace(
+            status="INCOMPLETE", candidates=(), discount_unlock_required=False, attempts=()
+        )
+
+    def bounded(context, *, deadline):
+        observed["fallback_deadline"] = deadline
+        return None, 0
+
+    monkeypatch.setattr(planning, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(planning, "optimize_budget", exact)
+    monkeypatch.setattr(planning, "_bounded_preview", bounded)
+    result = planning.balance_plan(inputs, {"maximum_seconds": seconds})
+    assert observed["exact_budget"] == min(1.5, seconds / 6)
+    assert observed["fallback_deadline"] == seconds
+    assert result["proposed_inputs"] is None
+    assert result["constraints"]["search_complete"] is False
+
+
 def test_auto_balance_can_change_rates_within_bounds_and_reconcile_full_output() -> None:
     inputs = _plan_inputs()
     target = Decimal(calculate_plan(inputs)["annual"]["revenue_yuan"]) + 11000
@@ -223,6 +255,35 @@ def test_auto_balance_can_change_rates_within_bounds_and_reconcile_full_output()
         for old, new in zip(inputs["rates"], result["proposed_inputs"]["rates"], strict=True)
     )
     assert fingerprint(inputs) == before
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_sampled_warm_start_closes_a_changed_target_without_weakening_gates(
+    monkeypatch: pytest.MonkeyPatch, direction: int
+) -> None:
+    from packages.next_year import planning
+
+    inputs = _plan_inputs()
+    target = Decimal(calculate_plan(inputs)["annual"]["revenue_yuan"]) + direction * 11000
+    inputs["target_revenue_yuan"] = str(target)
+    inputs["track_targets"] = {key: None for key in inputs["track_targets"]}
+    immutable = fingerprint(inputs)
+    monkeypatch.setattr(
+        planning,
+        "optimize_budget",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="INCOMPLETE", candidates=(), discount_unlock_required=False, attempts=()
+        ),
+    )
+    result = balance_plan(inputs, {"maximum_seconds": 3})
+    assert result["status"] == "FEASIBLE"
+    assert result["proposed_inputs"] is not None
+    assert abs(Decimal(result["calculation"]["annual"]["gap_yuan"])) <= 10000
+    assert not result["calculation"]["issues"]
+    assert result["proposed_inputs"]["rates"] != inputs["rates"]
+    assert result["proposed_inputs"]["finance"] == inputs["finance"]
+    assert result["constraints"]["search_complete"] is False
+    assert fingerprint(inputs) == immutable
 
 
 def test_locked_unachievable_target_does_not_force_fill_or_change_price() -> None:

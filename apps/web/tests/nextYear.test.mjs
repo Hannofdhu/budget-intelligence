@@ -9,7 +9,7 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { budgetWorkbook } from "../src/budgetExport.ts";
 import { getNextYearBudget, prepareNextYearBudget, reviseNextYearBudget, previewNextYearBudget,
-  getNextYearCatalog, getNextYearVersion, restoreNextYearVersion, balanceNextYearBudget,
+  getNextYearCatalog, getNextYearVersion, restoreNextYearVersion, balanceNextYearBudget, checkNextYearClassReadiness, proposeNextYearClassRepair,
   nextYearEditKey as key, applyNextYearEdits, allocateNextYearTrackTargets, nextYearRowTotal } from "../src/nextYearApi.ts";
 
 const require = createRequire(import.meta.url);
@@ -17,7 +17,7 @@ const bundled = await build({ entryPoints: [fileURLToPath(new URL("../src/NextYe
   bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react-dom", "exceljs"], loader: { ".css": "empty" }, logLevel: "silent" });
 const compile = loader => { const module = { exports: {} }; new Function("require", "module", "exports", bundled.outputFiles[0].text)(loader, module, module.exports); return module.exports; };
 const { NextYearOverview, NextYearTaskNavigation, nextYearExportColumns, nextYearExportRows, nextYearClassStatus, nextYearRateUsage,
-  effectiveNextYearEntry, parseNextYearParameterPaste, nextYearImpactRows, nextYearAnalysisFacts, nextYearTableData } = compile(require);
+  effectiveNextYearEntry, parseNextYearParameterPaste, nextYearImpactRows, nextYearAnalysisFacts, nextYearTableData, NextYearClassReadinessPanel, nextYearClassIssueRows, NextYearClassRepairPanel, canApplyNextYearClassRepair } = compile(require);
 const identity = { userId: "local-budget-owner", departmentId: "trial", roles: ["DEPARTMENT_BUDGET_OWNER"] };
 const seasons = ["暑假", "秋季", "寒假", "春季"];
 const filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
@@ -342,7 +342,7 @@ test("copy and export projection covers the full filtered table with numeric val
     React.createElement("th", null, row.name), React.createElement("td", null, React.createElement("label", null, React.createElement("span", null, "隐藏标签"), React.createElement("input", { value: String(row.value), readOnly: true })))));
   assert.equal(projected.length, 31); assert.deepEqual(projected[30], { c0: "业务30", c1: 30 });
   const page = fs.readFileSync(new URL("../src/NextYearBudgetPage.tsx", import.meta.url), "utf8");
-  assert.match(page, /exportData=\{\{ columns:/); assert.match(page, /copyRows=\{\[headers/);
+  assert.match(page, /exportData=\{\{ columns[, :]/); assert.match(page, /copyRows=\{\[columns\.map/);
 });
 
 test("impact comparison preserves unknown values and detects added rows without treating decimal formatting as change", () => {
@@ -517,10 +517,213 @@ test("class diagnostics remain actionable without weakening rules and disappear 
     const harness = pageHarness({ edited: { [key("entry")]: "125" } });
     globalThis.fetch = async () => Response.json({ status: "INCOMPLETE", proposed_inputs: null, message: "未满足最低成班人数", constraints: { class_diagnostics: [{ code: "BELOW_MINIMUM_CLASS_SIZE", count: 3, message: "未达到最低成班人数", action: "调整人次或关闭业务范围" }] } });
     button(harness.render(), "按经营目标自动调平").props.onClick(); await flush();
-    assert.match(harness.html(), /先处理成班问题/); assert.ok(button(harness.render(), "查看成班明细")); assert.ok(button(harness.render(), "调整业务范围"));
-    button(harness.render(), "查看成班明细").props.onClick(); assert.equal(harness.state[9], 4);
+    assert.match(harness.html(), /先处理成班问题/); assert.ok(button(harness.render(), "处理成班问题"));
+    assert.equal(harness.state[27], true); assert.equal(harness.state[9], 5);
     button(harness.render(), "放弃修改").props.onClick(); assert.deepEqual(harness.state[25], []); assert.doesNotMatch(harness.html(), /先处理成班问题/);
     const changed = nextYearImpactRows(calculation({ rows: [row({ class_count: null })] }), calculation({ rows: [row({ total_students: 110, class_count: null })] })); assert.equal(changed[0].class_delta, null);
     const rounded = allocateNextYearTrackTargets("100.01", { A: "1", B: "1", C: "1" }, 2); assert.deepEqual(rounded, { A: "33.34", B: "33.34", C: "33.33" });
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+const readinessRow = (overrides = {}) => ({ code: "BELOW_MINIMUM_CLASS_SIZE", combination_id: "combo-1", season: "秋季", track: "智慧空间", product: "常规班", campus: "西直门", grade: "七年级", subject: "数学", current_students: 4, old_students: 3, new_students: 1, minimum: 10, gap: 6, carryover_yuan: "0.00", closure_allowed: true, plan_locked: false, seed_plan: false, entry_locked: false, rate_locked: false, combination_locked: false, lock_reasons: [], rate_parameters: [], actions: ["核对全部业务", "自动调平前需填写经营目标"], ...overrides });
+const readiness = (overrides = {}) => ({ source, calculation_complete: true, blocking_issue_count: 0, issue_count: 1, combination_count: 1, closure_allowed_count: 1, carry_protected_count: 0, rows: [readinessRow()], ...overrides });
+const classScope = { code: "", season: "", campus: "", group: "code" };
+const panelProps = (overrides = {}) => ({ rows: [readinessRow()], report: readiness(), scope: classScope, onScopeChange() {}, checked: true, stale: false, busy: false, readOnly: false, hasTarget: true, onCheck() {}, onNavigate() {}, onClose() {}, ...overrides });
+const classPanel = tree => nodes(tree).find(node => typeof node.type === "function" && node.type.name === "NextYearClassReadinessPanel");
+
+test("class readiness is a pure request with exact current edits and no operating target prerequisite", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch, requests = [];
+  try {
+    globalThis.fetch = async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return Response.json(readiness()); };
+    const withoutTarget = inputs({ target_revenue_yuan: null, track_targets: { 智慧空间: null } });
+    await checkNextYearClassReadiness(identity, "N1", withoutTarget);
+    assert.match(requests[0].url, /fy28\/class-readiness$/); assert.deepEqual(requests[0].body, { parent_id: "N1", inputs: withoutTarget });
+    const harness = pageHarness({ stateInputs: withoutTarget, edited: { [key("entry")]: "125" } });
+    harness.state[2] = withoutTarget; // Test harness leaves current inputs explicit, including an absent target.
+    button(harness.render(), "检查开班范围").props.onClick(); await flush();
+    assert.equal(requests.length, 2); assert.equal(requests[1].body.inputs.entry_total, 125); assert.equal(requests[1].body.inputs.target_revenue_yuan, null);
+    assert.equal(harness.state[2].entry_total, 100); assert.equal(harness.state[3][key("entry")], "125"); assert.equal(harness.state[1].draft.sequence, 1);
+    assert.equal(harness.state[26].report.issue_count, 1); assert.equal(classPanel(harness.render()).props.checked, true);
+    assert.doesNotMatch(requests.map(request => request.url).join(" "), /revise|prepare|restore|balance/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("saved issue fallback joins exact dimensions and known gaps without inferring closure or feasibility", () => {
+  const data = calculation({ rows: [row({ season: "秋季", total_students: 4, old_students: 3, new_students: 1 })], issues: [
+    { code: "BELOW_MINIMUM_CLASS_SIZE", combination_id: "combo-1", season: "秋季", severity: "WARNING", message: "人数不足", detail: { minimum_class_size: 10, class_size_gap: 6 } },
+    { code: "ENABLED_COMBINATION_ALL_SEASONS_ZERO", combination_id: "combo-1", severity: "WARNING", message: "四季均零" },
+  ] });
+  const result = nextYearClassIssueRows(data, inputs());
+  assert.equal(result.length, 2); assert.equal(result[0].current_students, 4); assert.equal(result[0].gap, 6); assert.equal(result[0].minimum, 10);
+  assert.equal(result[0].campus, "西直门"); assert.equal(result[0].subject, "数学"); assert.equal(result[0].closure_allowed, null); assert.equal(result[0].bound_proof, undefined);
+  assert.equal(result[1].season, null); assert.equal(result[1].current_students, 0); assert.equal(result[1].old_students, 0); assert.equal(result[1].gap, 0);
+});
+
+test("specialized class table filters and groups full issue dimensions and exports the whole filtered set as numbers", () => {
+  let selected; const rows = Array.from({ length: 40 }, (_, index) => readinessRow({ combination_id: `combo-${index}`, campus: index < 30 ? "西直门" : "中关村" }));
+  const props = panelProps({ rows, report: readiness({ issue_count: 40, rows }), scope: { ...classScope, campus: "西直门", group: "campus" }, onScopeChange(value) { selected = value; } });
+  const tree = NextYearClassReadinessPanel(props), table = paged(tree, "成班问题明细");
+  assert.equal(table.props.rows.length, 30); assert.equal(table.props.exportRow(rows[0]).gap, 6); assert.equal(table.props.exportRow(rows[0]).minimum, 10);
+  assert.ok(table.props.exportColumns.some(column => column.key === "gap" && column.format === "count"));
+  const html = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, props));
+  assert.match(html, /一键复制/); assert.match(html, /导出/); assert.match(html, /西直门 \/ 智慧空间 \/ 常规班 \/ 七年级 \/ 数学/);
+  nodes(tree).find(node => node.type === "select" && node.props["aria-label"] === "成班季度筛选").props.onChange({ target: { value: "暑假" } }); assert.equal(selected.season, "暑假");
+});
+
+test("readiness only displays impossibility from server proof and never claims empty incomplete inputs passed", () => {
+  const proof = { scope: "CURRENT_PREVIEW", entry_adjustment: false, lower_students: 4, upper_students: 8, minimum: 10, unreachable: true, message: "入口固定时，当前比例可调范围到不了最低成班人数。" };
+  const tested = readinessRow({ bound_proof: proof }), props = panelProps({ rows: [tested], report: readiness({ rows: [tested] }), hasTarget: false });
+  const html = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, props)); assert.match(html, /当前范围无法成班/); assert.match(html, /入口固定时/); assert.equal((html.match(/未设经营目标/g) ?? []).length, 1);
+  const uncertain = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, panelProps({ rows: [readinessRow({ closure_allowed: false, bound_proof: { ...proof, unreachable: false } })] })));
+  assert.doesNotMatch(uncertain, /当前范围无法成班/);
+  const incomplete = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, panelProps({ rows: [], report: readiness({ rows: [], issue_count: 0, calculation_complete: false, blocking_issue_count: 2 }) })));
+  assert.match(incomplete, /人次或参数尚不完整/); assert.doesNotMatch(incomplete, /没有成班问题|全部通过/);
+});
+
+test("class issue navigation prefilters the exact business and never edits budget inputs", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch;
+  try {
+    const harness = pageHarness(), before = JSON.stringify(harness.state[2]);
+    globalThis.fetch = async () => Response.json(readiness());
+    button(harness.render(), "检查开班范围").props.onClick(); await flush();
+    classPanel(harness.render()).props.onNavigate(readinessRow(), "manual");
+    assert.equal(harness.state[9], 3); assert.equal(harness.state[21], true); assert.deepEqual(harness.state[10], { season: "秋季", track: "智慧空间", campus: "西直门", product: "常规班", grade: "七年级", subject: "数学" });
+    assert.equal(JSON.stringify(harness.state[2]), before); assert.deepEqual(harness.state[3], {});
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("current edits invalidate readiness, request failures retain saved issues and historical checks never POST", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let calls = 0;
+  try {
+    globalThis.fetch = async () => { calls++; return Response.json(readiness()); };
+    const issue = { code: "BELOW_MINIMUM_CLASS_SIZE", combination_id: "combo-1", season: "秋季", severity: "WARNING", message: "人数不足" };
+    const harness = pageHarness({ stateData: envelope({ draft: draft({ calculation: calculation({ issues: [issue] }) }) }) });
+    button(harness.render(), "检查开班范围").props.onClick(); await flush(); assert.equal(classPanel(harness.render()).props.checked, true);
+    harness.state[3] = { [key("entry")]: "125" }; assert.equal(classPanel(harness.render()).props.checked, false); assert.equal(classPanel(harness.render()).props.stale, true);
+    globalThis.fetch = async () => { calls++; return Response.json({ detail: "成班查询失败" }, { status: 503 }); };
+    button(harness.render(), "检查开班范围").props.onClick(); await flush(); assert.match(harness.state[5], /成班查询失败/); assert.equal(classPanel(harness.render()).props.rows.length, 1);
+    button(harness.render(), "放弃修改").props.onClick(); assert.equal(harness.state[26], null); assert.equal(harness.state[27], false);
+    harness.state[16] = envelope({ draft: draft({ id: "historical-N0", sequence: 0, calculation: calculation({ issues: [issue] }) }), read_only: true });
+    const beforeCalls = calls; button(harness.render(), "查看存档成班问题").props.onClick(); await flush(); assert.equal(calls, beforeCalls);
+    const panel = classPanel(harness.render()); assert.equal(panel.props.readOnly, true); assert.equal(panel.props.rows.length, 1);
+    const html = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, panel.props)); assert.match(html, /历史存档结果/); assert.doesNotMatch(html, /<button[^>]*>(?:重新检查|调整人次|调整参数|核对是否关闭)<\/button>/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+const repairConstraints = Object.fromEntries(["enabled_scopes_preserved", "source_preserved", "opening_carryover_preserved", "minimum_preserved", "entry_total_preserved", "price_and_discount_fixed", "user_locks_preserved", "operating_target_unchanged"].map(key => [key, true]));
+const repairAction = (overrides = {}) => ({ ...combination(), combination_id: "combo-1", season: "秋季", kind: "NEW_STUDENT_TARGET", field: "plans.students", before: 1, after: 7, before_total_students: 4, after_total_students: 10, old_students: 3, minimum: 10, additional_students: 6, plan_is_not_actual: true, manual_target_priority: true, reason: "FY28招生目标建议，保留全部业务并达到原最低人数", ...overrides });
+const repairResult = (overrides = {}) => ({ source, status: "READY", message: "招生目标建议已生成，确认后可保存为新草稿", proposed_inputs: inputs({ plans: [{ combination_id: "combo-1", season: "秋季", students: 7, locked: true, reason: "FY28招生目标建议" }] }), before_calculation: calculation({ rows: [row({ season: "秋季", total_students: 4, new_students: 1, old_students: 3 })] }), calculation: calculation({ rows: [row({ season: "秋季", total_students: 10, new_students: 7, old_students: 3 })] }), impact: {}, actions: [repairAction()], issue_count: { before: 390, after: 0 }, before_issues: [], after_issues: [], unresolved: [], lock_conflicts: [], entry_soft_deviations: [], constraints: repairConstraints, summary: { entry_reallocated_students: 20, new_target_count: 1, additional_new_students: 6, changed_rate_bound_count: 2 }, ...overrides });
+const repairPanel = tree => nodes(tree).find(node => typeof node.type === "function" && node.type.name === "NextYearClassRepairPanel");
+
+test("class repair request is a pure preview bound to exact edited inputs and never fills an absent target", async () => {
+  const original = globalThis.fetch; const requests = [], prepared = inputs({ target_revenue_yuan: null, track_targets: { 智慧空间: null } });
+  globalThis.fetch = async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return Response.json(repairResult({ proposed_inputs: prepared })); };
+  try {
+    await proposeNextYearClassRepair(identity, "current-N8", prepared);
+    assert.equal(requests.length, 1); assert.match(requests[0].url, /fy28\/class-repair$/); assert.deepEqual(requests[0].body, { parent_id: "current-N8", inputs: prepared });
+    assert.equal(prepared.target_revenue_yuan, null); assert.doesNotMatch(requests[0].url, /revise|prepare|confirm/);
+  } finally { globalThis.fetch = original; }
+});
+
+test("generating and cancelling a class scheme preserves all pending edits, preview and notes", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch, requests = [];
+  try {
+    const withoutTarget = inputs({ target_revenue_yuan: null, track_targets: { 智慧空间: null } });
+    const harness = pageHarness({ edited: { [key("entry")]: "125" } }); harness.state[2] = withoutTarget; harness.state[8] = "保留我的备注";
+    globalThis.fetch = async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return Response.json(url.endsWith("class-repair") ? repairResult({ proposed_inputs: { ...withoutTarget, entry_total: 125 } }) : readiness()); };
+    button(harness.render(), "检查开班范围").props.onClick(); await flush();
+    classPanel(harness.render()).props.onGenerate(); await flush();
+    assert.equal(requests.length, 2); assert.match(requests[1].url, /class-repair$/); assert.equal(requests[1].body.inputs.entry_total, 125); assert.equal(requests[1].body.inputs.target_revenue_yuan, null);
+    assert.equal(harness.state[2].entry_total, 100); assert.equal(harness.state[3][key("entry")], "125"); assert.equal(harness.state[8], "保留我的备注"); assert.equal(harness.state[7], null); assert.equal(harness.state[1].draft.sequence, 1);
+    const panel = repairPanel(harness.render()); assert.ok(panel); assert.equal(panel.props.result.issue_count.after, 0);
+    panel.props.onCancel(); assert.equal(harness.state[29], null); assert.equal(harness.state[3][key("entry")], "125"); assert.equal(harness.state[8], "保留我的备注"); assert.equal(harness.state[2].entry_total, 100);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("class scheme uses backend current-input baseline, offers full numeric change exports and distinguishes recruitment targets from actuals", () => {
+  const result = repairResult({ actions: [repairAction(), repairAction({ kind: "ENTRY_REALLOCATION", field: "entry_students", before: 100, after: 120, season: "暑假" }), repairAction({ kind: "RATE_BOUNDARY", field: "share_upper_ppm", before: 300000, after: 700000 })] });
+  const tree = NextYearClassRepairPanel({ result, busy: false, onApply() {}, onCancel() {} });
+  const impact = nodes(tree).find(node => typeof node.type === "function" && node.type.name === "ImpactComparison"); assert.equal(impact.props.before.rows[0].total_students, 4); assert.equal(impact.props.after.rows[0].total_students, 10);
+  const bounds = paged(tree, "成班方案参数边界建议明细"), projection = bounds.props.exportRow(bounds.props.rows[0]); assert.equal(projection.before_value, 30); assert.equal(projection.after_value, 70); assert.equal(projection.unit, "%");
+  const html = renderToStaticMarkup(React.createElement(NextYearClassRepairPanel, { result, busy: false, onApply() {}, onCancel() {} }));
+  assert.match(text(html), /390 → 0/); assert.match(html, /建议预览 · 未应用 · 未保存/); assert.match(html, /招生目标，不是实际招生/); assert.match(html, /新生目标/); assert.match(html, /一键复制/); assert.match(html, /导出明细/); assert.ok(button(tree, "应用并预览"));
+});
+
+test("only an intact READY scheme with zero remaining issues can be applied; partial or protected-field changes cannot", () => {
+  assert.equal(canApplyNextYearClassRepair(repairResult()), true);
+  for (const result of [repairResult({ status: "PARTIAL", issue_count: { before: 390, after: 4 }, unresolved: [{ code: "PLAN_LOCKED", message: "新生目标已锁定", combination_id: "combo-1", season: "秋季" }] }), repairResult({ constraints: { ...repairConstraints, minimum_preserved: false } }), repairResult({ proposed_inputs: null }), repairResult({ calculation: calculation({ complete: false }) })]) {
+    assert.equal(canApplyNextYearClassRepair(result), false);
+    const html = renderToStaticMarkup(React.createElement(NextYearClassRepairPanel, { result, busy: false, onApply() {}, onCancel() {} })); assert.doesNotMatch(html, /<button[^>]*>应用并预览<\/button>/); assert.match(html, /原预算未修改/);
+  }
+});
+
+test("class scheme separates stability reserve from recruitment targets and limits its stated scope", () => {
+  const result = repairResult({
+    actions: [repairAction({ stable_old_floor: 1, stability_reserve_students: 2 })],
+    summary: { entry_reallocated_students: 63, new_target_count: 527, additional_new_students: 2495, changed_rate_bound_count: 3, stability_reserve_students: 1066 },
+    adjustable_range_class_safe: true, stability_unresolved: [],
+    stability_scope: { entry_allocation_fixed: true, rate_bounds: "EXPLICIT_OR_DEFAULT_PLUS_MINUS_5PP", user_and_zero_old_seed_rate_locks_preserved: true, integer_rounding_guard: "SEPARATE_OLD_NEW_FLOOR_AND_CEILING", not_a_revenue_target_reachability_proof: true },
+  });
+  const tree = NextYearClassRepairPanel({ result, busy: false, onApply() {}, onCancel() {} });
+  const html = renderToStaticMarkup(React.createElement(NextYearClassRepairPanel, { result, busy: false, onApply() {}, onCancel() {} }));
+  assert.match(text(html), /新增招生目标 2,495 人次 含调平预留 1,066 人次/);
+  assert.match(html, /入口分配不变、建议比例范围内/); assert.match(html, /不保证任意经营目标可达/);
+  const targets = paged(tree, "成班方案新生招生目标明细"), values = targets.props.exportRow(targets.props.rows[0]);
+  assert.equal(values.stable_old_floor, 1); assert.equal(values.stability_reserve_students, 2);
+  assert.equal(values.reason, result.actions[0].reason); assert.match(text(html), /补足成班并预留调平空间/);
+  assert.equal(targets.props.exportColumns.find(column => column.key === "stable_old_floor").format, "count");
+  assert.equal(targets.props.exportColumns.find(column => column.key === "stability_reserve_students").format, "count");
+  assert.ok(targets.props.headers.includes("其中调平预留"));
+});
+
+test("a currently legal class scheme remains applicable while unproven adjustable ranges are visible", () => {
+  const result = repairResult({ adjustable_range_class_safe: false, stability_unresolved: [{ code: "RATE_LOCKED", message: "秋季续班率已锁定，整个可调范围的成班未获证明", combination_id: "combo-1", season: "秋季" }] });
+  assert.equal(canApplyNextYearClassRepair(result), true);
+  const tree = NextYearClassRepairPanel({ result, busy: false, onApply() {}, onCancel() {} });
+  assert.ok(button(tree, "应用并预览"));
+  const html = renderToStaticMarkup(React.createElement(NextYearClassRepairPanel, { result, busy: false, onApply() {}, onCancel() {} }));
+  assert.match(html, /当前已成班；锁定项无法保证整个可调范围内持续成班，后续调平仍逐项校验/);
+  assert.match(html, /预留范围提示/); assert.match(html, /秋季续班率已锁定/); assert.doesNotMatch(html, /预留适用：/);
+});
+
+test("apply is local preview only, save explicitly creates the next version, and discard returns the original draft", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch, requests = [];
+  try {
+    const noTarget = inputs({ target_revenue_yuan: null, track_targets: { 智慧空间: null } }), proposed = { ...noTarget, plans: [{ combination_id: "combo-1", season: "秋季", students: 7, locked: true, reason: "FY28招生目标建议" }] };
+    const result = repairResult({ proposed_inputs: proposed });
+    const harness = pageHarness(); harness.state[2] = noTarget;
+    globalThis.fetch = async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return Response.json(url.endsWith("class-readiness") ? readiness() : url.endsWith("class-repair") ? result : envelope({ draft: draft({ id: "new-N2", sequence: 2, parent_id: "next-year-N1", inputs: proposed, calculation: result.calculation }) })); };
+    button(harness.render(), "检查开班范围").props.onClick(); await flush(); classPanel(harness.render()).props.onGenerate(); await flush();
+    repairPanel(harness.render()).props.onApply();
+    assert.equal(requests.length, 2); assert.equal(harness.state[2].plans[0].students, 7); assert.equal(harness.state[2].target_revenue_yuan, null); assert.equal(harness.state[7].rows[0].total_students, 10); assert.equal(harness.state[1].draft.sequence, 1); assert.match(harness.html(), /未保存预览/);
+    button(harness.render(), "保存并重算").props.onClick(); await flush();
+    assert.equal(requests.length, 3); assert.match(requests[2].url, /revise$/); assert.equal(requests[2].body.parent_id, "next-year-N1"); assert.equal(requests[2].body.reason, "采用成班方案"); assert.equal(requests[2].body.inputs.target_revenue_yuan, null); assert.equal(harness.state[1].draft.sequence, 2);
+    const cancel = pageHarness(); cancel.state[29] = { key: JSON.stringify({ version: "next-year-N1", inputs: cancel.state[2], edits: {} }), result };
+    repairPanel(cancel.render()).props.onApply(); assert.match(cancel.state[6], /成班方案已应用为未保存预览/);
+    button(cancel.render(), "放弃修改").props.onClick(); assert.deepEqual(cancel.state[2], cancel.state[1].draft.inputs); assert.equal(cancel.state[7], null); assert.equal(cancel.state[29], null); assert.equal(cancel.state[6], ""); assert.doesNotMatch(cancel.html(), /成班方案已应用为未保存预览|保存后生效/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("editing any input expires the scheme; historical version cannot generate or apply a current scheme", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let calls = 0;
+  try {
+    const harness = pageHarness({ activeTask: 2 }), result = repairResult(); harness.state[29] = { key: JSON.stringify({ version: "next-year-N1", inputs: harness.state[2], edits: {} }), result };
+    assert.ok(repairPanel(harness.render())); labeledInput(harness.render(), "年度入口人次").props.onChange({ target: { value: "125" } });
+    assert.equal(repairPanel(harness.render()), undefined); assert.match(harness.html(), /上一份成班方案已作废/); assert.equal(harness.state[2].entry_total, 100);
+    globalThis.fetch = async () => { calls++; throw new Error("不应发送历史修复请求"); };
+    harness.state[3] = {}; harness.state[16] = envelope({ draft: draft({ id: "historical-N0", sequence: 0 }), read_only: true });
+    assert.equal(repairPanel(harness.render()), undefined); button(harness.render(), "查看存档成班问题").props.onClick();
+    const panel = classPanel(harness.render()); panel.props.onGenerate(); await flush(); assert.equal(calls, 0);
+    const html = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, panel.props)); assert.doesNotMatch(html, /<button[^>]*>生成成班方案<\/button>/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("failed class scheme generation keeps the current inputs and raw edits without applying or saving", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch;
+  try {
+    const harness = pageHarness({ edited: { [key("entry")]: "125" } }); harness.state[27] = true;
+    globalThis.fetch = async () => Response.json({ detail: "方案计算失败，请重试" }, { status: 503 });
+    classPanel(harness.render()).props.onGenerate(); await flush();
+    assert.equal(harness.state[2].entry_total, 100); assert.equal(harness.state[3][key("entry")], "125"); assert.equal(harness.state[29], null); assert.equal(harness.state[7], null); assert.equal(harness.state[1].draft.sequence, 1); assert.match(harness.state[5], /方案计算失败/);
   } finally { globalThis.fetch = original; restore(); }
 });

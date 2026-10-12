@@ -91,19 +91,30 @@ def _bounded_preview(
     original = BudgetCandidateEvaluator(context).evaluate(
         DecisionVector(entries, tuple(sorted(rates.items())))
     )
+    if not original.target_variances_yuan:
+        return None, 0
     evaluated = 0
     targets = {
         str(row.track): row
         for row in context.revenue_targets
         if row.scope_level == "TRACK" and row.track is not None
     }
-    for track, target in sorted(targets.items()):
+    ordered_targets = sorted(targets.items())
+    # Each track closing within the full department tolerance is insufficient:
+    # two same-direction 9,000-yuan gaps would still miss the department gate.
+    # Share that unchanged tolerance across tracks during the sampled search.
+    track_tolerance = Decimal(10000) / max(1, len(ordered_targets))
+    for target_index, (track, target) in enumerate(ordered_targets):
         if monotonic() >= deadline:
             break
+        # An early track must not consume the whole interactive preview budget.
+        track_deadline = monotonic() + max(0, deadline - monotonic()) / (len(ordered_targets) - target_index)
         current = BudgetCandidateEvaluator(context).evaluate(
             DecisionVector(entries, tuple(sorted(rates.items())))
         )
-        track_variance = dict(current.target_variances_yuan)["TRACK:" + track]
+        track_variance = dict(current.target_variances_yuan).get("TRACK:" + track)
+        if track_variance is None:
+            return None, evaluated
         other_revenue = current.revenue_r11_yuan - target.target_revenue_yuan - track_variance
         scoped = replace(
             context,
@@ -116,8 +127,10 @@ def _bounded_preview(
         )
         evaluator = _CachedEvaluator(scoped)
         initial = evaluator.evaluate(DecisionVector(entries, tuple(sorted(rates.items()))))
+        if not initial.target_variances_yuan:
+            return None, evaluated
         variance = initial.target_variances_yuan[0][1]
-        if abs(variance) <= 10000:
+        if initial.hard_constraints_satisfied and abs(variance) <= track_tolerance:
             continue
         direction = "UP" if variance < 0 else "DOWN"
         maximum = []
@@ -141,19 +154,104 @@ def _bounded_preview(
         best_levels = (0, 0)
         visited: set[tuple[int, int]] = set()
 
+        def track_closed(candidate: CandidateEvaluation) -> bool:
+            return (
+                candidate.hard_constraints_satisfied
+                and bool(candidate.target_variances_yuan)
+                and abs(candidate.target_variances_yuan[0][1]) <= track_tolerance
+            )
+
         def rank(candidate: CandidateEvaluation) -> tuple[Any, ...]:
-            if candidate.targets_closed:
+            if track_closed(candidate):
                 return (0, *candidate_rank(candidate, ScenarioProfile.BALANCED))
             return (
                 1,
                 not candidate.hard_constraints_satisfied,
-                abs(candidate.target_variances_yuan[0][1]),
+                abs(candidate.target_variances_yuan[0][1])
+                if candidate.target_variances_yuan
+                else Decimal("Infinity"),
                 sum(abs(value) for value in candidate.rate_adjustments_ppm),
             )
 
+        def evaluate_levels(
+            levels: tuple[int, int],
+            *,
+            initial_rates: dict[str, int] = rates,
+            selected_track: str = track,
+            selected_direction: str = direction,
+            track_evaluator: _CachedEvaluator = evaluator,
+            seen: set[tuple[int, int]] = visited,
+        ) -> CandidateEvaluation:
+            nonlocal evaluated, best, best_levels
+            chosen = dict(initial_rates)
+            for kind, level in zip(("RENEWAL_RATE", "NEW_STUDENT_SHARE"), levels, strict=True):
+                chosen.update(
+                    apply_equal_percentage_point_water_level(
+                        context.rate_decisions,
+                        track=selected_track,
+                        rate_type=kind,
+                        direction=selected_direction,
+                        water_level_steps=level,
+                    )
+                )
+            candidate = track_evaluator.evaluate(DecisionVector(entries, tuple(sorted(chosen.items()))))
+            seen.add(levels)
+            evaluated += 1
+            if rank(candidate) < rank(best):
+                best, best_levels = candidate, levels
+            return candidate
+
+        # First try a common water level with a bounded binary warm start. A
+        # full 9x9 grid can spend the request budget before reaching the small
+        # 0.01pp changes that close a modest business target. This is a sampled
+        # search, never a monotonicity or infeasibility proof: every accepted
+        # point still goes through the authoritative complete evaluator.
+        low, high = 0, max(maximum, default=0)
+        while low <= high and monotonic() < track_deadline:
+            level = (low + high) // 2
+            levels = (min(level, maximum[0]), min(level, maximum[1]))
+            candidate = evaluate_levels(levels)
+            if track_closed(candidate):
+                break
+            if not candidate.target_variances_yuan:
+                break
+            signed_variance = candidate.target_variances_yuan[0][1]
+            needs_more = signed_variance < 0 if direction == "UP" else signed_variance > 0
+            if needs_more:
+                low = level + 1
+            else:
+                high = level - 1
+        if track_closed(best):
+            rates = dict(best.decision.rate_values)
+            continue
+
+        # A joint step can jump over the target after integer headcounts are
+        # allocated. Search each family separately before paying for a broad
+        # Cartesian grid, retaining the best complete-kernel-verified point.
+        for family in (0, 1):
+            low, high = 0, maximum[family]
+            anchor = best_levels
+            while low <= high and monotonic() < track_deadline:
+                level = (low + high) // 2
+                levels = (level, anchor[1]) if family == 0 else (anchor[0], level)
+                candidate = evaluate_levels(levels)
+                if track_closed(candidate) or not candidate.target_variances_yuan:
+                    break
+                signed_variance = candidate.target_variances_yuan[0][1]
+                needs_more = signed_variance < 0 if direction == "UP" else signed_variance > 0
+                if needs_more:
+                    low = level + 1
+                else:
+                    high = level - 1
+            if track_closed(best):
+                break
+        if track_closed(best):
+            rates = dict(best.decision.rate_values)
+            continue
+
         radius = max(maximum, default=0)
         rounds = 0
-        while rounds < 5 and monotonic() < deadline:
+        while rounds < 5 and monotonic() < track_deadline:
             if rounds == 0:
                 grids = [sorted({limit * step // 8 for step in range(9)}) for limit in maximum]
             else:
@@ -166,24 +264,9 @@ def _bounded_preview(
                     levels = renewal, share
                     if levels in visited:
                         continue
-                    if monotonic() >= deadline:
+                    if monotonic() >= track_deadline:
                         break
-                    visited.add(levels)
-                    chosen = dict(rates)
-                    for kind, level in zip(("RENEWAL_RATE", "NEW_STUDENT_SHARE"), levels, strict=True):
-                        chosen.update(
-                            apply_equal_percentage_point_water_level(
-                                context.rate_decisions,
-                                track=track,
-                                rate_type=kind,
-                                direction=direction,
-                                water_level_steps=level,
-                            )
-                        )
-                    candidate = evaluator.evaluate(DecisionVector(entries, tuple(sorted(chosen.items()))))
-                    evaluated += 1
-                    if rank(candidate) < rank(best):
-                        best, best_levels = candidate, levels
+                    evaluate_levels(levels)
             if radius <= 1:
                 break
             radius = max(1, radius // 4)
@@ -193,6 +276,8 @@ def _bounded_preview(
     verified = BudgetCandidateEvaluator(context).evaluate(
         DecisionVector(entries, tuple(sorted(rates.items())))
     )
+    if not verified.target_variances_yuan:
+        return None, evaluated
     improved = sum(abs(value) for _, value in verified.target_variances_yuan) < sum(
         abs(value) for _, value in original.target_variances_yuan
     )
@@ -532,7 +617,10 @@ def balance_plan(inputs: Json, options: Json | None = None) -> Json:
         outcome = optimize_budget(
             context,
             solver_adapter=OptimizationSolverAdapter.CP_SAT_ENTRY_AND_RATES,
-            maximum_solver_seconds=settings.maximum_seconds,
+            # The staged solver may run several profiles. Reserve time for the
+            # full-kernel coarse-to-fine fallback instead of giving every stage
+            # the complete request budget and leaving no fallback time.
+            maximum_solver_seconds=min(1.5, settings.maximum_seconds / 6),
             maximum_candidate_validations=100,
             maximum_group_table_rows=30_000,
             discount_unlocked=False,
