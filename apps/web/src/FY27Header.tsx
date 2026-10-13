@@ -7,9 +7,10 @@ const modules = [
   { key: "next-year", label: "下一年预算", href: "/budget/next-year" },
 ] as const;
 
-export function FY27Header({ active, children, onHome, onBeforeLeave }: {
+export function FY27Header({ active, children, fiscalYear = active === "next-year" ? 2028 : 2027, onHome, onBeforeLeave }: {
   active: "budget" | "forecast" | "next-year";
   children: ReactNode;
+  fiscalYear?: number;
   onHome?: () => void;
   onBeforeLeave?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
@@ -24,6 +25,6 @@ export function FY27Header({ active, children, onHome, onBeforeLeave }: {
         {module.label}
       </a>)}
     </nav>
-    <div className="fy27-header-context">{children}</div>
+    <div className="fy27-header-context"><span className="fy27-year-label">FY{String(fiscalYear).slice(-2)} 学校版</span>{children}</div>
   </header>;
 }

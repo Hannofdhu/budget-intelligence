@@ -6,11 +6,12 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { createElement } from "react";
+import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { normalizeHistoricalFacts } from "../src/budgetAnalysis.ts";
 
 const require = createRequire(import.meta.url);
+const { createElement } = React;
 const compiled = await build({
   entryPoints: [fileURLToPath(new URL("../src/BudgetAnalysisView.tsx", import.meta.url))],
   bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic",
@@ -284,4 +285,210 @@ test("FY27 student board displays all saved quarterly rates from the correct tra
       season: ["暑假", "秋季", "寒假", "春季"][index], ...Object.fromEntries(block.split(" ").map((column, i) => [fields[i], row.cells[column]?.value ?? null])) }))));
   const readable = text(render(facts, "baUnit=yuan"));
   for (const value of ["23,610", "13,178", "36,788", "65.17%", "58.91%", "67.44%", "75.11%", "113,004,618.59"]) assert.ok(readable.includes(value), value);
+});
+
+const emptyFilters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
+test("controlled filters override stale URL filters immediately while retaining its pivot configuration", () => {
+  const facts = [fact({ id: "summer", revenue: 11000 }), fact({ id: "autumn", season: "秋季", revenue: 22000 })];
+  const html = render(facts, `baView=pivot&baUnit=yuan&bf_season=${encodeURIComponent("暑假")}`, {
+    controlledFilters: { ...emptyFilters, season: "秋季" },
+  });
+  assert.match(html, /class="ba-table ba-pivot-table"/);
+  assert.match(text(html), /22,000/); assert.doesNotMatch(text(html), /11,000/);
+  assert.match(html, /aria-label="清除季度秋季"/);
+});
+test("hideFilters hides only duplicate selectors and retains current-scope chips and exports", () => {
+  const props = { controlledFilters: { ...emptyFilters, season: "暑假" }, hideFilters: true };
+  const html = render(fourQuarters, "", props);
+  assert.doesNotMatch(html, /aria-label="共同筛选"|aria-label="筛选季度"/);
+  assert.match(html, /aria-label="清除季度暑假"/);
+  assert.ok(buttonText(html).some(button => button.text === "导出当前范围明细"));
+  assert.match(render(fourQuarters), /aria-label="共同筛选"/);
+});
+test("crossed controlled filters keep an empty intersection instead of widening either dimension", () => {
+  const facts = [fact({ id: "A", campus: "校区A", product: "产品A" }), fact({ id: "B", campus: "校区B", product: "产品B" })];
+  const before = JSON.stringify(facts);
+  const html = render(facts, "", { controlledFilters: { ...emptyFilters, campus: "校区A", product: "产品B" } });
+  assert.match(text(html), /这个范围没有预算明细/);
+  assert.match(html, /aria-label="清除校区校区A"/); assert.match(html, /aria-label="清除产品产品B"/);
+  assert.equal(JSON.stringify(facts), before);
+});
+test("a controlled all-clear overrides stale URL filters and validation remains the parent's responsibility", () => {
+  const old = `bf_season=${encodeURIComponent("暑假")}`;
+  assert.match(text(render(fourQuarters, old, { controlledFilters: { ...emptyFilters } })), /4 条明细/);
+  const missing = render(fourQuarters, old, { controlledFilters: { ...emptyFilters, campus: "不存在" } });
+  assert.match(text(missing), /0 条明细|没有预算明细/); assert.match(missing, /aria-label="清除校区不存在"/);
+  assert.doesNotMatch(text(missing), /全年确认收入/);
+  // Existing callers remain uncontrolled: URL filters still take priority over initialFilters.
+  assert.match(text(render(fourQuarters, old, { initialFilters: { ...emptyFilters, season: "秋季" } })), /季度：暑假/);
+});
+
+// Event/effect contract harness. No DOM, layout, browser download, network, or business mutation is simulated.
+const elements = tree => Array.isArray(tree) ? tree.flatMap(elements) : !tree || typeof tree !== "object" ? []
+  : [tree, ...elements(tree.props?.children)];
+const nodeText = node => Array.isArray(node) ? node.map(nodeText).join("") : node === null || node === undefined || typeof node === "boolean" ? ""
+  : typeof node === "object" ? nodeText(node.props?.children) : String(node);
+const findButton = (tree, label) => elements(tree).find(node => node.type === "button" && nodeText(node) === label);
+function hookBrowser(search = "", views = []) {
+  const names = ["location", "history", "window", "localStorage", "document", "navigator"];
+  const saved = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  const values = new Map([["budget-analysis-personal-views-v1", JSON.stringify(views)]]), listeners = new Map();
+  const storage = { getItem: name => values.get(name) ?? null, setItem: (name, value) => values.set(name, value) };
+  const setLocation = value => { globalThis.location = new URL(value, "http://127.0.0.1:5188"); if (globalThis.window) globalThis.window.location = globalThis.location; };
+  setLocation(`http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=5&nyFilters=1${search ? `&${search}` : ""}`);
+  const writes = [], clipboard = [];
+  const history = { pushState(_state, _title, url) { writes.push(String(url)); setLocation(String(url)); }, replaceState(_state, _title, url) { writes.push(String(url)); setLocation(String(url)); } };
+  const window = { location: globalThis.location, history, localStorage: storage,
+    addEventListener(event, listener) { if (!listeners.has(event)) listeners.set(event, new Set()); listeners.get(event).add(listener); },
+    removeEventListener(event, listener) { listeners.get(event)?.delete(listener); },
+    requestAnimationFrame() { return 1; }, cancelAnimationFrame() {} };
+  for (const [name, value] of Object.entries({ history, window, localStorage: storage, navigator: { clipboard: { async writeText(value) { clipboard.push(value); } } }, document: { createElement() { return { click() {} }; }, getElementById() { return null; } } })) {
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  }
+  return { writes, clipboard, setLocation, dispatch(event) { for (const listener of listeners.get(event) ?? []) listener(); },
+    restore() { for (const name of names) { const descriptor = saved.get(name); if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; } } };
+}
+function analysisHarness(initialProps) {
+  const states = [], initialized = new Set(), refs = [], effectSlots = [], pendingEffects = [];
+  let stateIndex = 0, refIndex = 0, effectIndex = 0, props = initialProps;
+  const fakeReact = { ...React,
+    useState(initial) { const index = stateIndex++; if (!initialized.has(index)) { states[index] = typeof initial === "function" ? initial() : initial; initialized.add(index); }
+      return [states[index], value => { states[index] = typeof value === "function" ? value(states[index]) : value; }]; },
+    useRef(initial) { return refs[refIndex++] ??= { current: initial }; }, useMemo(callback) { return callback(); },
+    useEffect(callback, deps) { const index = effectIndex++, previous = effectSlots[index];
+      if (!previous || !deps || deps.length !== previous.deps?.length || deps.some((value, i) => !Object.is(value, previous.deps[i]))) {
+        pendingEffects.push(() => { previous?.cleanup?.(); effectSlots[index] = { deps, cleanup: callback() }; });
+      }
+    },
+  };
+  const loaded = { exports: {} };
+  new Function("require", "module", "exports", compiled.outputFiles[0].text)(name => name === "react" ? fakeReact : require(name), loaded, loaded.exports);
+  const Component = loaded.exports.BudgetAnalysisView;
+  return { render(next) { if (next) props = { ...props, ...next }; stateIndex = refIndex = effectIndex = 0; pendingEffects.length = 0;
+      return Component({ contextKey: "controlled:2028", fiscalYear: 2028, ...props }); },
+    effects() { const ready = pendingEffects.splice(0); ready.forEach(run => run()); },
+    dispose() { effectSlots.forEach(slot => slot.cleanup?.()); } };
+}
+
+test("an incoming controlled filter rerenders board facts and export rows before effects and clears cell selection", () => {
+  const browser = hookBrowser("baView=pivot&baRows=campus&baMetrics=revenue");
+  try {
+    const facts = [fact({ id: "summer", revenue: 11000 }), fact({ id: "autumn", season: "秋季", revenue: 22000 })];
+    const harness = analysisHarness({ facts, controlledFilters: { ...emptyFilters } });
+    let tree = harness.render(); harness.effects(); tree = harness.render();
+    const cell = elements(tree).find(node => node.type === "button" && node.props["data-row"] === 0 && node.props["data-col"] === 0);
+    cell.props.onClick({ detail: 0, shiftKey: false }); tree = harness.render();
+    assert.ok(findButton(tree, "导出所选明细"));
+    tree = harness.render({ controlledFilters: { ...emptyFilters, season: "秋季" } });
+    assert.equal(findButton(tree, "导出所选明细"), undefined, "stale selection must vanish in the same render, not after an effect");
+    const exportTable = elements(tree).find(node => node.props?.exportData);
+    assert.deepEqual(exportTable.props.exportData.rows.map(row => row.id), ["autumn"]);
+    const people = elements(tree).find(node => node.type?.name === "BudgetPeopleBoard");
+    assert.equal(people, undefined, "pivot remains selected while parent filters change");
+    tree = harness.render({ controlledFilters: { ...emptyFilters, season: "暑假" } });
+    assert.equal(findButton(tree, "导出所选明细"), undefined, "old selections cannot reappear when switching back");
+    harness.dispose();
+  } finally { browser.restore(); }
+});
+test("controlled chart drilling requests the parent filter without overriding the parent's URL filter", () => {
+  const browser = hookBrowser(`bf_season=${encodeURIComponent("暑假")}`), changes = [];
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters }, onFiltersChange: value => changes.push(value) });
+    const tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "查看秋季收入明细").props.onClick();
+    assert.deepEqual(changes, [{ ...emptyFilters, season: "秋季" }]);
+    assert.equal(new URL(browser.writes.at(-1)).searchParams.get("bf_season"), "暑假", "parent persists bf_* after accepting the callback");
+    assert.equal(new URL(browser.writes.at(-1)).searchParams.get("nyFilters"), "1");
+    assert.equal(new URL(browser.writes.at(-1)).searchParams.get("nyTask"), "5");
+    const stillParentControlled = harness.render();
+    assert.equal(elements(stillParentControlled).find(node => node.props?.exportData).props.exportData.rows.length, 4);
+  } finally { browser.restore(); }
+});
+test("controlled chips and personal views send filters back to the parent for validation", () => {
+  const view = { id: "autumn", name: "秋季招生", contextKey: "controlled:2028", fiscalYear: 2028,
+    state: { view: "pivot", unit: "yuan", filters: { ...emptyFilters, season: "秋季", campus: "已退出校区" }, config: { rows: ["campus"], column: "season", metrics: ["new"], sort: "name-asc" } } };
+  const browser = hookBrowser("baView=pivot", [view]), changes = [];
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters, season: "暑假" }, onFiltersChange: value => changes.push(value) });
+    let tree = harness.render(); harness.effects(); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "清除季度暑假").props.onClick();
+    assert.deepEqual(changes.at(-1), emptyFilters);
+    tree = harness.render();
+    elements(tree).find(node => node.type === "button" && nodeText(node).startsWith("秋季招生")).props.onClick();
+    assert.deepEqual(changes.at(-1), { ...emptyFilters, season: "秋季", campus: "已退出校区" });
+    tree = harness.render({ controlledFilters: { ...changes.at(-1), campus: "" } });
+    assert.ok(elements(tree).some(node => node.type === "h3" && nodeText(node) === "预算透视"));
+    assert.doesNotMatch(nodeText(tree), /清除不可用筛选/);
+    harness.dispose();
+  } finally { browser.restore(); }
+});
+
+test("disabled-only campuses and newly added unpreviewed products stay empty instead of showing the full budget", () => {
+  for (const filters of [{ ...emptyFilters, campus: "已停用校区" }, { ...emptyFilters, product: "尚未预览的新产品" }]) {
+    const html = render(fourQuarters, "baUnit=yuan", { controlledFilters: filters, hideFilters: true });
+    assert.match(text(html), /这个范围没有预算明细/);
+    assert.match(text(html), /0 条明细/);
+    assert.doesNotMatch(text(html), /40,000|全年确认收入|季度收入/);
+  }
+});
+test("controlled popstate restores view configuration only and never emits a stale filter callback", () => {
+  const browser = hookBrowser(), changes = [];
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters, season: "暑假" }, onFiltersChange: value => changes.push(value) });
+    harness.render(); harness.effects();
+    browser.setLocation(`http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=5&nyFilters=1&baView=pivot&baMetrics=new&bf_season=${encodeURIComponent("寒假")}`);
+    browser.dispatch("popstate");
+    const tree = harness.render({ controlledFilters: { ...emptyFilters, season: "秋季" } });
+    assert.equal(changes.length, 0); assert.equal(browser.writes.length, 0);
+    assert.ok(elements(tree).some(node => node.type === "h3" && nodeText(node) === "预算透视"));
+    assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除季度秋季"));
+    assert.ok(elements(tree).some(node => node.type === "th" && nodeText(node).includes("新生人次")));
+    harness.dispose();
+  } finally { browser.restore(); }
+});
+test("controlled share links include the latest parent scope and preserve task, year and explicit-empty marker", async () => {
+  const browser = hookBrowser(`baView=pivot&bf_season=${encodeURIComponent("暑假")}`);
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters, season: "秋季" } });
+    let tree = harness.render();
+    await findButton(tree, "复制视图链接").props.onClick();
+    let shared = new URL(browser.clipboard.at(-1));
+    assert.equal(shared.searchParams.get("bf_season"), "秋季");
+    assert.equal(shared.searchParams.get("baView"), "pivot");
+    for (const [name, value] of [["year", "2028"], ["nyTask", "5"], ["nyFilters", "1"]]) assert.equal(shared.searchParams.get(name), value);
+    tree = harness.render({ controlledFilters: { ...emptyFilters } });
+    await findButton(tree, "复制视图链接").props.onClick(); shared = new URL(browser.clipboard.at(-1));
+    assert.equal(shared.searchParams.has("bf_season"), false); assert.equal(shared.searchParams.get("nyFilters"), "1");
+  } finally { browser.restore(); }
+});
+test("uncontrolled popstate and board selection retain their existing filter ownership", () => {
+  const browser = hookBrowser(), changes = [];
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, onFiltersChange: value => changes.push(value) });
+    let tree = harness.render(); harness.effects(); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "查看秋季收入明细").props.onClick();
+    tree = harness.render(); assert.ok(findButton(tree, "导出所选明细")); assert.equal(changes.length, 0);
+    browser.setLocation(`http://127.0.0.1:5188/budget/workspace?baView=pivot&bf_season=${encodeURIComponent("寒假")}`);
+    browser.dispatch("popstate"); tree = harness.render();
+    assert.deepEqual(changes, [{ ...emptyFilters, season: "寒假" }]);
+    assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除季度寒假"));
+    harness.dispose();
+  } finally { browser.restore(); }
+});
+test("exports after an incoming controlled change contain only the latest scope without fetching data", async () => {
+  const browser = hookBrowser(), oldFetch = globalThis.fetch, createURL = URL.createObjectURL, blobs = []; let requests = 0;
+  globalThis.fetch = () => { requests++; throw new Error("unexpected data fetch"); };
+  URL.createObjectURL = blob => { blobs.push(blob); return createURL(blob); };
+  try {
+    const harness = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters } });
+    harness.render();
+    const tree = harness.render({ controlledFilters: { ...emptyFilters, season: "秋季" } });
+    await findButton(tree, "导出当前范围明细").props.onClick();
+    assert.equal(blobs.length, 1);
+    const ExcelJS = require("exceljs"), workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await blobs[0].arrayBuffer());
+    assert.equal(workbook.worksheets[0].rowCount, 2, "one header plus the one filtered fact");
+    assert.equal(workbook.worksheets[0].getRow(2).getCell(6).value, "秋季");
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = oldFetch; URL.createObjectURL = createURL; browser.restore(); }
 });

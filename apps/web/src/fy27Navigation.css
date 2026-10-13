@@ -57,7 +57,7 @@
   min-width: 0;
 }
 .fy27-topbar .decision-version { display: flex; white-space: nowrap; }
-.fy27-topbar .decision-budget-select select { width: 130px; }
+.fy27-year-label { color: #40564a; font-size: 13px; line-height: 1.4; white-space: nowrap; }
 
 @media (max-width: 1000px) {
   .decision-shell .decision-topbar.fy27-topbar {
@@ -73,14 +73,13 @@
 @media (max-width: 500px) {
   .fy27-header-context { gap: 8px; }
   .fy27-topbar .decision-brand strong { font-size: 13px; }
-  .fy27-topbar .decision-budget-select select { width: 112px; padding-left: 0; font-size: 11px; }
+  .fy27-year-label { font-size: 11px; }
   .fy27-topbar .decision-version { font-size: 10px; gap: 4px; }
   .fy27-module-switch { width: 348px; }
 }
 @media (max-width: 380px) {
   .fy27-topbar .decision-brand { gap: 6px; }
   .fy27-topbar .decision-brand strong { font-size: 12px; }
-  .fy27-topbar .decision-budget-select select { width: 102px; }
   .fy27-header-context { gap: 4px; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -15,6 +15,7 @@ import { budgetPeriodLabel, compareBudgetGrades, renewalStageLabel } from "./bud
 type Props = {
   facts: BudgetFact[]; contextKey: string; fiscalYear: number; annualTarget?: number | null;
   initialFilters?: BudgetFilters; onFiltersChange?: (filters: BudgetFilters) => void; recordContent?: ReactNode; hideSummary?: boolean;
+  controlledFilters?: BudgetFilters; hideFilters?: boolean;
 };
 type SavedView = { id: string; name: string; contextKey: string; fiscalYear: number; state: BudgetAnalysisState };
 type CellPosition = { row: string; column: string; metric: BudgetMetric };
@@ -37,21 +38,42 @@ const detailColumns: ExportColumn[] = [
 ];
 const matchesPath = (fact: BudgetFact, path: Partial<Record<BudgetDimension, string>>) => Object.entries(path).every(([key, value]) => fact[key as BudgetDimension] === value);
 const localNumber = (value: number, digits = 2) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits }).format(value);
-const stateFromLocation = (facts: BudgetFact[], initialFilters?: BudgetFilters) => {
+const validateViewState = (state: BudgetAnalysisState, facts: BudgetFact[], parentOwnsFilters = false) => {
+  const validated = validateAnalysisState(state, facts);
+  // Parent filters may name a disabled or newly added business with no calculated facts yet.
+  // Absence of facts means an empty result, never permission to widen the parent's scope.
+  return parentOwnsFilters ? { state: { ...validated.state, filters: { ...emptyBudgetFilters, ...state.filters } }, removedFilters: [] }
+    : validated;
+};
+const stateFromLocation = (facts: BudgetFact[], initialFilters?: BudgetFilters, controlledFilters?: BudgetFilters) => {
   const search = new URLSearchParams(location.search);
   const parsed = readAnalysisState(location.search);
-  if (initialFilters && ![...search.keys()].some(key => key.startsWith("ba") || key.startsWith("bf_"))) parsed.filters = { ...initialFilters };
-  return validateAnalysisState(parsed, facts).state;
+  if (controlledFilters !== undefined) parsed.filters = { ...controlledFilters };
+  else if (initialFilters && ![...search.keys()].some(key => key.startsWith("ba") || key.startsWith("bf_"))) parsed.filters = { ...initialFilters };
+  return validateViewState(parsed, facts, controlledFilters !== undefined).state;
 };
 
 /** Read-only analysis. View state is the only state this component writes. */
-export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget, initialFilters, onFiltersChange, recordContent, hideSummary = false }: Props) {
-  const [state, setState] = useState<BudgetAnalysisState>(() => stateFromLocation(facts, initialFilters));
+export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget, initialFilters, onFiltersChange, recordContent, hideSummary = false, controlledFilters, hideFilters = false }: Props) {
+  const [internalState, setState] = useState<BudgetAnalysisState>(() => stateFromLocation(facts, initialFilters, controlledFilters));
+  const controlled = controlledFilters !== undefined;
+  // The parent owns filters in controlled mode; stale URL or local view state never wins a render.
+  const state = useMemo(() => controlledFilters === undefined ? internalState
+    : validateViewState({ ...internalState, filters: controlledFilters }, facts, true).state, [internalState, controlledFilters, facts]);
+  const filterKey = JSON.stringify(dimensions.map(dimension => state.filters[dimension]));
+  const [selectionScope, setSelectionScope] = useState(filterKey);
   const isRecordLocation = () => { const params = new URLSearchParams(location.search); return Boolean(recordContent) && (params.get("baRecord") === "1" || params.get("view") === "record"); };
   const [recordView, setRecordView] = useState(isRecordLocation);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [range, setRange] = useState<CellRange | null>(null);
-  const [boardSelection, setBoardSelection] = useState<BoardSelection | null>(null);
+  const [storedRange, setStoredRange] = useState<CellRange | null>(null);
+  const [storedBoardSelection, setStoredBoardSelection] = useState<BoardSelection | null>(null);
+  const range = selectionScope === filterKey ? storedRange : null;
+  const boardSelection = selectionScope === filterKey ? storedBoardSelection : null;
+  const setRange = (next: CellRange | null | ((current: CellRange | null) => CellRange | null)) => {
+    setSelectionScope(filterKey);
+    setStoredRange(current => typeof next === "function" ? next(selectionScope === filterKey ? current : null) : next);
+  };
+  const setBoardSelection = (next: BoardSelection | null) => { setSelectionScope(filterKey); setStoredBoardSelection(next); };
   const [detailOpen, setDetailOpen] = useState(() => state.view === "board");
   const [rawMode, setRawMode] = useState(() => new URLSearchParams(location.search).get("baTable") === "detail");
   const [detailPage, setDetailPage] = useState(0);
@@ -65,42 +87,52 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   const tableRef = useRef<HTMLTableElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const lastContext = useRef(contextKey);
+  const controlledFiltersRef = useRef(controlledFilters), filtersChangeRef = useRef(onFiltersChange);
+  controlledFiltersRef.current = controlledFilters; filtersChangeRef.current = onFiltersChange;
   const storageKey = "budget-analysis-personal-views-v1";
 
   const clearSelection = () => { setRange(null); setBoardSelection(null); setDetailPage(0); };
   const commit = (next: BudgetAnalysisState, replace = false) => {
-    const valid = validateAnalysisState(next, facts);
+    const valid = validateViewState(next, facts, controlled);
     setState(valid.state); setRecordView(false);
     if (next.view !== state.view) setDetailOpen(next.view === "board");
     if (next.unit === state.unit || JSON.stringify(next.filters) !== JSON.stringify(state.filters) || JSON.stringify(next.config) !== JSON.stringify(state.config) || next.view !== state.view) clearSelection();
     const url = new URL(location.href);
+    const parentFilters = [...url.searchParams.entries()].filter(([key]) => key.startsWith("bf_"));
     url.search = writeAnalysisState(url.search, valid.state);
+    // The parent persists bf_* (and its explicit-empty marker). This child only writes ba* view configuration.
+    if (controlled) {
+      [...url.searchParams.keys()].filter(key => key.startsWith("bf_")).forEach(key => url.searchParams.delete(key));
+      parentFilters.forEach(([key, value]) => url.searchParams.append(key, value));
+    }
     url.searchParams.delete("baRecord");
     if (next.view !== state.view) url.searchParams.delete("baTable");
     if (url.searchParams.get("view") === "record") url.searchParams.delete("view");
     history[replace ? "replaceState" : "pushState"]({}, "", url);
-    if (JSON.stringify(state.filters) !== JSON.stringify(valid.state.filters)) onFiltersChange?.(valid.state.filters);
+    if (JSON.stringify(state.filters) !== JSON.stringify(valid.state.filters)) filtersChangeRef.current?.(valid.state.filters);
     if (valid.removedFilters.length) setNotice(`已清除不可用筛选：${valid.removedFilters.join("、")}`);
   };
   useEffect(() => {
     const restore = () => {
-      const restored = stateFromLocation(facts, initialFilters);
+      const restored = stateFromLocation(facts, initialFilters, controlledFiltersRef.current);
       setState(restored); clearSelection(); setCollapsed(new Set());
       setDetailOpen(restored.view === "board");
       setRawMode(new URLSearchParams(location.search).get("baTable") === "detail");
       setRecordView(isRecordLocation());
-      onFiltersChange?.(restored.filters);
+      // In controlled mode the parent handles the same event and restores filters once.
+      if (!controlled) filtersChangeRef.current?.(restored.filters);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [facts, contextKey]);
+  }, [facts, contextKey, controlled]);
   useEffect(() => {
     if (lastContext.current === contextKey) return;
     lastContext.current = contextKey;
-    const restored = stateFromLocation(facts, initialFilters);
+    const restored = stateFromLocation(facts, initialFilters, controlledFiltersRef.current);
     setState(restored); clearSelection(); setCollapsed(new Set());
     setDetailOpen(restored.view === "board"); setRawMode(false); setRecordView(false); setNotice("");
   }, [contextKey, facts]);
+  useEffect(() => { clearSelection(); }, [filterKey]);
   useEffect(() => {
     setStorageReady(false);
     try {
@@ -175,7 +207,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
     [filtered, selectedCells, range?.anchor.metric, state.config.column]);
   const selectionHasOverlap = selectedStats?.hasOverlap ?? false;
   const pageCount = Math.max(1, Math.ceil(selectedFacts.length / 25));
-  const safePage = Math.min(detailPage, pageCount - 1);
+  const safePage = selectionScope === filterKey ? Math.min(detailPage, pageCount - 1) : 0;
   const pagedFacts = selectedFacts.slice(safePage * 25, (safePage + 1) * 25);
   const exportColumns = detailColumns;
   const detailTransfer = { columns: exportColumns, rows: selectedFacts, filename: `FY${fiscalYear}-预算明细` };
@@ -186,6 +218,11 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
     setRange(current => extend && current?.anchor.metric === metric ? { anchor: current.anchor, focus: next } : { anchor: next, focus: next });
   }
   function selectBoard(path: Partial<Record<BudgetDimension, string>>, label: string) {
+    if (controlled) {
+      commit({ ...state, filters: { ...state.filters, ...path } });
+      setDetailOpen(true); setDetailPage(0);
+      return;
+    }
     setRange(null); setBoardSelection(path && boardSelection && JSON.stringify(path) === JSON.stringify(boardSelection.path) ? null : { path, label });
     setDetailOpen(true); setDetailPage(0);
   }
@@ -245,7 +282,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
     if (storeViews([...savedViews.filter(view => !(view.name === name && view.contextKey === contextKey)), item])) { setSaveName(""); setNotice(existing ? "个人视图已更新，仅保存在本浏览器。" : "个人视图已保存，仅保存在本浏览器。"); }
   };
   const loadView = (view: SavedView) => {
-    const validated = validateAnalysisState(view.state, facts);
+    const validated = validateViewState(view.state, facts, controlled);
     commit(validated.state); setCollapsed(new Set()); setRawMode(false);
     setNotice(validated.removedFilters.length ? `已载入“${view.name}”；清除不可用筛选：${validated.removedFilters.join("、")}` : `已载入“${view.name}”。`);
   };
@@ -277,10 +314,10 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
       {recordContent && <button role="tab" id="ba-tab-record" tabIndex={activeTab === "record" ? 0 : -1} onKeyDown={onTabKeyDown} aria-selected={recordView} aria-controls="ba-view-panel" onClick={showRecord}>定版记录</button>}
     </div>
     {recordView ? <div id="ba-view-panel" role="tabpanel" aria-labelledby="ba-tab-record">{recordContent}</div> : <div id="ba-view-panel" role="tabpanel" aria-labelledby={`ba-tab-${state.view}`}>
-      <div className="ba-filterbar" aria-label="共同筛选">
+      {!hideFilters && <div className="ba-filterbar" aria-label="共同筛选">
         {dimensions.map(dimension => <label key={dimension}>{dimensionLabels[dimension]}<select aria-label={`筛选${dimensionLabels[dimension]}`} value={state.filters[dimension]} onChange={event => setFilter(dimension, event.target.value)}><option value="">全部</option>{[...new Set(facts.map(fact => fact[dimension]))].filter(Boolean).sort((a, b) => dimension === "season" ? seasons.indexOf(a) - seasons.indexOf(b) : dimension === "grade" ? compareBudgetGrades(a, b) : a.localeCompare(b, "zh-CN", { numeric: true })).map(value => <option key={value} value={value}>{value}</option>)}</select></label>)}
         <button className="ba-text-button" disabled={!activeFilters.length} onClick={() => commit({ ...state, filters: { ...emptyBudgetFilters } })}>重置筛选</button>
-      </div>
+      </div>}
       <div className="ba-scope-row"><div className="ba-filter-chips" aria-label="当前范围">{activeFilters.length ? activeFilters.map(key => <button className="ba-chip" key={key} onClick={() => setFilter(key, "")} aria-label={`清除${dimensionLabels[key]}${state.filters[key]}`}>{dimensionLabels[key]}：{state.filters[key]} <span aria-hidden="true">×</span></button>) : <span>全部预算</span>}<small>{filtered.length.toLocaleString("zh-CN")} 条明细</small></div><div className="ba-toolbar"><label>金额单位<select aria-label="金额单位" value={state.unit} onChange={event => commit({ ...state, unit: event.target.value as "yuan" | "wan" })}><option value="wan">万元</option><option value="yuan">元</option></select></label><button onClick={copyLink}>复制视图链接</button><button disabled={exporting || !filtered.length} onClick={() => doExport("all")}>{exporting ? "导出中…" : "导出当前范围明细"}</button></div></div>
       {notice && <div className="ba-notice" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
       {!filtered.length ? <div className="ba-empty"><h3>这个范围没有预算明细</h3><button onClick={() => commit({ ...state, filters: { ...emptyBudgetFilters } })}>清除筛选</button></div> : state.view === "board" ? <>

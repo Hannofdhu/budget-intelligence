@@ -54,6 +54,30 @@ test("FY27 modules render the same single switch with exact routes and one curre
   }
 });
 
+test("the shared header shows a read-only fiscal-year label for each module", () => {
+  for (const [active, year] of [["budget", 2027], ["forecast", 2027], ["next-year", 2028]]) {
+    const tree = FY27Header({ active, children: "状态" });
+    const context = nodes(tree).find(node => node.props?.className === "fy27-header-context");
+    const label = nodes(context).find(node => node.props?.className === "fy27-year-label");
+    assert.equal(label.type, "span");
+    assert.equal(renderToStaticMarkup(label), `<span class="fy27-year-label">FY${String(year).slice(-2)} 学校版</span>`);
+    assert.equal(label.props.onClick, undefined);
+    assert.equal(label.props.onChange, undefined);
+    assert.equal(label.props.tabIndex, undefined);
+    assert.equal(nodes(context).some(node => node.type === "select" || node.type === "button" || node.type === "a"), false);
+    assert.doesNotMatch(renderToStaticMarkup(context), /aria-haspopup|<svg|<select|chevron|dropdown/);
+    assert.equal(links(tree).length, 3, "the module switch remains available beside the static year");
+  }
+});
+
+test("an explicit budget fiscal year is displayed truthfully without introducing a selector", () => {
+  const html = renderToStaticMarkup(createElement(FY27Header, { active: "next-year", fiscalYear: 2029, children: "预算草稿 N2" }));
+  assert.match(html, /<span class="fy27-year-label">FY29 学校版<\/span>/);
+  assert.doesNotMatch(html, /FY28|<select|aria-label="预算财年"/);
+  assert.match(html, /预算草稿 N2/);
+  assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
+});
+
 test("clicking the current module never reloads or invokes the leave guard", () => {
   for (const active of Object.keys(labels)) {
     let prevented = 0, left = 0;
@@ -82,9 +106,12 @@ test("budget, forecast and next-year budget share the header without separate mo
     const page = source(name);
     assert.match(page, /<FY27Header\b/, name);
     assert.doesNotMatch(page, /className="(?:history-product-nav|forecast-navigation)"/, name);
+    assert.doesNotMatch(page, /aria-label="(?:预算财年|切换预算)"|className="forecast-year"/, name);
   }
   assert.match(source("HistoricalBudgetPage.tsx"), /className="decision-progress"/,
     "budget detail navigation stays available below the shared module switch");
+  assert.match(source("NextYearBudgetPage.tsx"), /<FY27Header\b[^>]*fiscalYear=\{fiscalYear\}/,
+    "a retained year-specific URL must not be mislabeled as the default fiscal year");
 });
 
 test("the common header remains sticky and centered with one shared narrow-screen layout", () => {

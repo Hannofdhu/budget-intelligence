@@ -407,7 +407,7 @@ export function ForecastPage() {
   }, [version]);
   return <div className="budget-shell decision-shell forecast-shell">
     <a className="skip-link" href="#forecast-content">跳到主要内容</a>
-    <FY27Header active="forecast" onBeforeLeave={beforeLeave}><span className="forecast-year">FY27 学校版</span><div className="decision-version"><span className={`status-dot ${version?.status === "CONFIRMED" && !trialMode ? "is-published" : ""}`}/><span>{trialMode ? "试用试算" : version ? version.status === "CONFIRMED" ? "预测已确认" : "预测草稿" : "尚未预测"}</span>{version && <small>P{version.sequence}</small>}</div></FY27Header>
+    <FY27Header active="forecast" onBeforeLeave={beforeLeave}><div className="decision-version"><span className={`status-dot ${version?.status === "CONFIRMED" && !trialMode ? "is-published" : ""}`}/><span>{trialMode ? "试用试算" : version ? version.status === "CONFIRMED" ? "预测已确认" : "预测草稿" : "尚未预测"}</span>{version && <small>P{version.sequence}</small>}</div></FY27Header>
     <dialog className="forecast-leave-dialog" ref={leaveDialog} aria-labelledby="forecast-leave-title" onCancel={() => setPendingNavigation("")}>
       <h2 id="forecast-leave-title">修改尚未保存</h2>
       <div><button className="forecast-primary" autoFocus onClick={() => { setPendingNavigation(""); if (pendingPredictionChanges) openDrawer(drawerTab); }}>继续编辑</button><button onClick={() => { leaving.current = true; location.assign(pendingNavigation); }}>离开，不保存</button></div>

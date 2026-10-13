@@ -257,6 +257,216 @@ export function applyNextYearEdits(original: NextYearInputs, edits: NextYearEdit
   return { inputs: Object.keys(errors).length ? null : inputs, errors };
 }
 
+export type NextYearEditCategory = "target" | "track_target" | "entry_total" | "entry_detail" | "rates" | "finance" | "class_size" | "plan" | "bounds" | "tax" | "other";
+export interface NextYearEditItem {
+  key: string;
+  category: NextYearEditCategory;
+  task: 1 | 2 | 3 | 4 | 5;
+  label: string;
+  beforeDisplay: string | null;
+  afterDisplay: string;
+  beforeNumber: number | null;
+  afterNumber: number | null;
+  unit: "money" | "percent" | "count" | "factor";
+  invalid?: boolean;
+}
+export interface NextYearEditGroup {
+  category: NextYearEditCategory;
+  label: string;
+  items: NextYearEditItem[];
+  scale?: string;
+}
+export interface NextYearEditSummary {
+  groups: NextYearEditGroup[];
+  totalCount: number;
+}
+
+const editCategoryOrder: { category: NextYearEditCategory; label: string }[] = [
+  { category: "target", label: "全年经营目标" },
+  { category: "track_target", label: "赛道目标" },
+  { category: "entry_total", label: "年度入口人次" },
+  { category: "entry_detail", label: "入口分配" },
+  { category: "rates", label: "续班率与新生占比" },
+  { category: "bounds", label: "调平范围" },
+  { category: "plan", label: "计划新生" },
+  { category: "finance", label: "学费 / 折扣 / 结转" },
+  { category: "class_size", label: "班均参数" },
+  { category: "tax", label: "含税转换系数" },
+  { category: "other", label: "其他" },
+];
+
+const formatMoney = (n: number | null, suffix = "元") => n === null ? null : `${n.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} ${suffix}`;
+const formatCount = (n: number | null) => n === null ? null : `${n.toLocaleString("zh-CN")} 人`;
+const formatPercent = (ppm: number | null) => ppm === null ? null : `${(ppm / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} %`;
+const parsePercent = (raw: string): number | null => { const trimmed = raw.replace(/%$/, "").trim(); if (!trimmed) return null; const n = forecastNumber(trimmed); return n === null ? null : n; };
+const summarizeDimensions = (row: { campus?: string; track?: string; product?: string; grade?: string; subject?: string } | undefined) =>
+  row ? [row.campus, row.track, row.product, row.grade, row.subject].filter(Boolean).join(" / ") : "";
+
+const boundsLabels: Record<string, string> = {
+  renewal_lower_ppm: "续班率下限", renewal_upper_ppm: "续班率上限",
+  share_lower_ppm: "新生占比下限", share_upper_ppm: "新生占比上限",
+};
+const financeLabels: Record<string, string> = { price_yuan: "学费", discount_ppm: "折扣", recognition_ppm: "当季结转" };
+
+/** Pure: classify every unsaved edit into a display-ready group. Does not re-run calculation. */
+export function summarizeNextYearEdits(inputs: NextYearInputs, edits: NextYearEdits, errors: Record<string, string> = {}): NextYearEditSummary {
+  const items: NextYearEditItem[] = [];
+  const comboById = new Map(inputs.combinations.map(row => [row.id, row]));
+  const rateById = new Map(inputs.rates.map(row => [row.id, row]));
+  const financeById = new Map(inputs.finance.map(row => [row.id, row]));
+  for (const [editKey, raw] of Object.entries(edits)) {
+    let path: (string | number)[];
+    try { path = JSON.parse(editKey); } catch { continue; }
+    if (!Array.isArray(path)) continue;
+    const [section, id, field] = path;
+    const invalid = Object.hasOwn(errors, editKey);
+    const trimmed = raw.trim();
+    const parsedNumber = forecastNumber(raw);
+    const base = { key: editKey, invalid };
+    if (section === "target") {
+      items.push({ ...base, category: "target", task: 1, label: "全年经营目标",
+        beforeDisplay: formatMoney(forecastNumber(inputs.target_revenue_yuan)),
+        afterDisplay: trimmed ? formatMoney(parsedNumber) ?? trimmed : "（清空）",
+        beforeNumber: forecastNumber(inputs.target_revenue_yuan), afterNumber: parsedNumber, unit: "money" });
+    } else if (section === "track-target") {
+      items.push({ ...base, category: "track_target", task: 1, label: `${id} 目标`,
+        beforeDisplay: formatMoney(forecastNumber(inputs.track_targets[String(id)])),
+        afterDisplay: trimmed ? formatMoney(parsedNumber) ?? trimmed : "（清空）",
+        beforeNumber: forecastNumber(inputs.track_targets[String(id)]), afterNumber: parsedNumber, unit: "money" });
+    } else if (section === "entry") {
+      items.push({ ...base, category: "entry_total", task: 2, label: "年度入口人次",
+        beforeDisplay: formatCount(inputs.entry_total),
+        afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（清空）",
+        beforeNumber: inputs.entry_total, afterNumber: parsedNumber, unit: "count" });
+    } else if (section === "entry-count") {
+      const combo = comboById.get(String(id));
+      items.push({ ...base, category: "entry_detail", task: 2, label: `${summarizeDimensions(combo)} 入口人次`,
+        beforeDisplay: formatCount(combo?.entry_students ?? null),
+        afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（自动分配）",
+        beforeNumber: combo?.entry_students ?? null, afterNumber: parsedNumber, unit: "count" });
+    } else if (section === "entry-grade") {
+      items.push({ ...base, category: "entry_detail", task: 2, label: `${id} 整年级入口人次`,
+        beforeDisplay: null,
+        afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（自动分配）",
+        beforeNumber: null, afterNumber: parsedNumber, unit: "count" });
+    } else if (section === "rates") {
+      const rate = rateById.get(String(id));
+      const isRenewal = field === "renewal_ppm";
+      const currentPpm = isRenewal ? rate?.renewal_ppm ?? null : rate?.share_ppm ?? null;
+      const parsedPct = parsePercent(raw);
+      items.push({ ...base, category: "rates", task: 3,
+        label: `${summarizeDimensions(rate)} · ${rate?.season ?? ""} ${isRenewal ? "续班率" : "新生占比"}`,
+        beforeDisplay: formatPercent(currentPpm),
+        afterDisplay: trimmed ? `${trimmed.replace(/%$/, "")} %` : "（清空）",
+        beforeNumber: currentPpm === null ? null : currentPpm / 10000,
+        afterNumber: parsedPct, unit: "percent" });
+    } else if (section === "bounds") {
+      const rate = rateById.get(String(id));
+      const currentPpm = (rate as unknown as Record<string, number | undefined> | undefined)?.[String(field)] ?? null;
+      const parsedPct = parsePercent(raw);
+      items.push({ ...base, category: "bounds", task: 3,
+        label: `${summarizeDimensions(rate)} · ${rate?.season ?? ""} ${boundsLabels[String(field)] ?? "调平范围"}`,
+        beforeDisplay: formatPercent(currentPpm),
+        afterDisplay: trimmed ? `${trimmed.replace(/%$/, "")} %` : "（恢复默认）",
+        beforeNumber: currentPpm === null ? null : currentPpm / 10000,
+        afterNumber: parsedPct, unit: "percent" });
+    } else if (section === "plan" || section === "manual") {
+      const combo = comboById.get(String(id));
+      const plan = inputs.plans.find(row => row.combination_id === id && row.season === field);
+      items.push({ ...base, category: "plan", task: 3,
+        label: `${summarizeDimensions(combo)} · ${field} ${section === "manual" ? "手动新生" : "计划新生"}`,
+        beforeDisplay: formatCount(plan?.students ?? null),
+        afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（清空）",
+        beforeNumber: plan?.students ?? null, afterNumber: parsedNumber, unit: "count" });
+    } else if (section === "finance") {
+      const fin = financeById.get(String(id));
+      const combo = fin ? comboById.get(fin.combination_id) : undefined;
+      const isMoney = field === "price_yuan";
+      const title = financeLabels[String(field)] ?? "财务参数";
+      const currentValue = isMoney ? forecastNumber(fin?.price_yuan) : (fin as unknown as Record<string, number | undefined> | undefined)?.[String(field)] ?? null;
+      const parsedPct = isMoney ? null : parsePercent(raw);
+      items.push({ ...base, category: "finance", task: 4,
+        label: `${summarizeDimensions(combo)} · ${fin?.season ?? ""} ${title}`,
+        beforeDisplay: isMoney ? formatMoney(currentValue) : formatPercent(currentValue),
+        afterDisplay: trimmed ? (isMoney ? formatMoney(parsedNumber) ?? trimmed : `${trimmed.replace(/%$/, "")} %`) : "（清空）",
+        beforeNumber: isMoney ? currentValue : currentValue === null ? null : currentValue / 10000,
+        afterNumber: isMoney ? parsedNumber : parsedPct,
+        unit: isMoney ? "money" : "percent" });
+    } else if (section === "class" || section === "class-size") {
+      const row = inputs.class_sizes[Number(id)];
+      const isPlan = section === "class-size";
+      const current = isPlan ? row?.planned_class_size ?? null : row?.minimum ?? null;
+      items.push({ ...base, category: "class_size", task: 4,
+        label: `${row?.track ?? ""} / ${row?.product ?? ""} ${isPlan ? "计划班额" : "最低成班人数"}`,
+        beforeDisplay: formatCount(current),
+        afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（清空）",
+        beforeNumber: current, afterNumber: parsedNumber, unit: "count" });
+    } else if (section === "tax") {
+      items.push({ ...base, category: "tax", task: 4, label: "含税转换系数",
+        beforeDisplay: inputs.tax_factor,
+        afterDisplay: trimmed || "（清空）",
+        beforeNumber: forecastNumber(inputs.tax_factor), afterNumber: parsedNumber, unit: "factor" });
+    } else {
+      items.push({ ...base, category: "other", task: 1, label: String(section ?? "未知改动"),
+        beforeDisplay: null, afterDisplay: trimmed || "（清空）",
+        beforeNumber: null, afterNumber: parsedNumber, unit: "count" });
+    }
+  }
+  const byCategory = new Map<NextYearEditCategory, NextYearEditItem[]>();
+  for (const item of items) {
+    const bucket = byCategory.get(item.category) ?? [];
+    bucket.push(item); byCategory.set(item.category, bucket);
+  }
+  const groups: NextYearEditGroup[] = [];
+  for (const { category, label } of editCategoryOrder) {
+    const bucket = byCategory.get(category);
+    if (!bucket?.length) continue;
+    groups.push({ category, label, items: bucket, scale: computeGroupScale(category, bucket) });
+  }
+  return { groups, totalCount: items.length };
+}
+
+function computeGroupScale(category: NextYearEditCategory, items: NextYearEditItem[]): string | undefined {
+  if (category === "rates" || category === "bounds") {
+    let max = 0; let any = false;
+    for (const item of items) {
+      if (item.beforeNumber === null || item.afterNumber === null) continue;
+      const diff = Math.abs(item.afterNumber - item.beforeNumber);
+      if (diff > max) { max = diff; any = true; }
+    }
+    return any ? `最大 ${max.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 个百分点` : undefined;
+  }
+  if (category === "entry_detail" || category === "entry_total" || category === "plan" || category === "class_size") {
+    let delta = 0; let any = false;
+    for (const item of items) {
+      if (item.afterNumber === null) continue;
+      delta += item.afterNumber - (item.beforeNumber ?? 0); any = true;
+    }
+    return any ? `合计 ${delta >= 0 ? "+" : ""}${delta.toLocaleString("zh-CN")} 人` : undefined;
+  }
+  if (category === "finance") {
+    const prices = items.filter(item => item.unit === "money");
+    if (!prices.length) return undefined;
+    let delta = 0;
+    for (const item of prices) {
+      if (item.afterNumber === null) continue;
+      delta += item.afterNumber - (item.beforeNumber ?? 0);
+    }
+    return `学费合计 ${delta >= 0 ? "+" : ""}${delta.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 元`;
+  }
+  if (category === "target" || category === "track_target") {
+    let delta = 0; let any = false;
+    for (const item of items) {
+      if (item.afterNumber === null) continue;
+      delta += item.afterNumber - (item.beforeNumber ?? 0); any = true;
+    }
+    if (!any) return undefined;
+    const wan = delta / 10000;
+    return `${delta >= 0 ? "+" : ""}${wan.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 万元`;
+  }
+  return undefined;
+}
+
 /** Read-only summary. Any unknown component keeps its selected total unknown. */
 export function nextYearRowTotal(rows: NextYearRow[], key: "revenue_yuan" | "old_students" | "new_students" | "total_students"): number | null {
   if (!rows.length) return null;

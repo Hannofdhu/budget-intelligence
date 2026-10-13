@@ -78,7 +78,6 @@ export function HistoricalBudgetPage() {
   return <div className="budget-shell decision-shell history-budget">
     <a className="skip-link" href="#history-content">跳到主要内容</a>
     <FY27Header active="budget" onHome={() => changeStep(5)}>
-      <label className="decision-budget-select"><span className="sr-only">年度预算</span><select value="2027" onChange={() => location.assign("/budget/workspace")}><option value="2027">FY27 学校版</option><option value="live">其他年度预算</option></select></label>
       <div className="decision-version"><span className="status-dot is-published"/><span>已定版</span><small>只读回看</small></div>
     </FY27Header>
     <main className="decision-workspace" id="history-content">
