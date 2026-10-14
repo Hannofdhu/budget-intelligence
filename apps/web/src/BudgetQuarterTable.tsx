@@ -3,6 +3,7 @@ import { ActionTable } from "./ActionTable";
 import { buildBudgetPivot, dimensionLabels, seasons } from "./budgetAnalysis";
 import type { BudgetDimension, BudgetFact, BudgetMetricValues } from "./budgetAnalysisTypes";
 import type { ExportColumn } from "./budgetExport";
+import { observeBudgetTableHeader } from "./budgetTableLayout";
 
 type QuarterMetric = "total" | "new" | "old" | "revenue";
 type Props = {
@@ -61,8 +62,8 @@ export function BudgetQuarterTable({ facts, unit, fiscalYear, rowDimensions, met
 
   return <section className="ba-panel ba-quarter-budget-panel" aria-label={title}>
     <header><h3>{title}</h3>{headerActions}</header>
-    {rows.length ? <div className="ba-table-wrap" aria-label={`${tableLabel}，可横向滚动`}>
-      <ActionTable keyboardNavigation className={`ba-table ${tableClassName}`} tableLabel={tableLabel}
+    {rows.length ? <ActionTable keyboardNavigation className={`ba-table ${tableClassName}`} tableLabel={tableLabel}
+        scrollClassName="ba-table-wrap" scrollRef={observeBudgetTableHeader} scrollLabel={`${tableLabel}，可横向滚动`}
         exportData={{ columns: exportColumns, rows: exportRows, filename: `FY${String(fiscalYear).slice(-2)}-${title}` }}>
         <thead>
           <tr>{rowDimensions.map(dimension => <th key={dimension} scope="col" rowSpan={2} className={`ba-${dimension}-label`}>{dimensionLabels[dimension]}</th>)}{periods.map(period => <th key={period} scope="colgroup" colSpan={metrics.length}>{period}</th>)}</tr>
@@ -74,7 +75,6 @@ export function BudgetQuarterTable({ facts, unit, fiscalYear, rowDimensions, met
           {periods.map(period => <Fragment key={period}>{metrics.map(metric => <td key={metric.key}>{cell(row.path, period, metric, valueFor(row.cells, row.total, period, metric.key))}</td>)}</Fragment>)}
         </tr>)}</tbody>
         <tfoot><tr><th scope="row" colSpan={rowDimensions.length} className={`ba-${rowDimensions[0]}-label`}>合计</th>{periods.map(period => <Fragment key={period}>{metrics.map(metric => <td key={metric.key}>{cell({}, period, metric, valueFor(pivot.columnTotals, pivot.totals, period, metric.key))}</td>)}</Fragment>)}</tr></tfoot>
-      </ActionTable>
-    </div> : <div className="ba-empty">当前范围没有招生预算</div>}
+      </ActionTable> : <div className="ba-empty">当前范围没有招生预算</div>}
   </section>;
 }

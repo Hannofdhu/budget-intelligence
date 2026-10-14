@@ -112,6 +112,29 @@ test("the other module delegates leave permission without saving or refreshing d
   assert.doesNotMatch(source("FY27Header.tsx"), /\bfetch\s*\(|refreshForecast|reviseForecast|confirmForecast/);
 });
 
+test("AI entry carries the current local scope and loaded version while other navigation targets remain unchanged", () => {
+  const original = globalThis.location;
+  globalThis.location = { pathname: "/budget/next-year", search: "?nyTask=3&bf_campus=西直门&bf_campus=中关村", href: "http://127.0.0.1:5188/budget/next-year?nyTask=3&bf_campus=西直门&bf_campus=中关村" };
+  try {
+    let guarded = 0;
+    const tree = FY27Header({ active: "next-year", children: null, sourceVersion: { id: "saved-N12", label: "N12" }, onBeforeLeave(event) { guarded++; event.preventDefault(); } });
+    const actual = links(tree), ai = actual.find(node => node.props.children === "AI智解");
+    const href = new URL(ai.props.href, "http://127.0.0.1:5188");
+    const source = new URL(href.searchParams.get("source"), "http://127.0.0.1:5188");
+    assert.equal(href.pathname, "/budget/ai"); assert.deepEqual(source.searchParams.getAll("bf_campus"), ["西直门", "中关村"]);
+    assert.equal(source.searchParams.get("nyVersion"), "saved-N12", "returning from AI restores this version even if current advances");
+    assert.equal(href.searchParams.get("sourceVersion"), "saved-N12"); assert.equal(href.searchParams.get("sourceVersionLabel"), "N12");
+    for (const key of ["budget", "forecast", "next-year"]) assert.equal(actual.find(node => node.props.children === labels[key]).props.href, urls[key]);
+    let prevented = 0; ai.props.onClick({ preventDefault() { prevented++; } });
+    assert.equal(guarded, 1); assert.equal(prevented, 1, "unsaved protection still owns whether navigation occurs");
+    globalThis.location.search = "?nyTask=3&bf_season=秋季&bf_season=寒假";
+    const target = { href: ai.props.href };
+    ai.props.onClick({ currentTarget: target, preventDefault() {} });
+    const fresh = new URL(new URL(target.href, "http://127.0.0.1:5188").searchParams.get("source"), "http://127.0.0.1:5188");
+    assert.deepEqual(fresh.searchParams.getAll("bf_season"), ["秋季", "寒假"], "child-owned URL state is read at activation, not captured at the previous header render");
+  } finally { if (original === undefined) delete globalThis.location; else globalThis.location = original; }
+});
+
 test("budget, forecast and next-year budget share the header without separate module navigation", () => {
   for (const name of ["HistoricalBudgetPage.tsx", "ForecastPage.tsx", "NextYearBudgetPage.tsx", "AiAgentPage.tsx"]) {
     const page = source(name);

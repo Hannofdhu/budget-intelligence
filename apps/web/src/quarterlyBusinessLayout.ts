@@ -35,7 +35,7 @@ export function observeQuarterlyBusinessScroll(node: HTMLDivElement | null) {
   function measure() {
     const viewportHeight = view.innerHeight;
     const topChrome = [...(shell?.querySelectorAll<HTMLElement>(".fy27-topbar, .budget-page-navigation") ?? [])];
-    const footers = [...(shell?.querySelectorAll<HTMLElement>(".ny-action-bar, .forecast-confirmation-bar") ?? [])];
+    const footers = [...(shell?.querySelectorAll<HTMLElement>(".ny-action-bar, .forecast-confirm, .forecast-confirmation-bar") ?? [])];
     const head = container.querySelector<HTMLElement>("thead");
     const chromeBottom = topChrome.reduce((bottom, element) => {
       observe(element);

@@ -417,7 +417,7 @@ export interface AuditEventFilters {
   eventType?: string;
   objectType?: string;
   actorId?: string;
-  actingRole?: string;
+  actingRole?: string | string[];
   reasonContains?: string;
   occurredFrom?: string;
   occurredTo?: string;
@@ -579,7 +579,6 @@ export async function fetchAuditEvents(
     ["event_type", filters.eventType],
     ["object_type", filters.objectType],
     ["actor_id", filters.actorId],
-    ["acting_role", filters.actingRole],
     ["reason_contains", filters.reasonContains],
     ["occurred_from", filters.occurredFrom],
     ["occurred_to", filters.occurredTo],
@@ -589,6 +588,8 @@ export async function fetchAuditEvents(
   for (const [key, value] of optionalParams) {
     if (value !== undefined && value !== "") params.set(key, String(value));
   }
+  const actingRoles = typeof filters.actingRole === "string" ? [filters.actingRole] : filters.actingRole ?? [];
+  for (const role of new Set(actingRoles.filter(Boolean))) params.append("acting_role", role);
   const response = await fetch(`/api/v1/audit-events?${params}`, {
     headers: identityHeaders(identity),
     signal,

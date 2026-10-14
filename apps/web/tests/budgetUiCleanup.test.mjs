@@ -33,7 +33,8 @@ test("page and KPI explanations are removed without hiding whole text tags", () 
 
 test("errors, process states, dimensions, dates and audit reasons remain actual UI data", () => {
   assert.match(source("HistoricalBudgetPage.tsx"), /role="alert"/);
-  assert.match(source("HistoricalBudgetPage.tsx"), /\{row\.track\} \/ \{row\.product\}/);
+  assert.match(source("HistoricalBudgetPage.tsx"), /skuIdentityCells\(row\)/);
+  assert.match(source("SkuIdentity.tsx"), /\{row\.track\} \/ \{row\.product\}/);
   assert.match(source("WorkspacePage.tsx"), /sectionStatus\(workspace, section, dirty, confirmed\)/);
   assert.match(source("WorkspacePage.tsx"), /inputIssues\.map/);
   assert.match(source("OpeningStudentsPage.tsx"), /invalid && <p role="alert"/);

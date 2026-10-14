@@ -25,14 +25,14 @@ test("shared scope distinguishes all budget, active scope and zero results witho
   assert.doesNotMatch(all, /清除筛选|budget-scope-chips/);
   const empty = renderToStaticMarkup(createElement(BudgetScopeBar, { filters: { campus: "不存在校区", season: "秋季" }, dimensions, count: 0, onChange() {} }));
   assert.match(empty, /0 条明细/); assert.doesNotMatch(empty, />全部预算</);
-  assert.match(empty, /value="不存在校区" selected=""/); assert.match(empty, /清除校区不存在校区/);
+  assert.match(empty, /role="combobox"[^>]*aria-label="筛选校区"/); assert.match(empty, /title="不存在校区"/); assert.match(empty, /清除校区不存在校区/);
   assert.equal(JSON.stringify(filters), before);
 });
 
 test("select and chip changes preserve other and hidden dimensions and clear uses the explicit owner", () => {
   const filters = { campus: "西直门", season: "秋季", hidden: "沿用" }, before = JSON.stringify(filters), changes = [];
   const tree = BudgetScopeBar({ filters, dimensions, onChange: next => changes.push(next) });
-  find(tree, node => node.type === "select" && node.props["aria-label"] === "筛选校区")[0].props.onChange({ target: { value: "中关村" } });
+  find(tree, node => node.type?.name === "FilterSelect" && node.props["aria-label"] === "筛选校区")[0].props.onChange("中关村");
   assert.deepEqual(changes.at(-1), { campus: "中关村", season: "秋季", hidden: "沿用" });
   find(tree, node => node.type === "button" && node.props["aria-label"] === "清除季度秋季")[0].props.onClick();
   assert.deepEqual(changes.at(-1), { campus: "西直门", season: "", hidden: "沿用" });
@@ -47,9 +47,24 @@ test("select and chip changes preserve other and hidden dimensions and clear use
 test("hidden quarter selection is neither presented nor cleared by an unrelated scope control", () => {
   const changes = [], filters = { campus: "西直门", season: "秋季" };
   const tree = BudgetScopeBar({ filters, dimensions: dimensions.slice(0, 1), onChange: next => changes.push(next), disabled: true, selectLabelPrefix: "全局筛选" });
-  assert.equal(find(tree, node => node.type === "select" && node.props["aria-label"] === "全局筛选校区").length, 1);
-  assert.equal(find(tree, node => node.type === "select" && node.props["aria-label"].includes("季度")).length, 0);
+  assert.equal(find(tree, node => node.type?.name === "FilterSelect" && node.props["aria-label"] === "全局筛选校区").length, 1);
+  assert.equal(find(tree, node => node.type?.name === "FilterSelect" && node.props["aria-label"].includes("季度")).length, 0);
   assert.equal(find(tree, node => node.type === "button" && node.props["aria-label"] === "清除季度秋季").length, 0);
-  for (const control of find(tree, node => node.type === "button" || node.type === "select")) assert.equal(control.props.disabled, true);
+  for (const control of find(tree, node => node.type === "button" || node.type?.name === "FilterSelect")) assert.equal(control.props.disabled, true);
   assert.equal(changes.length, 0);
+});
+
+test("multi-select scope labels and chips retain exact values and only clear the selected dimension", () => {
+  const changes = [], filters = { campus: ["西直门", "中关村"], season: ["暑假", "秋季"], hidden: ["A,B", "C"] };
+  const before = JSON.stringify(filters), tree = BudgetScopeBar({ filters, dimensions, onChange: next => changes.push(next) });
+  const campus = find(tree, node => node.type?.name === "FilterSelect" && node.props["aria-label"] === "筛选校区")[0];
+  assert.deepEqual(campus.props.value, ["西直门", "中关村"]);
+  campus.props.onChange(["中关村", "西直门", "A,B"]);
+  assert.deepEqual(changes.at(-1), { ...filters, campus: ["中关村", "西直门", "A,B"] });
+  const chip = find(tree, node => node.type === "button" && node.props["aria-label"] === "清除校区西直门、中关村")[0];
+  assert.ok(chip); chip.props.onClick();
+  assert.deepEqual(changes.at(-1), { ...filters, campus: "" });
+  find(tree, node => node.type === "button" && label(node) === "清除筛选")[0].props.onClick();
+  assert.deepEqual(changes.at(-1), { campus: "", season: "", hidden: ["A,B", "C"] });
+  assert.equal(JSON.stringify(filters), before);
 });

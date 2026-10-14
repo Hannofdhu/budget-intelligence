@@ -17,7 +17,7 @@ const bundled = await build({ entryPoints: [fileURLToPath(new URL("../src/NextYe
   bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react-dom", "exceljs"], loader: { ".css": "empty" }, logLevel: "silent" });
 const compile = loader => { const module = { exports: {} }; new Function("require", "module", "exports", bundled.outputFiles[0].text)(loader, module, module.exports); return module.exports; };
 const { NextYearOverview, NextYearTopMetrics, NextYearTaskNavigation, nextYearExportColumns, nextYearExportRows, nextYearClassStatus, nextYearRateUsage,
-  effectiveNextYearEntry, parseNextYearParameterPaste, nextYearImpactRows, nextYearAnalysisFacts, nextYearTableData, nextYearQuarterInputValue, NextYearClassReadinessPanel, nextYearClassIssueRows, NextYearClassRepairPanel, canApplyNextYearClassRepair } = compile(require);
+  effectiveNextYearEntry, parseNextYearParameterPaste, nextYearImpactRows, nextYearAnalysisFacts, nextYearTableData, nextYearQuarterInputValue, nextYearMatchesFilters, NextYearClassReadinessPanel, nextYearClassIssueRows, NextYearClassRepairPanel, canApplyNextYearClassRepair } = compile(require);
 const identity = { userId: "local-budget-owner", departmentId: "trial", roles: ["DEPARTMENT_BUDGET_OWNER"] };
 const seasons = ["暑假", "秋季", "寒假", "春季"];
 const filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
@@ -119,7 +119,7 @@ test("overview uses computed goals, business-order quarters and Chinese class st
   const html = renderOverview();
   assert.match(text(html), /全年预算结转收入（万元） 36 总人次 400 老生人次 320 新生人次 80/);
   assert.match(text(html), /全年经营目标 40万元 目标差额 4万元/);
-  let previous = -1; for (const season of seasons) { const next = html.indexOf(`<h3>${season}</h3>`); assert.ok(next > previous); previous = next; }
+  let previous = -1; for (const season of seasons) { const next = html.indexOf(`<h3 class="budget-subsection-title">${season}</h3>`); assert.ok(next > previous); previous = next; }
   assert.doesNotMatch(html, />PASS</); assert.match(html, /达标/);
   assert.equal(nextYearClassStatus("BELOW_MINIMUM_CLASS_SIZE"), "未达班均"); assert.equal(nextYearClassStatus("NO_PLANNED_CLASS"), "未计划开班");
   assert.doesNotMatch(html, /已定版|发布成功/);
@@ -135,7 +135,7 @@ test("next-year carryover revenue labels retain yuan and wan units without chang
 test("filtered overview does not compare a single-quarter result with full-year targets or zero-fill other quarters", () => {
   const html = renderOverview(calculation(), { ...filters, season: "秋季" });
   assert.match(text(html), /当前范围结转收入（万元） 9 总人次 100/); assert.doesNotMatch(html, /全年经营目标|目标差额|全年预算结转收入/);
-  assert.match(html, /<h3>暑假<\/h3>[\s\S]*?<strong>—<\/strong>/); assert.match(html, /<h3>秋季<\/h3>[\s\S]*?<strong>9<\/strong>/);
+  assert.match(html, /<h3 class="budget-subsection-title">暑假<\/h3>[\s\S]*?<strong>—<\/strong>/); assert.match(html, /<h3 class="budget-subsection-title">秋季<\/h3>[\s\S]*?<strong>9<\/strong>/);
   const matrix = html.match(/aria-label="赛道预算对比"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1]; assert.match(text(matrix), /智慧空间 9 100/); assert.doesNotMatch(html, /目标（万元）|差额（万元）/);
 });
 test("overview distinguishes negative, zero, unknown and empty ranges in visible numeric results", () => {
@@ -169,6 +169,7 @@ test("XLSX output is full typed detail in yuan, ratios numeric, null blank and z
 // this is not a substitute for browser focus, layout, or real back/forward acceptance.
 const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : !tree || typeof tree !== "object" ? [] : [tree, ...nodes(tree.props?.children),
   ...nodes(typeof tree.type === "function" && tree.type.name === "PagedTable" ? tree.props?.section?.actions : undefined),
+  ...nodes(typeof tree.type === "function" && tree.type.name === "BudgetDataSection" ? tree.props?.actions : undefined),
   ...nodes(tree.props?.changes), ...nodes(tree.props?.classes)];
 function pageHarness({ stateData = envelope(), edited = {}, changedReason = "", activeTask = 5, activeIdentity = identity, activePreview = null, restoreFilters = false } = {}) {
   const state = [activeIdentity, stateData, structuredClone(stateData.draft?.inputs ?? null), edited, "", "", "", activePreview, changedReason, activeTask, restoreFilters ? undefined : { ...filters }, {}, "", false];
@@ -646,8 +647,8 @@ test("FY28 SKU uses the same long-label identity hierarchy while preserving only
     assert.deepEqual(table.props.copyRows[0], owner.props.headers);
     assert.deepEqual(table.props.copyRows[1], [projected.c0, projected.c1, "否", "是"]);
     h.state[9] = 2;
-    assert.deepEqual(paged(h.render(), "入口分配明细").props.headers, ["校区 / 业务", "入口", "指定人次", "分配方式"],
-      "the SKU identity sample does not migrate another editing task");
+    assert.deepEqual(paged(h.render(), "入口分配明细").props.headers, ["校区 / 赛道 / 产品", "年级 / 科目", "入口", "指定人次", "分配方式"],
+      "the full rollout reuses identity columns without appending another module's business columns");
     assert.equal(JSON.stringify(fixture), saved);
   } finally { restore(); }
 });
@@ -930,8 +931,10 @@ test("specialized class table filters and groups full issue dimensions and expor
   assert.equal(table.props.rows.length, 30); assert.equal(table.props.exportRow(rows[0]).gap, 6); assert.equal(table.props.exportRow(rows[0]).minimum, 10);
   assert.ok(table.props.exportColumns.some(column => column.key === "gap" && column.format === "count"));
   const html = renderToStaticMarkup(React.createElement(NextYearClassReadinessPanel, props));
-  assert.match(html, /一键复制/); assert.match(html, /导出/); assert.match(html, /西直门 \/ 智慧空间 \/ 常规班 \/ 七年级 \/ 数学/);
-  nodes(tree).find(node => node.type === "select" && node.props["aria-label"] === "成班季度筛选").props.onChange({ target: { value: "暑假" } }); assert.equal(selected.season, "暑假");
+  assert.match(html, /一键复制/); assert.match(html, /导出/);
+  assert.match(html, /<strong>西直门<\/strong><small>智慧空间 \/ 常规班<\/small>/);
+  assert.match(html, /<td>七年级<small>数学<\/small><\/td>/);
+  nodes(tree).find(node => typeof node.type === "function" && node.type.name === "FilterSelect" && node.props["aria-label"] === "成班季度筛选").props.onChange("暑假"); assert.equal(selected.season, "暑假");
 });
 
 test("readiness only displays impossibility from server proof and never claims empty incomplete inputs passed", () => {
@@ -964,7 +967,7 @@ test("phase 2 planned-student tool reveals its retained subject scope without cl
     assert.equal(JSON.stringify(h.state[10]), scopeBefore, "opening the tool must not clear its previously hidden subject");
     assert.deepEqual(paged(h.render(), "FY28 计划新生").props.rows.map(item => [item.combination.subject, item.season]), [["英语", "秋季"]]);
     const actualControl = tool.type(tool.props);
-    assert.ok(nodes(actualControl).some(node => node.type === "select" && node.props["aria-label"] === "计划新生筛选科目" && node.props.value === "英语"));
+    assert.ok(nodes(actualControl).some(node => typeof node.type === "function" && node.type.name === "FilterSelect" && node.props["aria-label"] === "计划新生筛选科目" && node.props.value === "英语"));
     nodes(actualControl).find(node => node.type === "button" && node.props["aria-label"] === "清除科目英语").props.onClick();
     assert.equal(h.state[10].subject, ""); assert.equal(h.state[10].season, "秋季");
     assert.equal(paged(h.render(), "FY28 计划新生").props.rows.length, 2, "only the user's explicit chip removal widens this scope");
@@ -988,7 +991,7 @@ test("phase 2 expanded manual adjustments reveal every effective filter on tasks
       assert.equal(manual.props.count, 1);
       assert.deepEqual(paged(h.render(), "预算手动调节明细").props.rows.map(item => [item.subject, item.season]), [["英语", "秋季"]]);
       const actualControl = manual.type(manual.props);
-      for (const name of ["手动调节筛选季度", "手动调节筛选科目"]) assert.ok(nodes(actualControl).some(node => node.type === "select" && node.props["aria-label"] === name));
+      for (const name of ["手动调节筛选季度", "手动调节筛选科目"]) assert.ok(nodes(actualControl).some(node => typeof node.type === "function" && node.type.name === "FilterSelect" && node.props["aria-label"] === name));
       button(h.render(), "手动调节").props.onClick();
       assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[10]]), before, "opening and closing a scope never changes facts or retained filters");
       button(h.render(), "手动调节").props.onClick();
@@ -1634,12 +1637,15 @@ test("M5 year switch restores that year's filter state without carrying the prev
   } finally { globalThis.fetch = original; session.restore(); restore(); }
 });
 
-test("M5 parent clears only filters absent from the selected fiscal year without rewriting budget inputs", () => {
+test("M5 parent keeps unavailable filters visible and empty instead of broadening after a fiscal year change", () => {
   const restore = fakeBrowser();
   try {
     const harness = pageHarness({ activeTask: 3 }); harness.state[10] = { ...filters, campus: "已不存在的校区", grade: "七年级", season: "秋季" };
     const before = JSON.stringify([harness.state[1], harness.state[2]]); filterEffect(harness, "validateNextYearFilters")();
-    assert.deepEqual(harness.state[10], { ...filters, campus: "", grade: "七年级", season: "秋季" }); assert.match(harness.state[6], /已清除当前财年不存在的筛选/);
+    assert.deepEqual(harness.state[10], { ...filters, campus: "已不存在的校区", grade: "七年级", season: "秋季" });
+    assert.equal(paged(harness.render(), "FY28招生参数").props.rows.length, 0);
+    const shown = scopeControl(harness).type(scopeControl(harness).props);
+    assert.ok(nodes(shown).some(node => typeof node.type === "function" && node.type.name === "FilterSelect" && node.props["aria-label"] === "筛选校区" && node.props.value === "已不存在的校区"));
     assert.equal(JSON.stringify([harness.state[1], harness.state[2]]), before); assert.deepEqual(harness.state[3], {});
   } finally { restore(); }
 });
@@ -1780,4 +1786,232 @@ test("M5 a same-year popstate during initial loading does not discard its pendin
     assert.ok(requests.every(request => request.method === "GET"));
     assert.equal(requests.filter(request => request.url.endsWith("/current")).length, 1);
   } finally { cleanupInitialEffect?.(); globalThis.fetch = original; session.restore(); restore(); }
+});
+
+test("exact nyVersion deep links read immutable snapshots even when that version is still the current draft", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const requests = [];
+  try {
+    viewHistory();
+    for (const versionId of ["saved-N1", "current-N2"]) {
+      globalThis.location = { href: `http://127.0.0.1:5188/budget/next-year?year=2028&nyVersion=${versionId}&nyTask=4&bf_campus=西直门&bf_campus=中关村`, search: `?year=2028&nyVersion=${versionId}&nyTask=4&bf_campus=西直门&bf_campus=中关村` };
+      const latest = envelope({ draft: draft({ id: "current-N2", sequence: 2 }) });
+      const exact = envelope({ draft: draft({ id: versionId, sequence: versionId === "saved-N1" ? 1 : 2, calculation: calculation({ annual: totals({ revenue_yuan: "123000" }) }) }), read_only: true });
+      globalThis.fetch = async (url, options) => { requests.push({ url, method: options?.method ?? "GET" }); return Response.json(url.endsWith("session") ? identity : url.endsWith("catalog") ? { sources: [], fiscal_years: [] } : url.includes("/versions/") ? exact : latest); };
+      const h = pageHarness({ activeTask: 4, restoreFilters: true }); h.state[0] = null; h.state[1] = null; h.state[2] = null; h.state[4] = "load";
+      const cleanup = filterEffect(h, "AbortController")(); await flush();
+      assert.equal(h.state[1].draft.id, "current-N2"); assert.equal(h.state[16].draft.id, versionId);
+      assert.deepEqual(scopeControl(h).props.filters.campus, ["西直门", "中关村"]); assert.equal(h.state[9], 4);
+      assert.match(h.html(), /只读/); assert.doesNotMatch(h.html(), /保存新版本/);
+      assert.equal(nodes(h.render()).find(node => node.type?.name === "FY27Header").props.sourceVersion.id, versionId);
+      assert.match(text(renderToStaticMarkup(topMetrics(h.render()))), /12\.3/);
+      assert.equal(new URLSearchParams(globalThis.location.search).get("nyVersion"), versionId);
+      cleanup?.();
+    }
+    assert.equal(requests.filter(request => request.url.includes("/versions/")).length, 2);
+    assert.ok(requests.every(request => request.method === "GET"));
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("an unavailable or mismatched initial nyVersion never falls back to an editable current budget", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const requests = [];
+  try {
+    for (const mismatch of ["missing", "id", "year"]) {
+      globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=exact-N1", search: "?nyVersion=exact-N1" };
+      globalThis.fetch = async (url, options) => {
+        requests.push({ url, method: options?.method ?? "GET" });
+        if (url.endsWith("session")) return Response.json(identity);
+        if (url.endsWith("current")) return Response.json(envelope());
+        if (mismatch === "missing") return Response.json({ detail: "预算快照不存在" }, { status: 404 });
+        return Response.json(envelope({ draft: draft({ id: mismatch === "id" ? "other-N9" : "exact-N1", inputs: inputs({ fiscal_year: mismatch === "year" ? 2029 : 2028 }) }), read_only: true }));
+      };
+      const h = pageHarness(); h.state[0] = null; h.state[1] = null; h.state[2] = null; h.state[4] = "load";
+      const cleanup = filterEffect(h, "AbortController")(); await flush();
+      assert.equal(h.state[1], null); assert.equal(h.state[16] ?? null, null); assert.equal(h.state[4], "");
+      assert.match(h.state[5], mismatch === "missing" ? /快照不存在/ : /版本或财年不匹配/);
+      assert.doesNotMatch(h.html(), /保存新版本|正在查看 N1/); cleanup?.();
+    }
+    assert.ok(requests.every(request => request.method === "GET"));
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("selecting versions and returning current synchronize one shareable URL and browser back restores exact read-only scope", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const listeners = new Map(), requests = [];
+  try {
+    viewHistory(); globalThis.window.addEventListener = (name, listener) => listeners.set(name, listener); globalThis.window.removeEventListener = () => {};
+    globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyTask=3&nyFilters=1&bf_campus=西直门&bf_campus=中关村", search: "?nyTask=3&nyFilters=1&bf_campus=西直门&bf_campus=中关村" };
+    const exact = envelope({ draft: draft({ id: "history-N0", sequence: 0 }), read_only: true });
+    globalThis.fetch = async (url, options) => { requests.push({ url, method: options?.method ?? "GET" }); assert.match(url, /fy28\/versions\/history-N0$/); return Response.json(exact); };
+    const h = pageHarness({ activeTask: 3, restoreFilters: true, stateData: envelope({ history: [{ id: "history-N0", sequence: 0, created_at: "2026-10-01T00:00:00Z" }] }) });
+    openVersions(h); button(pagedRow(h.render(), "FY28预算版本"), "查看").props.onClick(); await flush();
+    const historicalUrl = { ...globalThis.location }, params = new URLSearchParams(historicalUrl.search);
+    assert.equal(params.get("nyVersion"), "history-N0"); assert.equal(params.get("year"), "2028"); assert.equal(params.get("nyTask"), "5"); assert.deepEqual(params.getAll("bf_campus"), ["西直门", "中关村"]);
+    button(h.render(), "返回当前草稿").props.onClick(); assert.equal(h.state[16], null); assert.equal(new URLSearchParams(globalThis.location.search).has("nyVersion"), false); assert.equal(requests.length, 1);
+    filterEffect(h, "popstate")(); globalThis.location = historicalUrl; await listeners.get("popstate")();
+    assert.equal(h.state[16].draft.id, "history-N0"); assert.deepEqual(h.state[10].campus, ["西直门", "中关村"]); assert.doesNotMatch(h.html(), /保存新版本/);
+    filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=2&bf_season=秋季&bf_season=寒假", search: "?year=2028&nyTask=2&bf_season=秋季&bf_season=寒假" }; await listeners.get("popstate")();
+    assert.equal(h.state[16], null); assert.equal(h.state[9], 2); assert.deepEqual(h.state[10].season, ["秋季", "寒假"]); assert.equal(requests.length, 2, "return to the already loaded current draft does not force a refresh");
+    assert.ok(requests.every(request => request.method === "GET"));
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("dirty same-year version navigation rolls back the URL and retains raw edits, notes and filters without transport", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const listeners = new Map(); let requests = 0;
+  try {
+    viewHistory(); globalThis.window.addEventListener = (name, listener) => listeners.set(name, listener); globalThis.window.removeEventListener = () => {};
+    globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyTask=3&bf_campus=西直门&bf_campus=中关村", search: "?nyTask=3&bf_campus=西直门&bf_campus=中关村" };
+    const h = pageHarness({ activeTask: 3, restoreFilters: true, edited: { [key("entry")]: "00125" }, changedReason: "保留备注" });
+    const before = JSON.stringify([h.state[1], h.state[2], h.state[3], h.state[8], h.state[10]]);
+    globalThis.fetch = async () => { requests++; throw new Error("dirty navigation must not read or write"); };
+    filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=old-N0&nyTask=5&bf_campus=其他", search: "?nyVersion=old-N0&nyTask=5&bf_campus=其他" }; await listeners.get("popstate")();
+    assert.equal(requests, 0); assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3], h.state[8], h.state[10]]), before);
+    const params = new URLSearchParams(globalThis.location.search); assert.equal(params.has("nyVersion"), false); assert.equal(params.get("nyTask"), "3"); assert.deepEqual(params.getAll("bf_campus"), ["西直门", "中关村"]); assert.match(h.state[5], /先保存或放弃修改，再切换版本/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("a failed same-year version navigation restores the previous historical URL instead of showing current as that version", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const listeners = new Map();
+  try {
+    viewHistory(); globalThis.window.addEventListener = (name, listener) => listeners.set(name, listener); globalThis.window.removeEventListener = () => {};
+    globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=old-N0&nyTask=4&bf_season=秋季", search: "?nyVersion=old-N0&nyTask=4&bf_season=秋季" };
+    const h = pageHarness({ activeTask: 4, restoreFilters: true }); h.state[16] = envelope({ draft: draft({ id: "old-N0", sequence: 0 }), read_only: true });
+    globalThis.fetch = async () => Response.json({ detail: "目标快照不存在" }, { status: 404 });
+    filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=missing-N9&nyTask=2", search: "?nyVersion=missing-N9&nyTask=2" }; await listeners.get("popstate")();
+    assert.equal(h.state[16].draft.id, "old-N0"); assert.equal(h.state[9], 4); assert.equal(new URLSearchParams(globalThis.location.search).get("nyVersion"), "old-N0"); assert.equal(new URLSearchParams(globalThis.location.search).get("bf_season"), "秋季"); assert.match(h.state[5], /目标快照不存在/); assert.doesNotMatch(h.html(), /保存新版本/);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("a delayed exact-version GET cannot replace current after browser forward returns to the current draft", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const listeners = new Map(); let finish;
+  try {
+    viewHistory(); globalThis.window.addEventListener = (name, listener) => listeners.set(name, listener); globalThis.window.removeEventListener = () => {};
+    const h = pageHarness();
+    globalThis.fetch = async url => { assert.match(url, /versions\/old-N0$/); return new Promise(resolve => { finish = () => resolve(Response.json(envelope({ draft: draft({ id: "old-N0", sequence: 0 }), read_only: true }))); }); };
+    filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=old-N0", search: "?nyVersion=old-N0" }; const older = listeners.get("popstate")(); await flush(); assert.equal(typeof finish, "function");
+    globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyTask=2&bf_season=春季", search: "?nyTask=2&bf_season=春季" }; await listeners.get("popstate")(); finish(); await older;
+    assert.equal(h.state[16] ?? null, null); assert.equal(h.state[1].draft.id, "next-year-N1"); assert.equal(h.state[9], 2); assert.equal(h.state[10].season, "春季"); assert.equal(h.state[4], ""); assert.equal(h.state[5], "");
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("a same-version task and filter popstate preserves an in-flight initial exact-version read without duplicating GETs", async () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; const listeners = new Map(), requests = []; let finish, cleanup;
+  try {
+    viewHistory(); globalThis.window.addEventListener = (name, listener) => listeners.set(name, listener); globalThis.window.removeEventListener = () => {};
+    globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=old-N0", search: "?nyVersion=old-N0" };
+    globalThis.fetch = async url => { requests.push(url); if (url.endsWith("session")) return Response.json(identity); if (url.endsWith("catalog")) return Response.json({ sources: [], fiscal_years: [] }); if (url.endsWith("current")) return Response.json(envelope()); return new Promise(resolve => { finish = () => resolve(Response.json(envelope({ draft: draft({ id: "old-N0", sequence: 0 }), read_only: true }))); }); };
+    const h = pageHarness(); h.state[0] = null; h.state[1] = null; h.state[2] = null; h.state[4] = "load";
+    cleanup = filterEffect(h, "AbortController")(); await flush(); assert.equal(typeof finish, "function");
+    filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?nyVersion=old-N0&nyTask=2&bf_season=秋季&bf_season=寒假", search: "?nyVersion=old-N0&nyTask=2&bf_season=秋季&bf_season=寒假" }; await listeners.get("popstate")();
+    assert.equal(h.state[4], "load"); finish(); await flush();
+    assert.equal(h.state[16].draft.id, "old-N0"); assert.equal(h.state[9], 2); assert.deepEqual(h.state[10].season, ["秋季", "寒假"]); assert.equal(h.state[4], "");
+    assert.equal(requests.filter(url => url.includes("/versions/")).length, 1); assert.equal(requests.filter(url => url.endsWith("current")).length, 1);
+  } finally { cleanup?.(); globalThis.fetch = original; restore(); }
+});
+
+test("design rollout reuses data sections and table identity without adding a second editing or transfer path", () => {
+  const restore = fakeBrowser();
+  try {
+    for (const [task, id, title] of [[1, "ny-goals", "全年目标 · 全部业务"], [2, "ny-entry", "入口新生分配"], [3, "ny-recruitment", "招生参数"], [4, "ny-finance", "财务参数与班量"]]) {
+      const h = pageHarness({ activeTask: task }), tree = h.render();
+      const section = nodes(tree).find(node => typeof node.type === "function" && node.type.name === "BudgetDataSection" && node.props.id === id);
+      assert.ok(section, title); assert.equal(section.props.title, title);
+      assert.equal(scopeControl(h).props.countLabel, task === 3 ? "条参数" : task === 4 ? "条明细" : "条 SKU");
+      assert.equal(nodes(tree).filter(node => node.type === "footer" && node.props["aria-label"] === "预算保存操作").length, 1);
+      assert.equal(nodes(tree).filter(node => node.type === "h1").length, 1);
+      assert.equal(nodes(tree).filter(node => node.type === "h1")[0].props.className, "budget-page-title");
+      assert.deepEqual(h.state[3], {});
+    }
+    const h = pageHarness({ activeTask: 4 }), owner = paged(h.render(), "FY28 财务参数");
+    const shell = owner.type(owner.props), table = nodes(shell).find(node => typeof node.type === "function" && node.type.name === "ActionTable");
+    assert.equal(table.props.scrollClassName, "budget-data-section__scroll");
+    assert.ok(nodes(table.props.toolbarStart).some(node => node.type === "input" && node.props["aria-label"] === "筛选FY28 财务参数"));
+    assert.deepEqual(owner.props.headers, ["校区 / 赛道 / 产品", "年级 / 科目", "季度", "学费（元）", "折扣（%）", "当季结转（%）"]);
+    const heads = nodes(table.props.children).filter(node => node.type === "thead").flatMap(node => nodes(node).filter(item => item.type === "th"));
+    assert.ok(heads.slice(0, 3).every(node => node.props.className === undefined));
+    assert.ok(heads.slice(3).every(node => node.props.className === "budget-cell-number"));
+    const body = nodes(table.props.children).find(node => node.type === "tbody"), cells = nodes(body.props.children[0]).filter(node => node.type === "th" || node.type === "td");
+    assert.equal(cells.length, 6); assert.ok(cells.slice(3).every(node => node.props.className === "budget-cell-number"));
+    assert.equal(table.props.exportData.rows.length, 4); assert.equal(table.props.copyRows.length, 5);
+    assert.deepEqual(table.props.exportData.rows[0], { c0: "西直门 智慧空间  /  常规班", c1: "七年级 数学", c2: "暑假", c3: 1000, c4: 90, c5: 100 });
+    const sku = pageHarness({ activeTask: 1 }), skuOwner = paged(sku.render(), "FY28SKU");
+    const skuTable = nodes(skuOwner.type(skuOwner.props)).find(node => typeof node.type === "function" && node.type.name === "ActionTable");
+    assert.ok(nodes(skuTable.props.children).filter(node => node.type === "th" || node.type === "td").every(node => node.props.className !== "budget-cell-number"), "entry and participation are not numeric metrics");
+  } finally { restore(); }
+});
+
+test("multi scope applies OR within dimensions and AND across dimensions while shared parameter scopes ignore absent subject", () => {
+  const scope = { ...filters, season: ["秋季", "寒假"], campus: ["西直门", "中关村"], subject: ["数学", "英语"] };
+  assert.equal(nextYearMatchesFilters(row({ campus: "中关村", season: "寒假", subject: "英语" }), scope), true);
+  assert.equal(nextYearMatchesFilters(row({ campus: "其他", season: "寒假" }), scope), false);
+  assert.equal(nextYearMatchesFilters(row({ campus: "西直门", season: "春季" }), scope), false);
+  assert.equal(nextYearMatchesFilters({ campus: "西直门", season: "秋季" }, scope), true);
+  assert.equal(nextYearMatchesFilters(row(), { ...filters, season: [], campus: [] }), true);
+});
+
+test("multi scope is shared by SKU, finance, plans, campus allocation and manual adjustments without touching saved inputs", () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("view filtering must not write or compute budgets"); };
+  try {
+    const combinations = [combination(), combination({ id: "c2", campus: "中关村", subject: "英语" }), combination({ id: "c3", campus: "其他" })];
+    const rows = combinations.flatMap(combo => seasons.map(season => row({ ...combo, combination_id: combo.id, season, planned_new_applied: true })));
+    const finance = combinations.flatMap(combo => seasons.map((season, index) => ({ ...inputs().finance[index], id: `${combo.id}-fin-${index}`, combination_id: combo.id })));
+    const rates = combinations.flatMap(combo => seasons.map((season, index) => ({ ...inputs().rates[index], id: `${combo.id}-rate-${index}`, campus: combo.campus })));
+    const plans = combinations.flatMap(combo => seasons.map(season => ({ combination_id: combo.id, season, students: 20 })));
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations, finance, rates, plans }), calculation: calculation({ rows,
+      entry_allocations: combinations.map(combo => ({ campus: combo.campus, students: 100, source_weight: 100 })) }) }) });
+    const h = pageHarness({ stateData: fixture, activeTask: 1 });
+    h.state[10] = { ...filters, season: ["秋季", "寒假"], campus: ["西直门", "中关村"], subject: ["数学", "英语"] };
+    const before = JSON.stringify([h.state[1], h.state[2], h.state[3]]);
+    assert.equal(paged(h.render(), "FY28SKU").props.rows.length, 2);
+    h.state[9] = 2; assert.deepEqual(paged(h.render(), "FY28 校区入口").props.rows.map(item => item.campus), ["西直门", "中关村"]);
+    h.state[9] = 3; assert.equal(paged(h.render(), "FY28招生参数").props.rows.length, 4);
+    button(h.render(), "计划新生").props.onClick(); assert.equal(paged(h.render(), "FY28 计划新生").props.rows.length, 4);
+    assert.equal(nodes(h.render()).find(node => typeof node.type === "function" && node.type.name === "BudgetScopeBar" && node.props.label === "计划新生范围").props.countLabel, "条明细");
+    h.state[9] = 4; assert.equal(paged(h.render(), "FY28 财务参数").props.rows.length, 4);
+    assert.equal(paged(h.render(), "班量参数").props.rows.length, 1, "global track/product parameters are not narrowed by absent campus/subject fields");
+    button(h.render(), "手动调节").props.onClick(); assert.equal(paged(h.render(), "预算手动调节明细").props.rows.length, 4);
+    assert.equal(nodes(h.render()).find(node => typeof node.type === "function" && node.type.name === "BudgetScopeBar" && node.props.label === "手动调节范围").props.countLabel, "条明细");
+    assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), before); assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("multi scope limits bulk parameter edits to selected campuses and quarters and does not create a saved revision", () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("bulk staging cannot save"); };
+  try {
+    const combinations = [combination(), combination({ id: "c2", campus: "中关村" }), combination({ id: "c3", campus: "其他" })];
+    const rates = combinations.flatMap(combo => seasons.map((season, index) => ({ ...inputs().rates[index], id: `${combo.id}-rate-${index}`, campus: combo.campus })));
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations, rates }) }) });
+    const h = pageHarness({ stateData: fixture, activeTask: 3 }); h.state[10] = { ...filters, season: ["秋季", "寒假"], campus: ["西直门", "中关村"], subject: "英语" };
+    const saved = JSON.stringify(h.state[1]);
+    button(h.render(), "批量修改").props.onClick();
+    assert.match(h.html(), /当前筛选 · 4 条适用参数/);
+    nodes(h.render()).find(node => node.type === "input" && node.props["aria-label"] === "批量修改比例").props.onChange({ target: { value: "85" } });
+    button(h.render(), "应用到当前筛选").props.onClick();
+    assert.deepEqual(Object.keys(h.state[3]).sort(), ["combo-1-rate-1", "combo-1-rate-2", "c2-rate-1", "c2-rate-2"].map(id => key("rates", id, "renewal_ppm")).sort());
+    assert.ok(Object.values(h.state[3]).every(value => value === "85"));
+    assert.equal(JSON.stringify(h.state[1]), saved); assert.deepEqual(h.state[2], fixture.draft.inputs); assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("class checks combine multiple problem, campus and quarter selections while grouping remains a single display setting", () => {
+  let next;
+  const rows = [readinessRow(), readinessRow({ combination_id: "two", campus: "中关村", season: "寒假", code: "ENABLED_COMBINATION_ALL_SEASONS_ZERO" }), readinessRow({ combination_id: "other", campus: "其他", season: "秋季" })];
+  const scope = { code: ["BELOW_MINIMUM_CLASS_SIZE", "ENABLED_COMBINATION_ALL_SEASONS_ZERO"], season: ["秋季", "寒假"], campus: ["西直门", "中关村"], group: "campus" };
+  const tree = NextYearClassReadinessPanel(panelProps({ rows, scope, onScopeChange: value => { next = value; } }));
+  assert.equal(paged(tree, "成班问题明细").props.rows.length, 2);
+  const control = nodes(tree).find(node => typeof node.type === "function" && node.type.name === "FilterSelect" && node.props["aria-label"] === "成班季度筛选");
+  control.props.onChange(["暑假", "春季"]); assert.deepEqual(next.season, ["暑假", "春季"]); assert.equal(next.group, "campus");
+  assert.equal(nodes(tree).filter(node => node.type === "select").length, 1);
+});
+
+test("multi filter validation is stable by value and cannot loop on unchanged array identities", () => {
+  const restore = fakeBrowser();
+  try {
+    const h = pageHarness({ activeTask: 3 }); h.state[10] = { ...filters, season: ["秋季", "寒假"], subject: ["数学", "过期"] };
+    filterEffect(h, "validateNextYearFilters")();
+    assert.deepEqual(h.state[10], { ...filters, season: ["秋季", "寒假"], subject: ["数学", "过期"] });
+    const stable = h.state[10]; filterEffect(h, "validateNextYearFilters")();
+    assert.equal(h.state[10], stable, "equivalent normalized values do not trigger setFilters again");
+    assert.deepEqual(h.state[3], {});
+  } finally { restore(); }
 });

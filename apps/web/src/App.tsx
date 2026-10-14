@@ -28,6 +28,7 @@ import {
 import { VersionAuditPage } from "./VersionAuditPage";
 import { RebalancingPage } from "./RebalancingPage";
 import { BudgetContextHeader } from "./BudgetContextHeader";
+import "./publicationDesign.css";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type CheckFilter = "all" | "blocked";
@@ -179,7 +180,7 @@ function CheckRow({ check, revisionId }: { check: PublicationCheck; revisionId: 
       </div>
       <div className="check-row__body">
         <div className="check-row__heading">
-          <h3>{check.rule}</h3>
+          <h4 className="publication-check-title">{check.rule}</h4>
           <span>{check.passed ? "通过" : "需处理"}</span>
         </div>
         <div className="check-row__foot">
@@ -390,7 +391,7 @@ function PublicationPage() {
       return <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取发布状态…</p></main></div>;
     }
     return (
-      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1>{error ? "发布状态读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
+      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1 className="budget-page-title">{error ? "发布状态读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
     );
   }
 
@@ -441,7 +442,7 @@ function PublicationPage() {
           <button className="publication-refresh" onClick={refresh} disabled={loadState === "loading"} aria-label="刷新检查结果"><RefreshGlyph /><span>{loadState === "loading" ? "刷新中" : "刷新"}</span></button>
         </header>
         <div className="publication-heading">
-          <div><p>任务 5 / 5</p><h1 ref={pageTitleRef} tabIndex={-1}>确认并定版</h1></div>
+          <div><p>任务 5 / 5</p><h1 className="budget-page-title" ref={pageTitleRef} tabIndex={-1}>确认并定版</h1></div>
           <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>查看变化记录</a>
         </div>
 
@@ -451,7 +452,7 @@ function PublicationPage() {
           </div>
           <div className="declaration__copy">
             <p>{publishedWithAuditMismatch ? "正式版本复核" : isPublished ? "正式版本" : "发布门禁结论"}</p>
-            <h2>{declaration}</h2>
+            <h2 className="budget-section-title">{declaration}</h2>
           </div>
           <dl className="declaration__facts">
             <div><dt>通过</dt><dd>{passedCount}<small> / {readiness.checks.length}</small></dd></div>
@@ -481,11 +482,10 @@ function PublicationPage() {
         <details className="publication-deep" key={isPublished ? "published" : "editing"} open={!isPublished || publishedWithAuditMismatch}>
           <summary>{isPublished && !publishedWithAuditMismatch ? "查看完整检查与确认记录" : "当前检查与操作"}</summary>
         <div className="work-grid publication-work-grid">
-          <section className="ledger" aria-labelledby="ledger-title">
+          <section className="ledger budget-surface" aria-labelledby="ledger-title">
             <div className="ledger__toolbar">
               <div>
-                <p className="section-index">01 / 硬约束清单</p>
-                <h2 id="ledger-title">逐项核验</h2>
+                <h2 className="budget-section-title" id="ledger-title">逐项核验</h2>
               </div>
               <div className="segmented" aria-label="筛选检查项">
                 <button className={filter === "blocked" ? "is-active" : ""} onClick={() => setFilter("blocked")}>阻断 {readiness.blocker_count}</button>
@@ -499,7 +499,7 @@ function PublicationPage() {
               ) : groupedChecks.map(([group, checks]) => (
                 <section className="check-group" key={group} aria-labelledby={`group-${group}`}>
                   <div className="check-group__title">
-                    <h2 id={`group-${group}`}>{GROUP_LABELS[group] ?? group}</h2>
+                    <h3 className="budget-subsection-title" id={`group-${group}`}>{GROUP_LABELS[group] ?? group}</h3>
                     <span>{checks.filter((item) => item.passed).length} / {checks.length}</span>
                   </div>
                   <div className="check-group__rows">
@@ -510,10 +510,9 @@ function PublicationPage() {
             </div>
           </section>
 
-          <aside className="docket" aria-labelledby="docket-title">
+          <aside className="docket budget-surface" aria-labelledby="docket-title">
             <div className="docket__header">
-              <p className="section-index">02 / 审签卷宗</p>
-              <h2 id="docket-title">正式方案与发布</h2>
+              <h2 className="budget-section-title" id="docket-title">正式方案与发布</h2>
             </div>
 
             <details className="revision-ticket publication-technical">

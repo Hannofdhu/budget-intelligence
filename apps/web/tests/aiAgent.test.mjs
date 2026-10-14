@@ -11,6 +11,7 @@ import {
   getAiAgentStatus, createAiAgentSession, stopAiAgentSession, aiAgentTerminalUrl,
   aiAgentSessionActive, AiAgentTerminalConnection,
 } from "../src/aiAgentApi.ts";
+import { aiBudgetHref, readAiBudgetContext } from "../src/aiBudgetContext.ts";
 
 const require = createRequire(import.meta.url);
 const compiled = await build({
@@ -326,7 +327,7 @@ test("prepared tasks require actual saved-data reads and never invent a bound ve
 
 test("question preparation remains inside the original Pi paper and native Pi is preserved", () => {
   const html = render({ preparedTaskId: "forecast", copyNotice: "已复制，在 Pi 中粘贴后发送" });
-  assert.match(html, /class="ai-agent-paper"[^]*class="ai-agent-prepared"[^]*复制问题/);
+  assert.match(html, /class="ai-agent-paper budget-surface"[^]*class="ai-agent-prepared"[^]*复制问题/);
   assert.match(html, /role="region" aria-label="准备的问题"/);
   assert.match(text(html), /仅准备问题，发送在 Pi 中完成/);
   assert.match(html, /role="status">已复制，在 Pi 中粘贴后发送/);
@@ -347,4 +348,47 @@ test("conversation recall is visible without claiming access to stopped transcri
   assert.doesNotMatch(html, /value="old"|历史对话 2|已读取历史内容/);
   assert.match(text(html), /输入 \/resume 回顾历史对话/);
   assert.match(render({}), /aria-label="会话回顾"/);
+});
+
+test("AI outer shell uses shared design roles without treating session selection as a multi-value data filter", () => {
+  const html = render({ status: status({ sessions: [{ id: "live", state: "running" }] }), selectedSession: "live" });
+  assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
+  assert.match(html, /<h1 class="budget-page-title">AI智解<\/h1>/);
+  assert.match(html, /<h2 class="budget-section-title">会话回顾<\/h2>/);
+  assert.match(html, /<label for="ai-agent-session">工作会话<\/label><select id="ai-agent-session" aria-label="选择工作会话"/);
+  assert.doesNotMatch(html, /<select[^>]*multiple|aria-multiselectable|role="grid"/);
+  assert.match(text(html), /预算只读 独立工作区/);
+  assert.match(source, /fontFamily: '\\?"SF Mono"/);
+  assert.match(source, /event\.isComposing/);
+  assert.match(source, /registerOscHandler\(52/);
+});
+
+test("AI shows the source version and multi-value scope, prepares the same contextual prompt and does not send it", () => {
+  const href = aiBudgetHref("/budget/next-year?year=2029&nyTask=4&bf_season=秋季&bf_season=寒假&bf_campus=西直门&bf_campus=中关村", { id: "saved-N7-id", label: "N7" });
+  const context = readAiBudgetContext(new URL(href, "https://budget.local").search);
+  let started = 0, copied = 0;
+  const props = workspaceProps({ sourceContext: context, preparedTaskId: "next-year", onStart() { started++; }, onCopyPrepared() { copied++; } });
+  const tree = AiAgentWorkspace(props), html = render(props);
+  assert.match(text(html), /来源 下一年预算 · FY29/); assert.match(text(html), /N7 · saved-N7-id/);
+  assert.match(text(html), /季度：秋季、寒假；校区：西直门、中关村/);
+  assert.match(html, /返回来源页面/); assert.match(html, /nyTask=4/);
+  const prompt = aiAgentPreparedPrompt("next-year", context);
+  assert.match(prompt, /saved-N7-id/); assert.match(prompt, /季度：秋季、寒假/); assert.match(prompt, /不要修改、刷新、确认或保存预算/);
+  assert.doesNotMatch(prompt, /请先读取最新已保存/);
+  const prepared = nodes(tree).find(node => node.props?.className === "ai-agent-prepared");
+  assert.equal(nodes(prepared).find(node => node.type === "p").props.children, prompt);
+  assert.equal(started, 0); assert.equal(copied, 0);
+  nodes(tree).find(node => node.type === "button" && node.props.children === "复制问题").props.onClick();
+  assert.equal(copied, 1); assert.equal(started, 0);
+  assert.match(source, /aiAgentPreparedPrompt\(preparedTaskId, sourceContext\)/);
+});
+
+test("an unbound or unknown-version AI page discloses the missing source instead of claiming latest is the old scope", () => {
+  const unbound = render({ preparedTaskId: "forecast" });
+  assert.match(text(unbound), /未绑定来源页面/); assert.match(text(unbound), /精确版本和范围/);
+  assert.doesNotMatch(unbound, /<a[^>]*>返回来源页面/);
+  const context = readAiBudgetContext(new URL(aiBudgetHref("/budget/forecast?bf_scope=1&bf_track=智慧空间"), "https://budget.local").search);
+  const html = render({ sourceContext: context, preparedTaskId: "forecast" });
+  assert.match(text(html), /版本未指定，分析前须读取并核对/);
+  assert.match(aiAgentPreparedPrompt("forecast", context), /不能把最新版本冒充用户原页面的版本或范围/);
 });

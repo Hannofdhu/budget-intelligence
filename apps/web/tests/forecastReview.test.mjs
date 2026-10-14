@@ -37,7 +37,7 @@ const confirmationCheck = (more = {}) => ({ season: "暑假", source_complete: t
 const version = (more = {}) => ({ id: "p14", sequence: 14, status: "DRAFT", assumptions: { trial_mode: false }, calculation: { ready: true, issues: [] }, ...more });
 const owner = { userId: "owner", departmentId: "department", roles: ["DEPARTMENT_BUDGET_OWNER"] };
 const find = (node, predicate) => Array.isArray(node) ? node.flatMap(child => find(child, predicate)) : !node || typeof node !== "object" ? []
-  : [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)];
+  : [...(predicate(node) ? [node] : []), ...find(typeof node.type === "function" && node.type.name === "BudgetDataSection" ? node.type(node.props) : node.props?.children, predicate)];
 
 test("the dashboard data notice counts only blockers and never exposes warning records or raw evidence", () => {
   const issues = [...Array.from({ length: 47 }, () => missing()), ...["暑假", "秋季", "寒假", "春季"].map(season => warning({ season }))];
@@ -72,7 +72,7 @@ test("qualified empty-budget INFO records never become a main-screen task and ne
   assert.doesNotMatch(review, /47|零预算校区|FINALIZED_ACTUAL_MISSING|confirmation_exemption|<pre/);
   const mixed = [...issues, missing({ code: "CURRENT_SOURCE_MISSING", season: "秋季" })];
   assert.match(text(render(ForecastDataNotice, { issues: mixed, onOpen() {} })), /数据待核对 · 1项/);
-  assert.match(text(render(ForecastDataReview, { issues: mixed })), /其他待核对数据 1项/);
+  assert.match(text(render(ForecastDataReview, { issues: mixed })), /其他待核对数据 1 项待核对/);
   const sameGroup = groupForecastIssues([confirmationInfo(), missing(), warning({ code: "FINALIZED_ACTUAL_MISSING" })]);
   assert.equal(sameGroup[0].severity, "BLOCKING"); assert.equal(sameGroup[0].issues.length, 3);
   assert.equal(groupForecastIssues([confirmationInfo(), warning({ code: "FINALIZED_ACTUAL_MISSING" })])[0].severity, "WARNING");
@@ -180,11 +180,11 @@ test("data review separates missing actuals, other blockers and folded records w
   const issues = [missing(), missing({ dims: dims({ grade: "八年级", subject: "英语" }) }),
     missing({ code: "SOURCE_UNMAPPED", season: "秋季" }), warning()];
   const before = JSON.stringify(issues), html = render(ForecastDataReview, { issues }), readable = text(html);
-  assert.match(readable, /已定版实际 2项待核对/); assert.match(readable, /其他待核对数据 1项/); assert.match(readable, /原预算记录 1项/);
+  assert.match(readable, /已定版实际 2 项待核对/); assert.match(readable, /其他待核对数据 1 项待核对/); assert.match(readable, /原预算记录 1项/);
   assert.match(readable, /此处不能补录已定版实际/);
   assert.match(html, /<details class="forecast-review-campus"><summary>/);
   assert.match(html, /aria-label="西直门待核对实际"/); assert.match(html, /tabindex="0"/);
-  assert.match(readable, /智慧空间 \/ 常规班 \/ 八年级 \/ 英语/);
+  assert.match(readable, /校区 \/ 赛道 \/ 产品 年级 \/ 科目/); assert.match(readable, /八年级 英语/);
   assert.match(readable, /实际业务待对应/); assert.match(html, /<details class="forecast-review-evidence"><summary>技术信息/);
   assert.doesNotMatch(html, /<input|<select|<textarea/); assert.equal(JSON.stringify(issues), before);
   assert.match(text(render(ForecastDataReview, { issues: [] })), /没有待核对数据/);
@@ -285,16 +285,16 @@ function pageHarness(overrides = {}) {
     adjustment: { season: "秋季", campus: "", kind: "additional", value: "", reason: "" },
     showConfirm: false, confirmationReason: "", trialDraftChanged: false, pendingNavigation: "", selectedVersionId: "", failure: null, versionsOpen: false, ...overrides };
   let cursor = 0, refCursor = 0;
-  const refs = [];
+  const refs = [], effects = [];
   const exports = loadPage(name => name === "react" ? { ...require(name),
     useState(initial) {
       const key = pageStateNames[cursor++];
       assert.ok(key, "a new top-level state must be explicitly modeled rather than silently bypassed");
       return [state[key], update => { state[key] = typeof update === "function" ? update(state[key]) : update; }];
-    }, useRef: value => refs[refCursor++] ??= { current: value }, useEffect() {}, useMemo: compute => compute(),
+    }, useRef: value => refs[refCursor++] ??= { current: value }, useEffect(effect) { effects.push(effect); }, useMemo: compute => compute(),
   } : require(name));
-  const page = () => { cursor = 0; refCursor = 0; const tree = exports.ForecastPage(); assert.equal(cursor, pageStateNames.length); return tree; };
-  return { state, page, current };
+  const page = () => { cursor = 0; refCursor = 0; effects.length = 0; const tree = exports.ForecastPage(); assert.equal(cursor, pageStateNames.length); return tree; };
+  return { state, page, current, mountVersionHistory() { const effect = effects.find(effect => effect.toString().includes("popstate")); assert.ok(effect); return effect(); } };
 }
 const elementText = node => Array.isArray(node) ? node.map(elementText).join("") : node && typeof node === "object" ? elementText(node.props?.children) : node == null || typeof node === "boolean" ? "" : String(node);
 const buttons = (tree, label) => find(tree, node => node.type === "button" && elementText(node) === label);
@@ -535,8 +535,8 @@ function scopeHarness({ dirty = true, disabled = false } = {}) {
     { dims: dims({ campus: "西直门南" }), kind: "UNBUDGETED_BUSINESS", reason: "第二条业务", additional: { 秋季: 0 },
       financial: { 秋季: { price: "4000", discount: "0.9", recognition: "1", renewal: "0.8", share: "0.2", method: "PEER_GRADE_WEIGHTED" } } },
   ];
-  const names = ["season", "query", "page", "selected", "draft", "error"];
-  const state = { season: "秋季", query: "", page: 0, selected: 0, draft: { ...trialFinancialDraft(scopes[0], "秋季", false), ...(dirty ? { additional: "17", reason: "保留的手动修改" } : {}) }, error: "" };
+  const names = ["season", "query", "page", "selected", "draft", "error", "seasonFilter"];
+  const state = { season: "秋季", seasonFilter: "秋季", query: "", page: 0, selected: 0, draft: { ...trialFinancialDraft(scopes[0], "秋季", false), ...(dirty ? { additional: "17", reason: "保留的手动修改" } : {}) }, error: "" };
   const changed = [], dirtyReports = [];
   let cursor = 0;
   const exports = loadPage(name => name === "react" ? { ...require(name),
@@ -554,8 +554,8 @@ test("independent-business dirty drafts refuse detail and season changes, retain
   assert.equal(h.state.selected, 0); assert.equal(JSON.stringify(h.state.draft), draft);
   assert.match(h.state.error, /先加入本次修改，或放弃当前编辑，再切换明细/);
   assert.match(elementText(h.editor()), /先加入本次修改，或放弃当前编辑，再切换明细/);
-  const season = find(h.editor(), node => node.type === "select")[0];
-  season.props.onChange({ target: { value: "寒假" } });
+  const season = find(h.editor(), node => typeof node.type === "function" && node.type.name === "FilterSelect")[0];
+  season.props.onChange("寒假");
   assert.equal(h.state.season, "秋季"); assert.equal(h.state.selected, 0); assert.equal(JSON.stringify(h.state.draft), draft);
   assert.match(h.state.error, /先加入本次修改，或放弃当前编辑，再切换季度/);
   const discard = buttons(h.editor(), "放弃当前编辑"); assert.equal(discard.length, 1);
@@ -579,17 +579,82 @@ test("adding an independent-business edit uses the real validation callback, cle
   assert.equal(readonly.changed.length, 0); assert.equal(readonly.state.selected, 0);
 });
 
+test("independent-business multi-quarter filtering exports every selected quarter but only edits the explicitly chosen row quarter", () => {
+  const h = scopeHarness({ dirty: false }), before = JSON.stringify(h.scopes), previousFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = callback => { callback(); return 1; };
+  try {
+    h.state.selected = null; h.state.draft = null;
+    const filter = tree => find(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[0];
+    filter(h.editor()).props.onChange(["秋季", "寒假"]);
+    const tree = h.editor(), [table] = find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable");
+    assert.equal(table.props.exportData.rows.length, 4);
+    assert.deepEqual(table.props.exportData.rows.map(row => row.season), ["秋季", "寒假", "秋季", "寒假"]);
+    assert.equal(table.props.exportData.rows[0].price, "3000.123456");
+    assert.equal(table.props.exportData.rows[1].price, "3100");
+    assert.equal(table.props.exportData.rows[3].price, undefined, "missing future values remain absent rather than fabricated zero");
+    const headers = find(find(table, node => node.type === "thead")[0], node => node.type === "th").map(elementText);
+    assert.deepEqual(headers.slice(0, 3), ["季度", "校区 / 赛道 / 产品", "年级 / 科目"]);
+    assert.deepEqual(headers.slice(3), ["学费（元）", "折扣", "当季结转比例", "续班率", "新生占比", "后续新增", "操作"]);
+    const adjust = find(tree, node => node.type === "button" && node.props["aria-label"]?.startsWith("调整寒假"))[0];
+    adjust.props.onClick();
+    assert.equal(h.state.season, "寒假"); assert.equal(h.state.selected, 0); assert.equal(h.state.draft.price, "3100");
+    assert.match(elementText(h.editor()), /寒假 · 西直门/);
+    h.state.draft = { ...h.state.draft, price: "3200.123456", reason: "只改寒假单条参数" };
+    buttons(h.editor(), "加入本次修改")[0].props.onClick();
+    assert.equal(h.changed.length, 1);
+    assert.equal(h.changed[0][0].financial.寒假.price, "3200.123456");
+    assert.deepEqual(h.changed[0][0].financial.秋季, h.scopes[0].financial.秋季);
+    assert.equal(h.changed[0][1], h.scopes[1]);
+    assert.equal(JSON.stringify(h.scopes), before);
+    const dirty = scopeHarness();
+    filter(dirty.editor()).props.onChange(["暑假", "春季"]);
+    assert.equal(dirty.state.seasonFilter, "秋季"); assert.equal(dirty.state.season, "秋季");
+    assert.equal(dirty.changed.length, 0); assert.match(dirty.state.error, /先加入本次修改/);
+  } finally { if (previousFrame === undefined) delete globalThis.requestAnimationFrame; else globalThis.requestAnimationFrame = previousFrame; }
+});
+
 const settlePage = async predicate => {
   for (let attempt = 0; attempt < 40 && !predicate(); attempt++) await new Promise(resolve => setImmediate(resolve));
   assert.ok(predicate(), "the real page request must settle");
 };
 function forecastBrowser() {
   const previous = globalThis.window;
-  const urls = [];
+  const urls = [], listeners = new Map();
+  const setUrl = value => { const url = new URL(String(value), "http://127.0.0.1:5188"); globalThis.window.location.href = url.href; globalThis.window.location.search = url.search; };
   globalThis.window = { location: { href: "http://127.0.0.1:5188/budget/forecast?archive=fy27", search: "?archive=fy27" },
-    history: { state: null, replaceState(_state, _title, url) { urls.push(String(url)); } } };
-  return { urls, restore() { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; } };
+    history: { state: null, replaceState(_state, _title, url) { urls.push(String(url)); setUrl(url); } },
+    addEventListener(name, callback) { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); }, removeEventListener(name, callback) { listeners.get(name)?.delete(callback); } };
+  return { urls, navigate(url) { setUrl(url); for (const callback of listeners.get("popstate") ?? []) callback(); }, restore() { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; } };
 }
+
+test("forecast history navigation reads the exact URL version with GET and preserves scope, while dirty changes keep the current version", async () => {
+  const h = pageHarness(), browser = forecastBrowser(), previous = globalThis.fetch, calls = [];
+  let cleanup;
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ version: { ...h.current, id: "saved-p3", sequence: 3 }, history: [h.current] }); };
+  try {
+    h.page(); cleanup = h.mountVersionHistory();
+    browser.navigate("/budget/forecast?archive=fy27&forecast_version=saved-p3&bf_scope=1&bf_campus=西直门&bf_campus=中关村&bf_season=暑假&bf_season=秋季");
+    await settlePage(() => !h.state.busy && h.state.selectedVersionId === "saved-p3");
+    assert.equal(calls.length, 1); assert.equal(calls[0].url, "/api/v1/forecasts/fy27/versions/saved-p3"); assert.equal(calls[0].options.method, undefined);
+    assert.deepEqual(new URLSearchParams(window.location.search).getAll("bf_campus"), ["西直门", "中关村"]);
+    const header = component(h.page(), "FY27Header"); assert.deepEqual(header.props.sourceVersion, { id: "saved-p3", label: "P3" });
+    cleanup(); h.state.reason = "保留本版未保存修改"; h.page(); cleanup = h.mountVersionHistory();
+    const before = JSON.stringify(h.state.data);
+    browser.navigate("/budget/forecast?archive=fy27&forecast_version=saved-p4&bf_scope=1&bf_season=春季");
+    assert.equal(calls.length, 1); assert.equal(h.state.reason, "保留本版未保存修改"); assert.equal(h.state.selectedVersionId, "saved-p3");
+    assert.equal(new URLSearchParams(window.location.search).get("forecast_version"), "saved-p3");
+    assert.equal(new URLSearchParams(window.location.search).get("bf_season"), "春季");
+    assert.match(h.state.notice, /先完成或放弃当前操作/); assert.equal(JSON.stringify(h.state.data), before);
+    cleanup(); h.state.reason = ""; h.page(); cleanup = h.mountVersionHistory();
+    globalThis.fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ detail: "保存版本暂时无法读取" }, { status: 503 }); };
+    browser.navigate("/budget/forecast?archive=fy27&forecast_version=saved-p5&bf_scope=1&bf_campus=未知校区");
+    await settlePage(() => !h.state.busy && Boolean(h.state.error));
+    assert.equal(h.state.selectedVersionId, "saved-p3"); assert.equal(JSON.stringify(h.state.data), before);
+    assert.equal(new URLSearchParams(window.location.search).get("forecast_version"), "saved-p3");
+    assert.equal(new URLSearchParams(window.location.search).get("bf_campus"), "未知校区");
+    assert.ok(calls.every(call => call.options.method !== "POST"));
+  } finally { cleanup?.(); globalThis.fetch = previous; browser.restore(); }
+});
 
 test("failed update preserves saved P16 and retry sends actual POST with the same intent rather than a saved-result GET", async () => {
   const h = pageHarness();

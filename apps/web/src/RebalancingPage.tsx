@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActionTable } from "./ActionTable";
+import "./auxiliaryDesign.css";
 
 import {
   ApiError,
@@ -218,7 +220,7 @@ function CandidateCard({
           <span>{String(index + 1).padStart(2, "0")}</span>
           <div>
             <p>{scenario.scenario_types.map((item) => PROFILE_LABELS[item] ?? item).join(" · ")}</p>
-            <h3>{scenarioName(scenario.scenario_types, index)}</h3>
+            <h3 className="budget-subsection-title">{scenarioName(scenario.scenario_types, index)}</h3>
           </div>
           <em>{selected ? "正在比较" : "选择"}</em>
         </div>
@@ -236,22 +238,22 @@ function CandidateCard({
   );
 }
 
-function ChangeTable({ changes }: { changes: ScenarioChange[] }) {
+export function ChangeTable({ changes }: { changes: ScenarioChange[] }) {
   return (
-    <div className="change-table" role="table" aria-label="候选方案参数变更">
-      <div className="change-table__row change-table__head" role="row">
-        <span>杠杆</span><span>对象键</span><span>原值</span><span>建议值</span><span>变化</span>
-      </div>
+    <ActionTable tableLabel="候选方案参数变更" aria-label="候选方案参数变更" keyboardNavigation scrollClassName="budget-auxiliary-table-scroll" className="budget-auxiliary-table">
+      <thead><tr>{["杠杆", "对象键", "原值", "建议值", "变化"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+      <tbody>
       {changes.map((change) => (
-        <div className="change-table__row" role="row" key={change.scenario_change_id}>
-          <strong>{CHANGE_LABELS[change.object_type]}</strong>
-          <code title={change.object_stable_key}>{shortKey(change.object_stable_key)}</code>
-          <span>{formatValue(change, change.original_value)}</span>
-          <span>{formatValue(change, change.suggested_value)}</span>
-          <em>{change.adjustment > 0 ? "+" : ""}{formatValue(change, change.adjustment)}</em>
-        </div>
+        <tr key={change.scenario_change_id}>
+          <th scope="row">{CHANGE_LABELS[change.object_type]}</th>
+          <td><code>{change.object_stable_key}</code></td>
+          <td className="budget-cell-number">{formatValue(change, change.original_value)}</td>
+          <td className="budget-cell-number">{formatValue(change, change.suggested_value)}</td>
+          <td className="budget-cell-number">{change.adjustment > 0 ? "+" : ""}{formatValue(change, change.adjustment)}</td>
+        </tr>
       ))}
-    </div>
+      </tbody>
+    </ActionTable>
   );
 }
 
@@ -259,7 +261,7 @@ function ProofPanel({ proofs }: { proofs: InfeasibilityProof[] }) {
   if (!proofs.length) return null;
   return (
     <section className="proof-panel">
-      <header><p>不可行证据</p><span>{proofs.length} 份不可变证明</span></header>
+      <header><h2 className="budget-section-title">不可行证据</h2><span>{proofs.length} 份不可变证明</span></header>
       {proofs.map((proof) => (
         <details key={proof.infeasibility_proof_id}>
           <summary>
@@ -464,7 +466,7 @@ export function RebalancingPage() {
   const title = isPublished ? "这版预算已定版" : !isCurrentDraft ? "这是历史修订" : !closure ? "先完成预算计算" : needsBalancing ? gap !== null && gap < 0 ? "预算还有缺口" : "预算超出目标" : "无需调平";
 
   return (
-    <div className="app-frame rebalance-app decision-shell">
+    <div className="app-frame rebalance-app decision-shell budget-auxiliary">
       <a className="skip-link" href="#rebalance-main">跳到缺口处理</a>
       <BudgetContextHeader fiscalYear={budget.fiscal_year} revisionNo={revision.revision_no} revisionId={revision.budget_revision_id} status={isPublished ? "已定版" : "草稿"} />
 
@@ -472,8 +474,7 @@ export function RebalancingPage() {
         <div className="context-return"><a href={isPublished ? resultHref : workspaceHref}>返回{isPublished ? "预算结果" : "计算结果"}</a><span>缺口处理</span></div>
         <section className="rebalance-hero">
           <div>
-            <p className="decision-kicker">FY{String(budget.fiscal_year).slice(-2)} / 预算结果</p>
-            <h1>{title}</h1>
+            <h1 className="budget-page-title">{title}</h1>
 
           </div>
           <div className={`gap-ledger ${gap !== null && !needsBalancing ? "gap-ledger--closed" : ""}`}>
@@ -510,7 +511,7 @@ export function RebalancingPage() {
 
         {isCurrentDraft && needsBalancing && run?.status !== "OPTIMAL" && run?.discount_unlock_required && (
           <section className="unlock-desk">
-            <div><span>03 / 折扣门禁</span><h2>前两级已精确穷尽</h2></div>
+            <div><h2 className="budget-section-title">前两级已精确穷尽</h2></div>
             <div className="unlock-desk__actions">
               {!unlock && <><textarea rows={3} value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} /><button onClick={() => void requestUnlock()} disabled={!exactRateProof || state === "working"}>数据维护人员发起解锁</button></>}
               {unlock?.status === "REQUESTED" && <><p><strong>已申请</strong><span>{unlock.reason}</span></p><button onClick={() => void confirmUnlock()} disabled={state === "working"}>部门预算负责人确认</button></>}
@@ -521,7 +522,7 @@ export function RebalancingPage() {
 
         {isCurrentDraft && needsBalancing && <section className="candidate-section">
           <header>
-            <div><span>可选方案</span><h2>先比较，再应用</h2></div>
+            <div><h2 className="budget-section-title">先比较，再应用</h2></div>
             {Boolean(run?.scenarios.length) && <span>{run!.scenarios.length} 个方案</span>}
           </header>
           {run?.scenarios.length ? (
@@ -529,13 +530,13 @@ export function RebalancingPage() {
               {run.scenarios.map((scenario, index) => <CandidateCard key={scenario.rebalancing_scenario_id} scenario={scenario} index={index} selected={selectedId === scenario.rebalancing_scenario_id} onSelect={() => { setSelectedId(scenario.rebalancing_scenario_id); setShowDetails(true); }} />)}
             </div>
           ) : (
-            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3>{run?.status === "INFEASIBLE" ? "当前约束下没有可行方案" : run?.status === "INCOMPLETE" ? "尚未求出结论" : run?.status === "FAILED" ? "方案生成失败" : "等待生成方案"}</h3>{run?.reason_code && <p role="status">{run.reason_code}</p>}</div>
+            <div className="candidate-empty"><span>{run ? STATUS_LABELS[run.status] : "未生成"}</span><h3 className="budget-subsection-title">{run?.status === "INFEASIBLE" ? "当前约束下没有可行方案" : run?.status === "INCOMPLETE" ? "尚未求出结论" : run?.status === "FAILED" ? "方案生成失败" : "等待生成方案"}</h3>{run?.reason_code && <p role="status">{run.reason_code}</p>}</div>
           )}
         </section>}
 
         {isCurrentDraft && selected && showDetails && (
-          <section className="scenario-detail">
-            <header><div><span>差异明细</span><h2>{scenarioName(selected.scenario_types, run?.scenarios.indexOf(selected) ?? 0)}</h2></div><button onClick={() => setShowDetails(false)} aria-label="关闭明细">×</button></header>
+          <section className="scenario-detail budget-surface">
+            <header><div><h2 className="budget-section-title">{scenarioName(selected.scenario_types, run?.scenarios.indexOf(selected) ?? 0)}差异明细</h2></div><button onClick={() => setShowDetails(false)} aria-label="关闭明细">×</button></header>
             <div className="scenario-detail__summary">
               <dl>
                 <div><dt>结转收入结果</dt><dd>{selected.objective_values.department_revenue_yuan === undefined ? "—" : formatCompactMoney(asNumber(selected.objective_values.department_revenue_yuan))}</dd></div>

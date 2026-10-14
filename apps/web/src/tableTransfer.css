@@ -1,6 +1,6 @@
 .table-transfer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; padding: .65rem .8rem; background: #f8faf7; border-bottom: 1px solid #e1e8df; min-width: 0; }
 .table-transfer > span { font-size: .75rem; color: #466857; margin-right: auto; max-width: 32rem; }
-.table-transfer > button { width: auto; min-height: 2rem; padding: .35rem .7rem; border: 1px solid #d6e0d7; border-radius: .45rem; background: #fff; color: #315a48; font: inherit; font-size: .75rem; white-space: nowrap; cursor: pointer; transition: background-color .15s, transform .15s; }
+.table-transfer > button { width: auto; min-height: 2.25rem; padding: .35rem .7rem; border: 1px solid var(--budget-control-border); border-radius: var(--budget-radius-control); background: #fff; color: var(--budget-accent); font: inherit; font-size: var(--budget-body-size); white-space: nowrap; cursor: pointer; transition: background-color .15s, transform .15s; }
 .table-transfer > button:hover:not(:disabled) { background: #eaf2eb; }
 .table-transfer > button:active:not(:disabled) { transform: scale(.98); }
 .table-transfer > button:focus-visible { outline: 2px solid #4c8363; outline-offset: 2px; }

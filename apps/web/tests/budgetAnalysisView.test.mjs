@@ -755,7 +755,7 @@ test("back and forward restore the saved identity without reloading stored filte
     const harness = analysisHarness({ facts: fourQuarters });
     let tree = harness.render(); harness.effects(); tree = harness.render();
     elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: "saved:history" } }); tree = harness.render(); harness.effects(); tree = harness.render();
-    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange({ target: { value: "秋季" } }); tree = harness.render(); harness.effects(); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange("秋季"); tree = harness.render(); harness.effects(); tree = harness.render();
     const savedEntry = browser.historySnapshot();
     assert.equal(new URL(savedEntry.url).searchParams.get("baSavedView"), "history");
     elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: "preset:renewal" } }); tree = harness.render(); harness.effects(); tree = harness.render();
@@ -783,7 +783,7 @@ test("layout-only views do not become dirty merely because shared filters change
     let tree = harness.render(); harness.effects(); tree = harness.render();
     elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: "saved:layout" } }); tree = harness.render();
     assert.equal(findButton(tree, "保存修改").props.disabled, true);
-    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange({ target: { value: "寒假" } }); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange("寒假"); tree = harness.render();
     assert.equal(findButton(tree, "保存修改").props.disabled, true);
     assert.equal(elements(tree).some(node => node.props?.className === "ba-unsaved"), false);
     assert.deepEqual(browser.readViews(), [saved]);
@@ -863,10 +863,10 @@ test("saving updates only the selected personal view, save-as creates a separate
     const created = browser.readViews().find(view => view.name === "仅保存布局");
     assert.ok(created); assert.notEqual(created.id, "current"); assert.equal(created.includesFilters, false);
     assert.equal(browser.readViews().length, 3);
-    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange({ target: { value: "秋季" } }); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange("秋季"); tree = harness.render();
     elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: "saved:current" } }); tree = harness.render();
     assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除季度暑假"));
-    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange({ target: { value: "秋季" } }); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange("秋季"); tree = harness.render();
     elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: `saved:${created.id}` } }); tree = harness.render();
     assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除季度秋季"), "a layout-only saved view must retain the current filter scope");
     viewActions(tree).props.onClick(); tree = harness.render();
@@ -939,9 +939,9 @@ test("malformed stored views sanitize filters and layout before reaching control
     let tree = harness.render(); harness.effects(); tree = harness.render();
     const picker = () => elements(tree).find(node => node.props?.["aria-label"] === "透视视图");
     assert.equal(elements(picker()).some(node => node.type === "option" && node.props.value === "saved:no-state"), false);
-    for (const [id, expected] of [["objects", { ...emptyFilters, season: "秋季" }], ["filter-array", emptyFilters], ["filter-number", emptyFilters], ["state-array", emptyFilters]]) {
+    for (const [id, expected] of [["objects", { ...emptyFilters, product: "白金", season: "秋季" }], ["filter-array", emptyFilters], ["filter-number", emptyFilters], ["state-array", emptyFilters]]) {
       picker().props.onChange({ target: { value: `saved:${id}` } }); tree = harness.render();
-      assert.deepEqual(changes.at(-1), expected, `${id} must contain only the six valid dimension strings`);
+      assert.deepEqual(changes.at(-1), expected, `${id} must contain only the six valid dimension selections, including legitimate string arrays`);
       assert.ok(Object.values(changes.at(-1)).every(value => typeof value === "string"));
       const url = new URL(browser.writes.at(-1));
       assert.equal(url.searchParams.get("baRows"), "campus");
@@ -1181,4 +1181,69 @@ test("detail-tab exports after an incoming controlled change contain only the la
     assert.equal(workbook.worksheets[0].getRow(2).getCell(6).value, "秋季");
     assert.equal(requests, 0);
   } finally { globalThis.fetch = oldFetch; URL.createObjectURL = createURL; browser.restore(); }
+});
+
+test("personal multi-select views save exact selections, survive navigation, and clear one scope without budget writes", () => {
+  const filters = { ...emptyFilters, campus: ["A,B", "中关村"], season: ["暑假", "秋季"] };
+  const state = { view: "pivot", unit: "yuan", filters, config: { rows: ["campus"], column: "season", metrics: ["revenue"], sort: "name-asc" } };
+  const saved = { id: "multi", name: "两校区两季度", contextKey: "controlled:2028", fiscalYear: 2028, includesFilters: true, state };
+  const facts = ["A,B", "中关村", "排除校区"].flatMap(campus => fourQuarters.map(row => ({ ...row, id: `${campus}-${row.season}`, campus })));
+  const before = JSON.stringify(facts), browser = hookBrowser("baView=pivot", [saved]), oldFetch = globalThis.fetch;
+  let requests = 0; globalThis.fetch = () => { requests++; throw new Error("filter state must not call budget APIs"); };
+  try {
+    const harness = analysisHarness({ facts });
+    let tree = harness.render(); harness.effects(); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "透视视图").props.onChange({ target: { value: "saved:multi" } });
+    tree = harness.render(); harness.effects(); tree = harness.render();
+    assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除校区A,B、中关村"));
+    assert.ok(elements(tree).some(node => node.props?.["aria-label"] === "清除季度暑假、秋季"));
+    assert.deepEqual(new URL(browser.writes.at(-1)).searchParams.getAll("bf_campus"), ["A,B", "中关村"]);
+    findButton(tree, "明细").props.onClick(); tree = harness.render();
+    assert.deepEqual(detailDataset(tree).rows.map(row => row.id), ["A,B-暑假", "A,B-秋季", "中关村-暑假", "中关村-秋季"]);
+    findButton(tree, "透视").props.onClick(); tree = harness.render();
+    elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.onChange(["寒假", "春季"]); tree = harness.render();
+    assert.equal(findButton(tree, "保存修改").props.disabled, false);
+    findButton(tree, "保存修改").props.onClick(); tree = harness.render();
+    assert.deepEqual(browser.readViews()[0].state.filters, { ...filters, season: ["寒假", "春季"] });
+    const multiEntry = browser.historySnapshot();
+    elements(tree).find(node => node.props?.["aria-label"] === "清除校区A,B、中关村").props.onClick(); tree = harness.render();
+    assert.equal(new URL(browser.writes.at(-1)).searchParams.has("bf_campus"), false);
+    assert.deepEqual(new URL(browser.writes.at(-1)).searchParams.getAll("bf_season"), ["寒假", "春季"]);
+    browser.setLocation(multiEntry.url); browser.dispatch("popstate", multiEntry.state); tree = harness.render(); harness.effects(); tree = harness.render();
+    assert.deepEqual(elements(tree).find(node => node.props?.["aria-label"] === "筛选校区").props.value, ["A,B", "中关村"]);
+    assert.deepEqual(elements(tree).find(node => node.props?.["aria-label"] === "筛选季度").props.value, ["寒假", "春季"]);
+    findButton(tree, "清除筛选").props.onClick(); tree = harness.render();
+    assert.equal([...new URL(browser.writes.at(-1)).searchParams.keys()].some(name => name.startsWith("bf_")), false);
+    assert.equal(requests, 0); assert.equal(JSON.stringify(facts), before);
+    harness.dispose();
+  } finally { globalThis.fetch = oldFetch; browser.restore(); }
+});
+
+test("multi-select detail copy and XLSX keep every filtered row beyond the visible page without budget requests", async () => {
+  const facts = ["A,B", "中关村", "排除校区"].flatMap(campus => fourQuarters.flatMap(row =>
+    Array.from({ length: 8 }, (_, index) => ({ ...row, id: `${campus}-${row.season}-${index}`, campus,
+      subject: `科目${index}`, revenue: index === 0 ? -12.345678 : index === 1 ? 0 : 10000 + index }))));
+  const filters = { ...emptyFilters, campus: ["A,B", "中关村"], season: ["暑假", "秋季"] };
+  const before = JSON.stringify(facts), browser = hookBrowser(), originalFetch = globalThis.fetch, originalURL = URL.createObjectURL;
+  let requests = 0; globalThis.fetch = () => { requests++; throw new Error("unexpected budget request"); };
+  try {
+    const harness = analysisHarness({ facts, controlledFilters: filters });
+    let tree = harness.render(); findButton(tree, "明细").props.onClick(); tree = harness.render();
+    const table = elements(tree).find(node => node.props?.className === "ba-table ba-detail-table");
+    assert.equal(table.props.exportData.rows.length, 32);
+    assert.equal(elements(table).filter(node => node.type === "tbody")[0].props.children.length, 25);
+    const child = harness.child(table); elements(child).find(node => node.type === "table").props.ref({ rows: [], tHead: { rows: [] } });
+    await findButton(child, "一键复制").props.onClick();
+    const copied = browser.clipboard.at(-1).split("\n"); assert.equal(copied.length, 33, "header plus all 32 filtered rows, not only the visible 25");
+    assert.match(copied.join("\n"), /A,B/); assert.match(copied.join("\n"), /中关村/); assert.doesNotMatch(copied.join("\n"), /排除校区|寒假|春季/);
+    const file = new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("export did not complete")), 5000);
+      URL.createObjectURL = blob => { clearTimeout(timer); resolve(blob); return originalURL(blob); }; });
+    findButton(child, "导出明细").props.onClick();
+    const blob = await file, ExcelJS = require("exceljs"), workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await blob.arrayBuffer());
+    const sheet = workbook.worksheets[0]; assert.equal(sheet.rowCount, 33);
+    const values = sheet.getSheetValues().flatMap(row => Array.isArray(row) ? row : []);
+    assert.ok(values.includes(-12.345678)); assert.ok(values.includes(0));
+    assert.ok(values.includes("A,B")); assert.ok(values.includes("中关村")); assert.ok(!values.includes("排除校区"));
+    assert.equal(requests, 0); assert.equal(JSON.stringify(facts), before); harness.dispose();
+  } finally { globalThis.fetch = originalFetch; URL.createObjectURL = originalURL; browser.restore(); }
 });

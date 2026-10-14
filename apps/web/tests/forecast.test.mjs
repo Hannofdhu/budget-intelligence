@@ -8,6 +8,7 @@ import { build } from "esbuild";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { budgetWorkbook } from "../src/budgetExport.ts";
+import { aiBudgetHref, readAiBudgetContext } from "../src/aiBudgetContext.ts";
 import {
   forecastNumber, sumForecastRows, groupForecastRows, defaultForecastStates, forecastStateLabels,
   getForecast, refreshForecast, reviseForecast, confirmForecast, groupForecastIssues, forecastMappingIssues, prepareForecastMapping, forecastPresentationRow, forecastActualRevenueDefaultsToZero, forecastActualHeadcountDefaultsToZero,
@@ -33,7 +34,7 @@ const calculation = (overrides = {}) => ({ rule_version: "test-only", ready: tru
 const render = data => renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, onReview() {} }));
 
 const findTree = (node, predicate) => Array.isArray(node) ? node.flatMap(child => findTree(child, predicate)) : !node || typeof node !== "object" ? []
-  : [...(predicate(node) ? [node] : []), ...findTree(typeof node.type === "function" && node.type.name === "BudgetScopeBar" ? node.type(node.props) : node.props?.children, predicate)];
+  : [...(predicate(node) ? [node] : []), ...findTree(typeof node.type === "function" && ["BudgetScopeBar", "BudgetDataSection"].includes(node.type.name) ? node.type(node.props) : node.props?.children, predicate)];
 function dashboardHarness(data, trialMode = false, props = {}) {
   const states = [], refs = [];
   let cursor = 0, refCursor = 0;
@@ -47,6 +48,78 @@ function dashboardHarness(data, trialMode = false, props = {}) {
   } : require(name), exports, exports.exports);
   return () => { cursor = 0; refCursor = 0; return exports.exports.ForecastDashboard({ calculation: data, trialMode, ...props }); };
 }
+
+function forecastHistoryBrowser(initial) {
+  const previous = globalThis.window, listeners = new Map(), entries = [new URL(initial)], pushes = [], replacements = [], ownerState = { scrollOwner: "forecast" }; let index = 0;
+  const update = () => { globalThis.window.location.href = entries[index].href; globalThis.window.location.search = entries[index].search; };
+  globalThis.window = { location: {}, history: { state: ownerState, pushState(state, _title, url) {
+    assert.equal(state, ownerState); entries.splice(index + 1); entries.push(new URL(String(url), entries[index])); index++; update(); pushes.push(String(url));
+  }, replaceState(state, _title, url) { assert.equal(state, ownerState); entries[index] = new URL(String(url), entries[index]); update(); replacements.push(String(url)); }
+  }, addEventListener(name, callback) { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); },
+    removeEventListener(name, callback) { listeners.get(name)?.delete(callback); } };
+  update();
+  return { pushes, replacements, move(delta) { index += delta; update(); for (const callback of listeners.get("popstate") ?? []) callback(); },
+    restore() { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; } };
+}
+
+function dashboardHistoryHarness(data, trialMode = false) {
+  const states = [], refs = [], effects = [], pending = []; let cursor = 0, refCursor = 0, effectCursor = 0;
+  const exports = { exports: {} };
+  new Function("require", "module", "exports", compiled.outputFiles[0].text)(name => name === "react" ? { ...require(name),
+    useState(initial) { const index = cursor++; if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial; return [states[index], value => { states[index] = typeof value === "function" ? value(states[index]) : value; }]; },
+    useRef: current => refs[refCursor++] ??= { current }, useMemo: compute => compute(),
+    useEffect(factory, deps) {
+      const index = effectCursor++, previous = effects[index];
+      if (!previous || deps.some((value, i) => value !== previous.deps[i])) pending.push(() => { previous?.cleanup?.(); effects[index] = { deps, cleanup: factory() }; });
+    },
+  } : require(name), exports, exports.exports);
+  return { render() { cursor = 0; refCursor = 0; effectCursor = 0; const tree = exports.exports.ForecastDashboard({ calculation: data, trialMode }); while (pending.length) pending.shift()(); return tree; },
+    close() { for (const effect of effects) effect.cleanup?.(); } };
+}
+
+test("forecast view restores repeated filters after refresh and history navigation, and clearing stays all rather than reverting to default autumn", () => {
+  const browser = forecastHistoryBrowser("http://127.0.0.1:5188/budget/forecast?archive=fy27&forecast_version=p16&external=keep#saved");
+  const data = calculation({ fixed_rules_version: fixedForecastRulesVersion, rows: [row(), row({ season: "秋季" }), row({ season: "寒假" }), row({ campus: "中关村" })] });
+  const before = JSON.stringify(data), page = dashboardHistoryHarness(data);
+  const scope = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0];
+  let refreshed;
+  try {
+    let tree = page.render(); assert.equal(scope(tree).props.filters.season, "秋季");
+    assert.equal(browser.pushes.length, 0); assert.equal(browser.replacements.length, 1, "initial effective scope replaces the current entry rather than creating a new history step");
+    const initialQuery = new URLSearchParams(window.location.search);
+    assert.equal(initialQuery.get("bf_scope"), "1"); assert.equal(initialQuery.get("bf_season"), "秋季");
+    const ai = readAiBudgetContext(new URL(aiBudgetHref(`/budget/forecast${window.location.search}`, { id: "p16", label: "P16" }), "https://budget.local").search);
+    assert.equal(ai.filters.find(item => item.key === "season").value, "秋季"); assert.equal(ai.scopeLabel, "季度：秋季");
+    assert.deepEqual(ai.version, { id: "p16", label: "P16" });
+    const requested = { season: ["暑假", "秋季"], track: "", campus: ["西直门", "中关村"], product: "", grade: "", subject: "" };
+    scope(tree).props.onChange(requested); tree = page.render(); assert.equal(scope(tree).props.count, 3);
+    const query = new URLSearchParams(window.location.search);
+    assert.deepEqual(query.getAll("bf_campus"), ["西直门", "中关村"]); assert.deepEqual(query.getAll("bf_season"), ["暑假", "秋季"]);
+    assert.equal(query.get("archive"), "fy27"); assert.equal(query.get("forecast_version"), "p16"); assert.equal(query.get("external"), "keep");
+    assert.equal(new URL(window.location.href).hash, "#saved");
+    refreshed = dashboardHistoryHarness(data); assert.deepEqual(scope(refreshed.render()).props.filters, requested); refreshed.close(); refreshed = null;
+    scope(tree).props.onChange({ ...requested, campus: ["未知校区,A", "未知校区B"] }); tree = page.render();
+    assert.equal(scope(tree).props.count, 0); assert.deepEqual(scope(tree).props.filters.campus, ["未知校区,A", "未知校区B"]);
+    browser.move(-1); tree = page.render(); assert.deepEqual(scope(tree).props.filters, requested); assert.equal(scope(tree).props.count, 3);
+    browser.move(-1); tree = page.render(); assert.equal(scope(tree).props.filters.season, "秋季"); assert.equal(scope(tree).props.count, 1);
+    browser.move(1); tree = page.render(); assert.deepEqual(scope(tree).props.filters, requested);
+    browser.move(1); tree = page.render(); assert.equal(scope(tree).props.count, 0); assert.deepEqual(scope(tree).props.filters.campus, ["未知校区,A", "未知校区B"]);
+    scope(tree).props.onClear(); tree = page.render(); assert.equal(scope(tree).props.count, 4);
+    refreshed = dashboardHistoryHarness(data); assert.equal(scope(refreshed.render()).props.filters.season, "");
+    assert.equal(new URLSearchParams(window.location.search).get("forecast_version"), "p16");
+    assert.equal(JSON.stringify(data), before); assert.equal(browser.pushes.length, 3, "popstate restores without pushing another entry");
+  } finally { refreshed?.close(); page.close(); browser.restore(); }
+});
+
+test("forecast initial scope sync never replaces an existing repeated or unknown scope", () => {
+  const browser = forecastHistoryBrowser("http://127.0.0.1:5188/budget/forecast?archive=fy27&bf_campus=未知校区&bf_campus=校区,A&bf_season=暑假&bf_season=春季");
+  const data = calculation({ fixed_rules_version: fixedForecastRulesVersion }), page = dashboardHistoryHarness(data), before = window.location.href;
+  try {
+    const tree = page.render(), scope = findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0];
+    assert.deepEqual(scope.props.filters.season, ["暑假", "春季"]); assert.deepEqual(scope.props.filters.campus, ["未知校区", "校区,A"]);
+    assert.equal(scope.props.count, 0); assert.equal(window.location.href, before); assert.equal(browser.replacements.length, 0); assert.equal(browser.pushes.length, 0);
+  } finally { page.close(); browser.restore(); }
+});
 
 test("board and detail navigation shares one exact scope, preserves it across tabs, and never changes the whole-year or quarter result", () => {
   const data = calculation({ rows: [row(), row({ campus: "西直门南" }), row({ season: "秋季" })] });
@@ -65,7 +138,7 @@ test("board and detail navigation shares one exact scope, preserves it across ta
   assert.deepEqual(findTree(tree, node => node.type === "div" && node.props["aria-label"] === "季度达成明细表")[0], quarters);
   click(tree, "明细"); tree = page();
   assert.equal(findTree(tree, node => node.type === "div" && node.props.className === "forecast-board-overview")[0].props.hidden, true);
-  const detail = findTree(tree, node => node.type === "section" && node.props.children?.[0]?.props?.className === "forecast-detail-summary")[0];
+  const detail = findTree(tree, node => node.type === "section" && node.props.id === "forecast-details")[0];
   assert.equal(detail.props.hidden, false);
   assert.equal(findTree(detail, node => node.type === "details").length, 0, "details is a peer view, not another folded footer");
   const transfer = findTree(detail, node => typeof node.type === "function" && node.type.name === "ActionTable")[0].props.exportData;
@@ -94,15 +167,15 @@ test("forecast details own one copy/export group and transfer every filtered row
   const data = calculation({ rows }), before = JSON.stringify(data), page = dashboardHarness(data);
   const detail = tree => findTree(tree, node => node.type === "div" && node.props["aria-label"] === "预测明细表")[0];
   const transfer = tree => findTree(detail(tree), node => typeof node.type === "function" && node.type.name === "ActionTable")[0];
-  const detailMarkup = render(data).match(/<section class="forecast-section" hidden=""><header class="forecast-detail-summary">[\s\S]*?<\/section>/)?.[0] ?? "";
+  const detailMarkup = render(data).match(/<section[^>]*id="forecast-details"[^>]*>[\s\S]*?<\/section>/)?.[0] ?? "";
   assert.equal((detailMarkup.match(/>一键复制<\/button>/g) ?? []).length, 1);
   assert.equal((detailMarkup.match(/>导出明细<\/button>/g) ?? []).length, 1);
   assert.equal((detailMarkup.match(/class="table-transfer"/g) ?? []).length, 1);
   let tree = page();
-  const selects = findTree(tree, node => node.type === "select");
-  selects[0].props.onChange({ target: { value: "暑假" } });
+  const selects = findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect");
+  selects[0].props.onChange("暑假");
   tree = page();
-  findTree(tree, node => node.type === "select")[2].props.onChange({ target: { value: "西直门" } });
+  findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[2].props.onChange("西直门");
   tree = page();
   assert.equal(transfer(tree).props.exportData.rows.length, 61);
   assert.equal(transfer(tree).props.exportData.filename, "FY27-达成预测明细");
@@ -124,9 +197,31 @@ test("forecast detail transfer retains trial filenames and honest empty filter r
   let tree = page();
   const table = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0];
   assert.equal(table(tree).props.exportData.filename, "FY27-试用预测明细");
-  findTree(tree, node => node.type === "select")[0].props.onChange({ target: { value: "寒假" } });
+  findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[0].props.onChange("寒假");
   tree = page();
   assert.deepEqual(table(tree).props.exportData.rows, []);
+});
+
+test("forecast multi-value scope is exact OR within dimensions and AND across dimensions without changing annual totals", () => {
+  const rows = [row(), row({ season: "秋季", subject: "英语" }), row({ campus: "中关村", season: "秋季" }),
+    row({ campus: "西直门南" }), row({ season: "寒假" }), row({ subject: "物理" })];
+  const data = calculation({ rows }), before = JSON.stringify(data), page = dashboardHarness(data);
+  const scope = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0];
+  let tree = page();
+  scope(tree).props.onChange({ season: ["暑假", "秋季"], track: "", campus: ["西直门", "中关村"], product: "", grade: "", subject: ["数学", "英语"] });
+  tree = page();
+  assert.equal(scope(tree).props.count, 3);
+  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData;
+  assert.deepEqual(transfer.rows.map(value => [value.campus, value.season, value.subject]), rows.slice(0, 3).map(value => [value.campus, value.season, value.subject]));
+  assert.deepEqual(scope(tree).props.filters.campus, ["西直门", "中关村"]);
+  const sections = findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetDataSection");
+  assert.deepEqual(sections.map(section => section.props.id), ["forecast-quarter-achievement", "forecast-scope-achievement", "forecast-details"]);
+  assert.equal(sections.find(section => section.props.id === "forecast-details").props.countLabel, "条明细");
+  assert.equal(findTree(tree, node => node.type === "section" && node.props["aria-label"] === "FY27 部门全年预测").length, 1);
+  assert.equal(JSON.stringify(data), before);
+  scope(tree).props.onChange({ ...scope(tree).props.filters, campus: ["不存在校区1", "不存在校区2"] });
+  tree = page(); assert.equal(scope(tree).props.count, 0);
+  assert.deepEqual(findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData.rows, []);
 });
 
 test("forecast revenue labels use carryover terminology with original units and unchanged field values", () => {
@@ -464,7 +559,7 @@ test("trial completeness shows known department totals even if child actuals are
   assert.match(readable, /预计全年结转收入 12,100 万/); assert.match(readable, /预计超额 799\.54 万/); assert.match(readable, /预计达成率 107\.08%/);
   assert.doesNotMatch(readable, /尚不能完成预测|类预测条件待处理/);
   assert.doesNotMatch(html, /class="forecast-data-notice"|forecast-section forecast-issues|部分实际明细未对应/);
-  assert.match(html, /<option value="秋季" selected="">秋季<\/option>/); assert.equal(data.rows[0].forecast_revenue, null);
+  assert.equal(findTree(dashboardHarness(data, true)(), node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0].props.filters.season, "秋季"); assert.equal(data.rows[0].forecast_revenue, null);
 });
 
 test("formal confirmation never accepts trial completeness or skips owner, dirty or server readiness gates", () => {
@@ -484,7 +579,8 @@ test("trial interactions keep complete dimensions visible and distinguish estima
   assert.match(text(status), /试用试算 完整预测已准备 非正式预测 调整试用假设/);
   const scopes = [trialScope(), trialScope({ dims: { track: "智慧伴学", product: "结转项目", grade: "八年级", subject: "英语", campus: "另一校区" }, kind: "FINANCIAL_ONLY" })];
   const editor = renderToStaticMarkup(createElement(ForecastTrialScopeEditor, { scopes, states: defaultForecastStates, onChange() {} })), readable = text(editor);
-  assert.match(readable, /完整校区 智慧空间 \/ 独立产品 \/ 七年级 \/ 数学/); assert.match(readable, /结转实际/);
+  assert.match(readable, /完整校区 智慧空间 \/ 独立产品 七年级 数学/); assert.match(readable, /结转实际/);
+  assert.match(readable, /校区 \/ 赛道 \/ 产品 年级 \/ 科目/);
   assert.match(editor, /aria-label="调整秋季 智慧空间 \/ 完整校区 \/ 独立产品 \/ 七年级 \/ 数学试用假设"/);
   assert.equal(forecastRowLabel(row({ data_status: "TRIAL_SIZE_HELD" })), "暂按上一季人数");
   assert.equal(forecastRowLabel(row({ data_status: "BASELINE_ESTIMATE" })), "预算参数估计");
@@ -590,7 +686,7 @@ test("fixed forecast completeness displays known totals but cannot bypass data, 
   assert.equal(forecastCalculationComplete({ ...data, forecast_complete: false }), false);
   assert.match(readable, /预计全年结转收入 37\.6 万/); assert.match(readable, /预计达成率 94%/);
   assert.doesNotMatch(readable, /数据待核对 · 1项|尚不能完成预测|类预测条件待处理/);
-  assert.match(html, /<option value="秋季" selected="">秋季<\/option>/);
+  assert.equal(findTree(dashboardHarness(data)(), node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0].props.filters.season, "秋季");
   assert.doesNotMatch(html, /class="forecast-data-notice"|forecast-section forecast-issues|部分实际明细未对应/);
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);

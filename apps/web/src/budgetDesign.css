@@ -1,0 +1,31 @@
+@import "./budgetTokens.css";
+
+/* Semantic roles, not a second theme or editing workflow. */
+:is(.decision-shell, .budget-shell, .app-frame) { font-family: var(--budget-font-family); font-size: var(--budget-body-size); line-height: 1.57143; color: var(--budget-text); background: var(--budget-page-background); }
+.budget-page-title { margin: 0; font-family: var(--budget-font-family); font-size: var(--budget-page-title-size); line-height: 1.25; font-weight: 700; letter-spacing: -.02em; }
+.budget-section-title { margin: 0; font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }
+.budget-subsection-title { margin: 0; font-size: var(--budget-subsection-title-size); line-height: 1.5; font-weight: 600; }
+.budget-surface { min-width: 0; margin-block: var(--budget-space-6); padding: var(--budget-space-6); background: var(--budget-surface); border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-section); }
+.budget-status { max-width: 80ch; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.57143; overflow-wrap: anywhere; }
+.budget-status[role="alert"] { color: var(--budget-error); }
+.budget-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
+:is(.decision-shell, .budget-shell) :is(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
+:is(.decision-shell, .budget-shell) :is(input:not([type="checkbox"]), select, textarea) { color: var(--budget-text); border-color: var(--budget-control-border); border-radius: var(--budget-radius-control); font-size: var(--budget-body-size); }
+:is(.decision-shell, .budget-shell) :is(h1, h2, h3, button, input, select, textarea, th, td) { scroll-margin-top: calc(var(--budget-header-height, 0px) + var(--budget-page-nav-height, 0px) + 16px); scroll-margin-bottom: calc(var(--ny-action-bar-height, var(--forecast-action-height, 0px)) + 16px); }
+.ba-detail-table tbody th { white-space: normal; min-width: 15rem; max-width: 24rem; overflow-wrap: anywhere; }
+.ba-detail-table tbody :is(th,td):nth-child(-n+2) { text-align: left; }
+.ba-detail-table tbody :is(th,td):nth-child(-n+2) small { display: block; margin-top: .25rem; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); line-height: 1.5; }
+.ba-detail-table tbody th strong { font-weight: 600; }
+.ba-root .ba-panel > header h3, .ba-root .ba-view-manager h4 { font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }
+.ba-root .ba-detail > .table-transfer, .ba-root .ba-quarter-budget-panel > .table-transfer { position: relative; z-index: 1; }
+@media (max-width: 767px) {
+  .budget-page-title { font-size: 1.625rem; line-height: 1.3077; }
+  .budget-surface { padding: var(--budget-space-4); }
+  .ba-root .ba-table-wrap { max-height: none; }
+  .ba-detail-table tbody th { min-width: 12rem; }
+}
+@media (max-height: 600px) { .ba-root .ba-table-wrap { max-height: none; } }
+@media (pointer: coarse) {
+  :is(.decision-shell, .budget-shell) :is(button:not(.ba-quarter-bar), select, summary, input:not([type="checkbox"])), .table-transfer > button { min-height: 2.75rem; }
+}
+@media (prefers-reduced-motion: reduce) { :is(.decision-shell, .budget-shell, .app-frame) *, .budget-filter-select__menu * { scroll-behavior: auto; transition: none; animation: none; } }

@@ -299,22 +299,27 @@ test("empty old and owned table viewports do not consume edge shortcuts or attem
 test("shared read-only tables use one keyboard entry while the existing pivot and forecast editor retain their own controls", () => {
   const source = file => fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
   const analysis = source("BudgetAnalysisView.tsx");
-  assert.match(analysis, /className="ba-table-wrap" aria-label="预算明细表，可横向滚动"><ActionTable keyboardNavigation/);
-  assert.match(analysis, /className="ba-table-wrap" tabIndex=\{0\} aria-label="预算透视表，可横向滚动"/);
+  assert.match(analysis, /<ActionTable keyboardNavigation className="ba-table ba-detail-table" scrollClassName="ba-table-wrap"/);
+  assert.match(analysis, /className="ba-table-wrap" ref=\{observeBudgetTableHeader\} tabIndex=\{0\} aria-label="预算透视表，可横向滚动"/);
   assert.match(analysis, /<table className="ba-table ba-pivot-table" ref=\{tableRef\}>/);
   assert.equal((analysis.match(/<ActionTable keyboardNavigation/g) ?? []).length, 1, "the existing pivot range is not replaced by another selection system");
   const people = source("BudgetPeopleBoard.tsx");
   for (const label of ["季度招生预算表", "赛道年级跨季续班率表"]) {
-    assert.ok(people.includes(`className="ba-table-wrap" aria-label="${label}"><ActionTable keyboardNavigation aria-label="${label}"`));
+    assert.ok(people.includes(`<ActionTable keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="${label}，可横向滚动" aria-label="${label}"`));
     assert.ok(!people.includes(`tabIndex={0} aria-label="${label}"`));
   }
   const quarter = source("BudgetQuarterTable.tsx");
-  assert.match(quarter, /<div className="ba-table-wrap" aria-label=\{`\$\{tableLabel\}，可横向滚动`\}>/);
+  assert.match(quarter, /scrollClassName="ba-table-wrap" scrollRef=\{observeBudgetTableHeader\} scrollLabel=\{`\$\{tableLabel\}，可横向滚动`\}/);
   assert.match(quarter, /<ActionTable keyboardNavigation className=\{`ba-table \$\{tableClassName\}`\} tableLabel=\{tableLabel\}/);
   const forecast = source("ForecastPage.tsx");
   for (const label of ["季度达成明细表", "维度达成表", "预测明细表", "校区预测人数"]) {
-    assert.ok(forecast.includes(`className="forecast-table-wrap" aria-label="${label}"><ActionTable keyboardNavigation aria-label="${label}"`));
+    assert.ok(forecast.includes(`className="forecast-table-region" aria-label="${label}"><ActionTable keyboardNavigation`));
+    const region = forecast.slice(forecast.indexOf(`className="forecast-table-region" aria-label="${label}"`));
+    assert.match(region.slice(0, region.indexOf("<thead>")), /scrollClassName="forecast-table-wrap"/);
+    assert.match(region.slice(0, region.indexOf("<thead>")), new RegExp(`aria-label="${label}"`));
     assert.ok(!forecast.includes(`tabIndex={0} aria-label="${label}"`));
   }
-  assert.match(forecast, /tabIndex=\{0\} aria-label=\{legacyTrial \? "试用假设明细表" : "独立业务参数表"\}><ActionTable exportData=\{parameterTransfer\}/);
+  assert.match(forecast, /<ActionTable exportData=\{parameterTransfer\} keyboardNavigation tableLabel=\{legacyTrial \? "试用假设明细" : "独立业务参数"\}/);
+  assert.match(forecast, /aria-label=\{legacyTrial \? "试用假设明细表" : "独立业务参数表"\} className="forecast-sku-parameter-table" scrollClassName="forecast-table-wrap"/);
+  assert.match(forecast, /<input[^>]*onChange|<select[^>]*onChange/, "the forecast parameter table retains its existing editable controls");
 });

@@ -95,9 +95,9 @@ test("missing or corrupt cached JSON falls back to a fresh empty view", () => {
   }
 });
 
-test("non-string cached dimension values are discarded without losing valid strings", () => {
+test("cached dimension arrays are accepted while non-string values are discarded without losing valid strings", () => {
   const cache = storage({ "ny-filters-2028": JSON.stringify({ season: null, track: "智慧空间", campus: 0, product: false, grade: ["七年级"], subject: { value: "数学" }, extra: "not a filter" }) });
-  assert.deepEqual(readNextYearFilters(2028, "", cache), filters({ track: "智慧空间" }));
+  assert.deepEqual(readNextYearFilters(2028, "", cache), filters({ track: "智慧空间", grade: "七年级" }));
 });
 
 test("persisted values are sanitized without mutating the supplied filter object", () => {
@@ -128,9 +128,9 @@ test("an inaccessible browser sessionStorage getter degrades without changing th
   }
 });
 
-test("validation clears dimensions absent from the current year while preserving valid choices", () => {
+test("validation retains unavailable selections instead of silently broadening the current year scope", () => {
   const original = filters({ season: "秋季", track: "智慧空间", campus: "已关闭校区", product: "云帆", grade: "不存在年级", subject: "数学" });
-  assert.deepEqual(validateNextYearFilters(original, combinations()), filters({ season: "秋季", track: "智慧空间", product: "云帆", subject: "数学" }));
+  assert.deepEqual(validateNextYearFilters(original, combinations()), original);
 });
 
 test("valid individual dimensions with an empty intersection are preserved, not auto-cleared", () => {
@@ -139,10 +139,10 @@ test("valid individual dimensions with an empty intersection are preserved, not 
   assert.deepEqual(validateNextYearFilters(original, combinations()), original);
 });
 
-test("only the four supported seasons validate, including when the business scope is empty", () => {
+test("unsupported or temporarily unavailable seasons remain explicit empty reading restrictions", () => {
   for (const season of ["暑假", "秋季", "寒假", "春季"]) assert.deepEqual(validateNextYearFilters(filters({ season }), []), filters({ season }));
-  for (const season of ["Q1", "秋续寒", "暑假 ", "2028", ""]) assert.deepEqual(validateNextYearFilters(filters({ season }), []), empty());
-  assert.deepEqual(validateNextYearFilters(filters({ campus: "西直门", track: "智慧空间" }), []), empty());
+  for (const season of ["Q1", "秋续寒", "暑假 ", "2028", ""]) assert.deepEqual(validateNextYearFilters(filters({ season }), []), filters({ season }));
+  assert.deepEqual(validateNextYearFilters(filters({ campus: "西直门", track: "智慧空间" }), []), filters({ campus: "西直门", track: "智慧空间" }));
 });
 
 test("string zero and punctuation in dimension names are retained as real choices", () => {
@@ -178,4 +178,35 @@ test("view-state helpers neither request data nor trigger a calculation", () => 
     assert.deepEqual(readNextYearFilters(2028, search, cache), original);
     assert.equal(networkCalls, 0);
   } finally { globalThis.fetch = previousFetch; }
+});
+
+test("multi selections use repeated URL parameters and round trip exact names, never comma-splitting", () => {
+  const original = filters({ season: ["秋季", "寒假"], campus: ["A,B / 校区", "A&B"], subject: ["数学", "英语"] });
+  const search = writeNextYearFilters("?year=2028&nyTask=4&bf_campus=旧校区&bf_campus=过期", original);
+  const params = new URLSearchParams(search);
+  assert.deepEqual(params.getAll("bf_campus"), original.campus);
+  assert.deepEqual(params.getAll("bf_season"), original.season);
+  assert.deepEqual(readNextYearFilters(2028, search), original);
+  assert.equal(params.get("nyTask"), "4");
+  assert.deepEqual(readNextYearFilters(2028, "?bf_campus=A%2CB&bf_campus=A%2CB&bf_campus=C"), filters({ campus: ["A,B", "C"] }));
+});
+
+test("legacy storage and mixed multi arrays normalize without mutating saved or supplied view state", () => {
+  const cache = storage({ "ny-filters-2028": JSON.stringify({ season: ["秋季", "秋季", "", null, "寒假"], campus: "西直门", subject: ["数学", 5, false, "英语"] }) });
+  const before = cache.values.get("ny-filters-2028");
+  const restored = readNextYearFilters(2028, "", cache);
+  assert.deepEqual(restored, filters({ season: ["秋季", "寒假"], campus: "西直门", subject: ["数学", "英语"] }));
+  assert.equal(cache.values.get("ny-filters-2028"), before);
+  persistNextYearFilters(2028, restored, cache);
+  restored.season.push("春季");
+  assert.deepEqual(readNextYearFilters(2028, "", cache).season, ["秋季", "寒假"]);
+});
+
+test("multi validation retains valid alternatives and empty intersections instead of silently broadening", () => {
+  const original = filters({ season: ["秋季", "寒假", "过期"], campus: ["西直门", "过期"], subject: ["英语", "数学"], grade: [] });
+  const before = JSON.stringify(original);
+  assert.deepEqual(validateNextYearFilters(original, combinations()), filters({ season: ["秋季", "寒假", "过期"], campus: ["西直门", "过期"], subject: ["英语", "数学"] }));
+  assert.equal(JSON.stringify(original), before);
+  const noIntersection = filters({ campus: "西直门", product: "云帆", season: ["秋季", "寒假"] });
+  assert.deepEqual(validateNextYearFilters(noIntersection, combinations()), noIntersection);
 });

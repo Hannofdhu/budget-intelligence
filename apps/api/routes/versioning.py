@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from pydantic import StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.auth import current_actor
@@ -737,7 +738,10 @@ async def list_audit_events_route(
     event_type: Annotated[str | None, Query(max_length=80)] = None,
     object_type: Annotated[str | None, Query(max_length=80)] = None,
     actor_id: Annotated[str | None, Query(max_length=100)] = None,
-    acting_role: Annotated[str | None, Query(max_length=60)] = None,
+    acting_role: Annotated[
+        list[Annotated[str, StringConstraints(max_length=60)]] | None,
+        Query(max_length=20),
+    ] = None,
     reason_contains: Annotated[str | None, Query(max_length=200)] = None,
     occurred_from: datetime | None = None,
     occurred_to: datetime | None = None,

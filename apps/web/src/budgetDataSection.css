@@ -18,6 +18,7 @@
 .budget-data-section__identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--budget-space-2) var(--budget-space-3); min-width: 0; }
 .budget-data-section .budget-data-section__title { margin: 0; color: var(--budget-text); font-size: var(--budget-section-title-size); font-weight: 600; line-height: 1.44445; }
 .budget-data-section__count { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; font-variant-numeric: tabular-nums; }
+.budget-data-section__description { margin: -.25rem 0 1rem; max-width: 80ch; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.57143; overflow-wrap: anywhere; }
 .budget-data-section__actions { display: flex; flex-wrap: wrap; gap: var(--budget-space-2); }
 .budget-data-section button, .budget-data-section .budget-data-section__actions button,
 .budget-data-section .budget-data-section__pagination button, .budget-data-section .table-transfer > button {

@@ -59,6 +59,7 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
   };
   const selectedStableKeys = rows.filter(row => selected.has(row.key)).map(row => String(row.meta.rate_parameter_stable_key ?? "")).filter(Boolean);
   const allVisibleSelected = filtered.length > 0 && filtered.every(row => selected.has(row.key));
+  const toolbar = <div className="rate-toolbar"><label className="rate-search"><span>筛选比例参数</span><input placeholder="筛选季节、校区、产品或年级" value={query} onChange={event => setQuery(event.target.value)} /></label><span>{filtered.length} 条结果</span></div>;
 
   return <div className="rate-editor">
     <div className="rate-summary" aria-label="比例参数填写进度">
@@ -66,28 +67,27 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <div><strong>{referenceRows.filter(row => row.locked === true).length}</strong><span>已锁定</span></div>
       <div><strong>{referenceRows.filter(row => row.boundary_confirmed === true).length}</strong><span>范围已确认</span></div>
     </div>
-    <div className="rate-toolbar"><label className="rate-search"><span className="sr-only">筛选比例参数</span><input placeholder="筛选季节、校区、产品或年级" value={query} onChange={event => setQuery(event.target.value)} /></label><span>{filtered.length} 条结果</span></div>
     {selected.size > 0 && <section className="rate-batch" aria-label="批量修改选中比例">
       <div><strong>已选 {selected.size} 项</strong></div>
-      <label>当前值<input inputMode="decimal" placeholder="例如 80" value={batchCurrent} onChange={event => setBatchCurrent(event.target.value)} /></label>
-      <label>下限<input inputMode="decimal" placeholder="例如 70" value={batchLower} onChange={event => setBatchLower(event.target.value)} /></label>
-      <label>上限<input inputMode="decimal" placeholder="例如 90" value={batchUpper} onChange={event => setBatchUpper(event.target.value)} /></label>
+      <label>当前值<input disabled={disabled} inputMode="decimal" placeholder="例如 80" value={batchCurrent} onChange={event => setBatchCurrent(event.target.value)} /></label>
+      <label>下限<input disabled={disabled} inputMode="decimal" placeholder="例如 70" value={batchLower} onChange={event => setBatchLower(event.target.value)} /></label>
+      <label>上限<input disabled={disabled} inputMode="decimal" placeholder="例如 90" value={batchUpper} onChange={event => setBatchUpper(event.target.value)} /></label>
       <button type="button" disabled={disabled || (!batchCurrent && !batchLower && !batchUpper)} onClick={applyBatch}>应用到选中项</button>
     </section>}
-    <div className="rate-table-wrap"><ActionTable className="rate-table"><thead><tr>
+    <ActionTable className="rate-table" tableLabel="比例参数" aria-label="比例参数明细表" toolbarStart={toolbar} scrollClassName="rate-table-wrap" scrollLabel="比例参数明细表，可横向滚动"><thead><tr>
       <th><input type="checkbox" aria-label="选择当前筛选结果" checked={allVisibleSelected} onChange={() => setSelected(current => { const next = new Set(current); for (const row of filtered) allVisibleSelected ? next.delete(row.key) : next.add(row.key); return next; })} /></th>
-      <th>季节</th><th>校区与业务</th><th>年级</th><th>指标</th><th>历史参考</th><th>当前值</th><th>允许范围</th><th>调整依据</th><th>状态</th>
+      <th scope="col">季节</th><th scope="col">校区与业务</th><th scope="col">年级</th><th scope="col">指标</th><th scope="col" className="budget-cell-number">历史参考</th><th scope="col" className="budget-cell-number">当前值</th><th scope="col" className="budget-cell-number">允许范围</th><th scope="col">调整依据</th><th scope="col">状态</th>
     </tr></thead><tbody>{filtered.map(({ item, index, key, meta }) => <tr key={key}>
       <td><input type="checkbox" aria-label={`选择${meta.quarter_name ?? "该"}比例`} checked={selected.has(key)} onChange={() => setSelected(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; })} /></td>
       <td><strong>{String(meta.quarter_name ?? meta.target_fiscal_season ?? "—")}</strong><small>FY{String(meta.fiscal_year ?? "").slice(-2)}</small></td>
       <td><strong>{String(meta.campus ?? "—")}</strong><small>{[meta.track, meta.product].filter(Boolean).join(" · ")}</small></td>
       <td>{String(meta.grade ?? "—")}</td><td>{meanings[String(meta.rate_type)] ?? String(meta.rate_type ?? "—")}</td>
-      <td className="rate-reference">{typeof meta.system_value_ppm === "number" ? `${toPercent(meta.system_value_ppm)}%` : "人工确定"}</td>
-      <td><PercentInput label="当前比例" disabled={disabled} value={item.current_value_ppm} onCommit={next => updateRow(index, "current_value_ppm", next)} /></td>
-      <td><div className="rate-range"><PercentInput label="比例下限" disabled={disabled} value={item.lower_bound_ppm} onCommit={next => updateRow(index, "lower_bound_ppm", next)} /><span>至</span><PercentInput label="比例上限" disabled={disabled} value={item.upper_bound_ppm} onCommit={next => updateRow(index, "upper_bound_ppm", next)} /></div></td>
+      <td className="rate-reference budget-cell-number">{typeof meta.system_value_ppm === "number" ? `${toPercent(meta.system_value_ppm)}%` : "人工确定"}</td>
+      <td className="budget-cell-number"><PercentInput label="当前比例" disabled={disabled} value={item.current_value_ppm} onCommit={next => updateRow(index, "current_value_ppm", next)} /></td>
+      <td className="budget-cell-number"><div className="rate-range"><PercentInput label="比例下限" disabled={disabled} value={item.lower_bound_ppm} onCommit={next => updateRow(index, "lower_bound_ppm", next)} /><span>至</span><PercentInput label="比例上限" disabled={disabled} value={item.upper_bound_ppm} onCommit={next => updateRow(index, "upper_bound_ppm", next)} /></div></td>
       <td><div className="rate-reasons"><input disabled={disabled} aria-label="范围依据" value={String(item.boundary_reason ?? "")} placeholder="范围依据" onChange={event => updateRow(index, "boundary_reason", event.target.value)} /><input disabled={disabled} aria-label="人工调整原因" value={String(item.manual_reason ?? "")} placeholder="调整原因" onChange={event => updateRow(index, "manual_reason", event.target.value)} /></div></td>
       <td><span className={`status-tag ${meta.locked === true ? "status-tag--locked" : ""}`}>{meta.locked === true ? "已锁定" : meta.boundary_confirmed === true ? "已确认" : "待确认"}</span></td>
-    </tr>)}</tbody></ActionTable></div>
+    </tr>)}</tbody></ActionTable>
     {selected.size > 0 && <section className="rate-lockbar" aria-label="选中比例的锁定操作"><div><strong>管理选中比例</strong>{dirty && <span role="status">请先保存比例</span>}</div><label><span className="sr-only">锁定或解锁原因</span><input disabled={dirty || disabled} placeholder="填写锁定或解锁原因" value={reason} onChange={event => setReason(event.target.value)} /></label><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("lock", selectedStableKeys, reason.trim())}>锁定选中项</button><button type="button" disabled={dirty || disabled || !reason.trim() || !selectedStableKeys.length} onClick={() => onAction("unlock", selectedStableKeys, reason.trim())}>解锁选中项</button></section>}
   </div>;
 }

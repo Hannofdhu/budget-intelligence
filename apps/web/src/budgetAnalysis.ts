@@ -1,5 +1,6 @@
 import type { ExportColumn } from "./budgetExport.ts";
 import { budgetPeriodLabel, compareBudgetGrades } from "./budgetDisplay.ts";
+import { filterLabel, filterValues, matchesFilter, normalizeFilter, readFilterParam, writeFilterParam, type FilterValue } from "./filterSelection.ts";
 import type {
   BudgetAnalysisState, BudgetDimension, BudgetFact, BudgetFilters, BudgetMetric,
   BudgetMetricValues, BudgetPivot, BudgetPivotConfig, BudgetPivotRow, BudgetValue,
@@ -58,8 +59,8 @@ export function aggregateBudgetFacts(facts: BudgetFact[]): BudgetMetricValues {
   return values;
 }
 
-export function filterBudgetFacts(facts: BudgetFact[], filters: Partial<Record<BudgetDimension, string>>): BudgetFact[] {
-  return facts.filter(fact => dimensions.every(dimension => !filters[dimension] || fact[dimension] === filters[dimension]));
+export function filterBudgetFacts(facts: BudgetFact[], filters: Partial<Record<BudgetDimension, FilterValue>>): BudgetFact[] {
+  return facts.filter(fact => dimensions.every(dimension => matchesFilter(fact[dimension], filters[dimension])));
 }
 
 function sanitizeConfig(config: Partial<BudgetPivotConfig> | undefined): BudgetPivotConfig {
@@ -226,7 +227,7 @@ export function readAnalysisState(search: string): BudgetAnalysisState {
   // detail tab before considering baView, preserving the visible destination.
   const requestedView = params.get("baTable") === "detail" ? "detail" : params.get("baView");
   return { view: requestedView === "detail" ? "detail" : requestedView === "pivot" ? "pivot" : "board", unit: params.get("baUnit") === "yuan" ? "yuan" : "wan",
-    filters: Object.fromEntries(dimensions.map(dimension => [dimension, params.get(`bf_${dimension}`) ?? ""])) as BudgetFilters,
+    filters: Object.fromEntries(dimensions.map(dimension => [dimension, readFilterParam(params, `bf_${dimension}`)])) as BudgetFilters,
     config: sanitizeConfig({ rows, column: (params.get("baColumn") ?? defaults.config.column) as BudgetPivotConfig["column"],
       metrics: requestedMetrics, sort: params.get("baSort") as BudgetPivotConfig["sort"] }) };
 }
@@ -237,8 +238,7 @@ export function writeAnalysisState(search: string, state: BudgetAnalysisState): 
   for (const [key, value] of Object.entries({ baView: state.view === "detail" ? "detail" : state.view === "pivot" ? "pivot" : "board", baRows: config.rows.join(","), baColumn: config.column,
     baMetrics: config.metrics.join(","), baSort: config.sort, baUnit: state.unit === "yuan" ? "yuan" : "wan" })) params.set(key, value);
   for (const dimension of dimensions) {
-    const value = state.filters[dimension];
-    if (value) params.set(`bf_${dimension}`, value); else params.delete(`bf_${dimension}`);
+    writeFilterParam(params, `bf_${dimension}`, state.filters[dimension]);
   }
   return params.toString();
 }
@@ -246,8 +246,12 @@ export function writeAnalysisState(search: string, state: BudgetAnalysisState): 
 export function validateAnalysisState(state: BudgetAnalysisState, facts: BudgetFact[]): { state: BudgetAnalysisState; removedFilters: string[] } {
   const removedFilters: string[] = [], filters = { ...emptyBudgetFilters, ...state.filters };
   for (const dimension of dimensions) {
-    const value = filters[dimension];
-    if (value && !facts.some(fact => fact[dimension] === value)) { removedFilters.push(`${dimensionLabels[dimension]}：${value}`); filters[dimension] = ""; }
+    const values = filterValues(filters[dimension]);
+    const unavailable = values.filter(value => !facts.some(fact => fact[dimension] === value));
+    // Keep the legacy result property name for callers, but never broaden a
+    // requested scope merely because a selected value has no current facts.
+    if (unavailable.length) removedFilters.push(`${dimensionLabels[dimension]}：${filterLabel(unavailable)}`);
+    filters[dimension] = normalizeFilter(values);
   }
   return { state: { view: state.view === "detail" ? "detail" : state.view === "pivot" ? "pivot" : "board", unit: state.unit === "yuan" ? "yuan" : "wan", filters, config: sanitizeConfig(state.config) }, removedFilters };
 }

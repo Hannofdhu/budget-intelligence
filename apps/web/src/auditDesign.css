@@ -1,0 +1,130 @@
+@import "./budgetTokens.css";
+
+/* Audit keeps its exact-version comparison and evidence flow; these slots only
+   align its typography, density and containers with DESIGN.md v1.0. */
+.audit-app { color: var(--budget-text); font-family: var(--budget-font-family); font-size: var(--budget-body-size); line-height: 1.57143; }
+.audit-app .audit-workspace { display: block; width: 100%; max-width: 1480px; min-height: 0; margin: 0 auto; padding: var(--budget-space-6); }
+.audit-app .audit-main { min-width: 0; padding: 0; }
+.audit-app .audit-heading { align-items: center; flex-wrap: wrap; gap: var(--budget-space-4); margin-bottom: var(--budget-space-6); }
+.audit-app .audit-heading p { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-weight: 400; }
+.audit-app .budget-page-title { margin: 0; font-family: inherit; font-size: 2rem; font-weight: 700; line-height: 1.25; letter-spacing: normal; overflow-wrap: anywhere; }
+.audit-app .budget-section-title { margin: 0; font-family: inherit; color: var(--budget-text); font-size: var(--budget-section-title-size); font-weight: 600; line-height: 1.44445; letter-spacing: normal; }
+.audit-app .comparison-ribbon,
+.audit-app .change-ledger,
+.audit-app .audit-timeline,
+.audit-app .detail-drawer,
+.audit-app .revision-spine { min-width: 0; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-section); background: var(--budget-surface); color: var(--budget-text); }
+.audit-app .comparison-ribbon { margin-bottom: var(--budget-space-4); padding: var(--budget-space-6); }
+.audit-app .audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--budget-space-6); }
+.audit-app .change-ledger > header,
+.audit-app .audit-timeline > header,
+.audit-app .detail-drawer > header { min-height: 0; flex-wrap: wrap; gap: var(--budget-space-3); padding: var(--budget-space-6); }
+.audit-app .change-ledger__columns { font-size: var(--budget-caption-size); }
+.audit-app .component-diff__summary,
+.audit-app .audit-timeline__body { padding-right: var(--budget-space-6); padding-left: var(--budget-space-6); }
+.audit-app .component-diff__name { font-family: inherit; font-size: var(--budget-body-size); font-weight: 600; }
+.audit-app .component-diff__type,
+.audit-app .comparison-ribbon__revision span,
+.audit-app .comparison-ribbon label > span,
+.audit-app .comparison-ribbon__revision small,
+.audit-app .comparison-ribbon dt,
+.audit-app .audit-timeline > header > span,
+.audit-app .audit-event__actor,
+.audit-app .audit-empty,
+.audit-app .audit-filters > summary,
+.audit-app .audit-evidence > summary,
+.audit-app .audit-history-all > summary,
+.audit-app .audit-event details,
+.audit-app .detail-drawer > footer { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; }
+.audit-app .audit-event__heading h3 { font: 600 1rem/1.5 var(--budget-font-family); }
+.audit-app .audit-event blockquote,
+.audit-app .detail-state dd { font-size: var(--budget-body-size); line-height: 1.57143; }
+.audit-app .unchanged-toggle,
+.audit-app .audit-filter-check,
+.audit-app .detail-changed-toggle { min-height: 2.25rem; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.audit-app .audit-filters__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--budget-space-3); padding: var(--budget-space-4) var(--budget-space-6); }
+.audit-app .audit-filters__grid label:not(.audit-filter-check),
+.audit-app .audit-role-filter { display: grid; gap: var(--budget-space-1); min-width: 0; color: var(--budget-text-secondary); font-size: .8125rem; line-height: 1.53846; }
+.audit-app .audit-filters__grid input:not([type="checkbox"]),
+.audit-app .comparison-ribbon select,
+.audit-app .audit-all-compare select,
+.audit-app .detail-drawer__toolbar input { width: 100%; min-width: 0; min-height: 2.5rem; height: auto; margin: 0; padding: var(--budget-space-2) var(--budget-space-3); border: 1px solid var(--budget-control-border); border-radius: var(--budget-radius-control); background: var(--budget-control-surface); color: var(--budget-text); font: inherit; font-size: var(--budget-body-size); }
+.audit-app button { min-height: 2.25rem; padding: var(--budget-space-2) var(--budget-space-3); border-radius: var(--budget-radius-control); font-family: inherit; font-size: var(--budget-body-size); line-height: 1.42858; }
+.audit-app .audit-filters__actions { padding: 0 var(--budget-space-6) var(--budget-space-4); }
+.audit-app button:focus-visible, .audit-app input:focus-visible, .audit-app select:focus-visible, .audit-app a:focus-visible, .audit-app summary:focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
+.audit-app .revision-spine { position: static; height: auto; max-height: none; margin-top: var(--budget-space-6); }
+.audit-app .revision-spine__title { padding: var(--budget-space-6); border-color: var(--budget-divider); }
+.audit-app .revision-spine__title > span,
+.audit-app .revision-spine__meta > small,
+.audit-app .revision-spine__list > button.is-selected .revision-spine__meta > small { color: var(--budget-text-secondary); font-family: inherit; font-size: var(--budget-caption-size); }
+.audit-app .revision-spine__list > button { color: var(--budget-text); border-color: var(--budget-divider); border-radius: 0; background: transparent; }
+.audit-app .revision-spine__list > button:hover,
+.audit-app .revision-spine__list > button.is-selected { color: var(--budget-text); background: #e5eee7; }
+.audit-app .revision-spine__number { font: 600 1rem/1.5 var(--budget-font-family); }
+.audit-app .revision-spine__meta > strong { color: var(--budget-text); font-size: var(--budget-body-size); }
+.audit-app .revision-spine__list { gap: var(--budget-space-2); padding: 0 var(--budget-space-6) var(--budget-space-6); }
+.audit-app .revision-spine__list, .audit-app .audit-history-all { min-width: 0; overflow: auto; }
+.audit-app .audit-history-all { margin: 0 var(--budget-space-6); }
+.audit-app .audit-history-all button { overflow-wrap: anywhere; }
+.audit-app .detail-drawer__toolbar, .audit-app .detail-drawer__body { padding: var(--budget-space-4) var(--budget-space-6); }
+.audit-app .detail-drawer__toolbar label { min-width: 0; }
+.audit-app .detail-diff-row__states { min-width: 0; }
+.audit-app code, .audit-app dd, .audit-app .audit-event__actor { overflow-wrap: anywhere; }
+.audit-app .audit-heading__hash code { color: var(--budget-text); }
+.audit-app .status-tag,
+.audit-app .audit-event > time span,
+.audit-app .audit-event__heading > span,
+.audit-app .audit-event summary,
+.audit-app .audit-event details dl div,
+.audit-app .detail-diff-row > header > span,
+.audit-app .detail-diff-row > header p,
+.audit-app .detail-diff-row > header code,
+.audit-app .detail-state > header,
+.audit-app .detail-state > dl dt,
+.audit-app .detail-state > footer,
+.audit-app .detail-state > footer details dt,
+.audit-app .component-diff__technical,
+.audit-app .audit-diff-hash code,
+.audit-app .audit-history-all button small,
+.audit-app .archive-signout small,
+.audit-app .audit-heading__hash span,
+.audit-app .audit-all-compare { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; }
+.audit-app .audit-event > time strong, .audit-app .archive-signout strong { color: var(--budget-text); font-family: inherit; font-size: var(--budget-body-size); }
+.audit-app .status-tag--draft, .audit-app .component-diff--changed .component-diff__type,
+.audit-app .detail-diff-row--changed > header > span { color: #80501c; background: #f5e9d6; }
+.audit-app .component-diff--removed .component-diff__type,
+.audit-app .detail-diff-row--removed > header > span { color: #a23f35; background: #f6e4e0; }
+.audit-app .status-tag--published { color: #2d5f78; }
+.audit-app .archive-signout button { background: var(--budget-accent); }
+.audit-app .detail-diff-row > header p, .audit-app .detail-state > dl dd,
+.audit-app .audit-event details dd, .audit-app .revision-spine__meta > strong { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.audit-app .detail-diff-row > header strong { color: var(--budget-text); font-size: var(--budget-body-size); }
+.audit-app .detail-state > dl dd { font-family: inherit; font-variant-numeric: tabular-nums; }
+@media (max-width: 1199px) {
+  .audit-app .audit-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .audit-app .audit-workspace { padding: var(--budget-space-4); }
+  .audit-app .budget-page-title { font-size: 1.625rem; line-height: 1.3077; }
+  .audit-app .comparison-ribbon, .audit-app .change-ledger > header, .audit-app .audit-timeline > header,
+  .audit-app .detail-drawer > header, .audit-app .revision-spine__title { padding: var(--budget-space-4); }
+  .audit-app .audit-filters__grid { grid-template-columns: minmax(0, 1fr); padding: var(--budget-space-4); }
+  .audit-app .audit-timeline__body, .audit-app .component-diff__summary, .audit-app .detail-drawer__toolbar, .audit-app .detail-drawer__body { padding-right: var(--budget-space-4); padding-left: var(--budget-space-4); }
+  .audit-app .comparison-ribbon { grid-template-columns: minmax(0, 1fr); gap: var(--budget-space-3); }
+  .audit-app .comparison-ribbon__relation { display: none; }
+  .audit-app .comparison-ribbon dl { grid-column: auto; }
+  .audit-app .audit-filters__actions { flex-wrap: wrap; padding-right: var(--budget-space-4); padding-left: var(--budget-space-4); }
+  .audit-app .detail-diff-row__states { grid-template-columns: minmax(0, 1fr); }
+  .audit-app .audit-heading__hash { display: flex; }
+  .audit-app .revision-spine__list { grid-template-columns: minmax(0, 1fr); padding: 0 var(--budget-space-4) var(--budget-space-4); }
+  .audit-app .audit-history-all { margin: 0 var(--budget-space-4); }
+  .audit-app .component-diff__summary, .audit-app .change-ledger__columns { grid-template-columns: 3rem minmax(0, 1fr) 5rem; }
+  .audit-app .detail-diff-row > header { grid-template-columns: 3rem minmax(0, 1fr); }
+  .audit-app .detail-diff-row > header code { grid-column: 1 / -1; }
+}
+@media (max-height: 600px) { .audit-app .revision-spine { position: static; max-height: none; } }
+@media (pointer: coarse) {
+  .audit-app button, .audit-app input:not([type="checkbox"]), .audit-app select,
+  .audit-app summary, .audit-app .unchanged-toggle, .audit-app .audit-filter-check,
+  .audit-app .detail-changed-toggle { min-height: 2.75rem; }
+}

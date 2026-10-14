@@ -49,15 +49,16 @@ test("FY27 uses the same five task names as next-year budget in navigation and c
   }
 });
 
-test("FY27 shares SKU identity and section chrome while retaining finalized read-only content and other task layouts", () => {
+test("FY27 shares SKU identity and section chrome while retaining finalized read-only content across task layouts", () => {
   const rows = [line(1), line(2, { campus: "中关村" }), line(3, { season: "秋季" })];
   const before = JSON.stringify(rows), filters = { season: "", track: "", campus: "西直门", product: "", grade: "", subject: "" };
   const tree = pageTree(rows, 1, filters);
   const sections = find(tree, node => typeof node.type === "function" && node.type.name === "BudgetDataSection");
-  assert.equal(sections.length, 1);
-  assert.equal(sections[0].props.title, "SKU");
-  assert.equal(sections[0].props.count, 1);
-  assert.equal(sections[0].props.id, "history-details", "existing detail deep links retain their target");
+  assert.equal(sections.length, 2, "the annual target and SKU use the same section role");
+  const details = sections.find(section => section.props.id === "history-details");
+  assert.equal(details.props.title, "SKU");
+  assert.equal(details.props.count, 1);
+  assert.equal(details.props.id, "history-details", "existing detail deep links retain their target");
   const [section] = find(tree, node => node.type === "section" && node.props["aria-label"] === "预算明细");
   assert.ok(section);
   assert.equal(section.props["aria-labelledby"], "history-details-title");
@@ -65,9 +66,12 @@ test("FY27 shares SKU identity and section chrome while retaining finalized read
   assert.equal(find(section, node => ["input", "select", "textarea"].includes(node.type)).length, 0,
     "a shared editing-module shell never makes finalized facts editable");
   assert.equal(find(section, node => node.type === "button" && /新增|保存|查看影响/.test(elementText(node))).length, 0);
-  for (const step of [2, 3, 4, 5]) {
-    assert.equal(find(pageTree(rows, step, filters), node => typeof node.type === "function" && node.type.name === "BudgetDataSection").length, 0,
-      "M1 does not silently migrate unrelated task sections");
+  for (const step of [2, 3, 4]) {
+    const task = pageTree(rows, step, filters);
+    const detail = find(task, node => typeof node.type === "function" && node.type.name === "BudgetDataSection" && node.props.id === "history-details")[0];
+    assert.ok(detail, "each implemented historical task uses the shared data-section role");
+    assert.equal(find(detail, node => ["input", "select", "textarea"].includes(node.type)).length, 0);
+    assert.equal(detail.props.countLabel, step === 2 ? "条入口明细" : "条季度明细", "counts retain their business grain");
   }
   assert.equal(JSON.stringify(rows), before);
 });
@@ -172,6 +176,22 @@ test("FY27 quarterly filters are retained in horizontal reading and never synthe
   assert.deepEqual(quarter.props.rows, [rows[1]]);
   assert.equal(quarter.props.metrics.find(column => column.key === "revenue").value(rows[1]), -12.123456,
     "formatting never replaces the original numeric precision");
+});
+
+test("FY27 exact multi-value filters OR within a dimension, AND across dimensions, and keep source rows read-only", () => {
+  const rows = [line(1), line(1, { season: "秋季" }), line(2, { campus: "中关村", subject: "英语" }),
+    line(2, { campus: "中关村", subject: "英语", season: "寒假" }), line(3, { campus: "西直门南" }),
+    line(4, { campus: "中关村", subject: "物理" }), line(5, { campus: "中关村", subject: "英语", season: "春季" })];
+  const before = JSON.stringify(rows), filters = { season: ["暑假", "秋季", "寒假"], track: "", campus: ["西直门", "中关村"], product: "", grade: "", subject: ["数学", "英语"] };
+  const tree = pageTree(rows, 4, filters, 0, "detail");
+  const [table] = find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+  assert.deepEqual(table.props.exportData.rows, rows.slice(0, 4));
+  assert.deepEqual(find(find(table, node => node.type === "thead")[0], node => node.type === "th").slice(0, 2).map(elementText),
+    ["校区 / 赛道 / 产品", "年级 / 科目"]);
+  const [scope] = find(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar");
+  assert.deepEqual(scope.props.filters, filters);
+  assert.equal(find(tree, node => node.type === "input").length, 0);
+  assert.equal(JSON.stringify(rows), before);
 });
 
 test("FY27 annual targets precede the explicitly local scope and hidden quarter is not an active control", () => {

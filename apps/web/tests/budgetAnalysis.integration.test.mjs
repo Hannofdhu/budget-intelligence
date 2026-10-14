@@ -86,7 +86,7 @@ test("missing, duplicate or incompatible FY28 headcounts remain unknown, never i
   }
 });
 
-test("URL and cross-year saved-view cleanup preserve revision context and valid selections without modifying amounts", () => {
+test("URL and cross-year saved views preserve exact requested scope and revision without modifying amounts", () => {
   const state = defaultAnalysisState();
   state.view = "pivot"; state.unit = "yuan"; state.config = config;
   state.filters.campus = "旧校区"; state.filters.product = "智慧空间";
@@ -98,7 +98,8 @@ test("URL and cross-year saved-view cleanup preserve revision context and valid 
   const facts = normalizePublishedFacts([publishedRow("headcount-one", "ENTRY", 0, 12).revenue]);
   const before = JSON.stringify(facts), cleaned = validateAnalysisState(readAnalysisState(url), facts);
   assert.deepEqual(cleaned.removedFilters, ["校区：旧校区"]);
-  assert.equal(cleaned.state.filters.campus, ""); assert.equal(cleaned.state.filters.product, "智慧空间");
+  assert.equal(cleaned.state.filters.campus, "旧校区"); assert.equal(cleaned.state.filters.product, "智慧空间");
+  assert.equal(filterBudgetFacts(facts, cleaned.state.filters).length, 0);
   assert.equal(JSON.stringify(facts), before);
 });
 

@@ -102,6 +102,44 @@ test("filters use exact whole dimensions and never mutate display facts", () => 
   assert.equal(filterBudgetFacts(facts, { product: "不存在" }).length, 0);
 });
 
+test("multi-value budget dimensions use OR inside a dimension and AND across dimensions without changing amounts", () => {
+  const facts = [fact({ id: "a", campus: "A,B", season: "暑假", revenue: -12.345678 }),
+    fact({ id: "b", campus: "中关村", season: "秋季", revenue: 0 }),
+    fact({ id: "c", campus: "西直门", season: "秋季", revenue: 100 }),
+    fact({ id: "d", campus: "A,B", season: "春季", revenue: 999 }),
+    fact({ id: "e", campus: "A", season: "秋季", revenue: 777 })];
+  const before = JSON.stringify(facts), selected = filterBudgetFacts(facts, { campus: ["A,B", "中关村"], season: ["暑假", "秋季"] });
+  assert.deepEqual(selected.map(row => row.id), ["a", "b"]);
+  assert.equal(aggregateBudgetFacts(selected).revenue, -12.345678);
+  assert.deepEqual(filterBudgetFacts(facts, { campus: [], season: [] }), facts);
+  assert.equal(filterBudgetFacts(facts, { campus: ["A,B", "中关村"], grade: ["不存在"] }).length, 0);
+  assert.equal(JSON.stringify(facts), before);
+});
+
+test("analysis deep links round-trip multiple exact values and clear only their own filter parameters", () => {
+  const state = { ...defaultAnalysisState(), view: "detail", filters: { ...emptyBudgetFilters,
+    campus: ["A,B", "中关村"], season: ["暑假", "秋季"], product: "常规班" } };
+  const source = "?archive=fy27&revision=immutable&step=5&nyTask=5&nyFilters=1&custom=keep&bf_campus=stale";
+  const search = writeAnalysisState(source, state), params = new URLSearchParams(search);
+  assert.deepEqual(readAnalysisState(search), state);
+  assert.deepEqual(params.getAll("bf_campus"), ["A,B", "中关村"]);
+  assert.deepEqual(params.getAll("bf_season"), ["暑假", "秋季"]);
+  for (const [key, expected] of [["archive", "fy27"], ["revision", "immutable"], ["step", "5"], ["nyTask", "5"], ["nyFilters", "1"], ["custom", "keep"]]) assert.equal(params.get(key), expected);
+  const cleared = new URLSearchParams(writeAnalysisState(search, { ...state, filters: { ...emptyBudgetFilters } }));
+  assert.equal([...cleared.keys()].some(key => key.startsWith("bf_")), false);
+  assert.equal(cleared.get("revision"), "immutable"); assert.equal(cleared.get("nyFilters"), "1");
+});
+
+test("year validation reports unavailable values while preserving the exact requested multi-value scope", () => {
+  const filters = { ...emptyBudgetFilters, campus: ["西直门", "中关村", "关闭校区"], season: ["暑假", "秋季", "不存在季度"] };
+  const state = { ...defaultAnalysisState(), filters }, before = JSON.stringify(state);
+  const result = validateAnalysisState(state, [fact({ campus: "西直门", season: "暑假" }), fact({ campus: "中关村", season: "秋季" })]);
+  assert.deepEqual(result.state.filters.campus, filters.campus);
+  assert.deepEqual(result.state.filters.season, filters.season);
+  assert.deepEqual(result.removedFilters, ["季度：不存在季度", "校区：关闭校区"]);
+  assert.equal(JSON.stringify(state), before);
+});
+
 test("analysis URL roundtrips and preserves fiscal year, revision, section and unrelated parameters", () => {
   const state = { ...defaultAnalysisState(), view: "pivot", unit: "yuan", filters: { ...emptyBudgetFilters, campus: "西直门", season: "秋季" },
     config: config({ rows: ["campus", "product"], metrics: ["revenue", "new", "discount"], sort: "name-asc" }) };
@@ -155,10 +193,11 @@ test("invalid URL config and duplicate dimensions are sanitized without evaluati
   assert.deepEqual(written.config, config({ rows: ["campus"], column: "none", metrics: ["old"] }));
 });
 
-test("a year switch clears unavailable filters but preserves valid zero-result combinations", () => {
+test("a year switch keeps unavailable filters and never silently broadens zero-result combinations", () => {
   const state = { ...defaultAnalysisState(), filters: { ...emptyBudgetFilters, campus: "已关闭校区", grade: "八年级" } };
   const checked = validateAnalysisState(state, [fact({ grade: "八年级" })]);
-  assert.equal(checked.state.filters.campus, ""); assert.equal(checked.state.filters.grade, "八年级");
+  assert.equal(checked.state.filters.campus, "已关闭校区"); assert.equal(checked.state.filters.grade, "八年级");
+  assert.equal(filterBudgetFacts([fact({ grade: "八年级" })], checked.state.filters).length, 0);
   assert.deepEqual(checked.removedFilters, ["校区：已关闭校区"]);
   assert.equal(state.filters.campus, "已关闭校区");
   const available = [fact({ campus: "A", grade: "七年级" }), fact({ campus: "B", grade: "八年级" })];

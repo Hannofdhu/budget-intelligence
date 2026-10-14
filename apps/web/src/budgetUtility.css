@@ -1,8 +1,8 @@
 .budget-utility-panel { position: fixed; inset: 0 0 0 auto; width: min(1000px,calc(100% - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0 0 0 auto; padding: 0; overflow: auto; border: 1px solid #dce3dd; border-radius: 16px 0 0 16px; background: #f5f6f2; color: #173f37; box-shadow: -12px 0 42px #173f3722; }
 .budget-utility-panel::backdrop { background: #173f3766; }
 .budget-utility-heading { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; border-bottom: 1px solid #dce3dd; background: #f5f6f2; }
-.budget-utility-heading h2 { margin: 0; padding: 0; font: inherit; font-size: 20px; font-weight: 700; }
-.budget-utility-heading button { flex: 0 0 auto; min-height: 36px; padding: 6px 12px; border: 1px solid #dce3dd; border-radius: 7px; background: #fff; color: #173f37; font: inherit; font-size: 13px; }
+.budget-utility-heading h2 { margin: 0; padding: 0; font: inherit; font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }
+.budget-utility-heading button { flex: 0 0 auto; min-height: 36px; padding: 6px 12px; border: 1px solid var(--budget-control-border); border-radius: var(--budget-radius-control); background: #fff; color: var(--budget-accent); font: inherit; font-size: var(--budget-body-size); }
 .budget-utility-heading button:disabled { opacity: .5; cursor: not-allowed; }
 .budget-utility-heading :is(h2,button):focus-visible { outline: 2px solid #3e7966; outline-offset: 4px; }
 .budget-utility-content { padding: 20px 22px 32px; min-width: 0; }

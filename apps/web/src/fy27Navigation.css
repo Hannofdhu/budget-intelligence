@@ -13,7 +13,7 @@
 .decision-shell .budget-page-navigation {
   position: sticky;
   top: var(--budget-header-height, 72px);
-  z-index: 25;
+  z-index: var(--budget-z-navigation, 30);
   display: flex;
   gap: 6px;
   align-items: center;
@@ -22,7 +22,7 @@
   padding: 10px 0;
   margin: 0 0 20px;
   border-bottom: 1px solid #dde4dd;
-  background: #f5f6f2;
+  background: var(--budget-page-background);
   scrollbar-width: thin;
   scroll-padding-inline: 8px;
 }
@@ -34,7 +34,7 @@
   gap: 10px;
   min-height: 42px;
   padding: 10px 16px;
-  color: #60766a;
+  color: var(--budget-text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -48,10 +48,10 @@
   display: inline-grid;
   place-items: center;
   min-width: 20px;
-  font-size: 11px;
+  font-size: var(--budget-caption-size);
   font-variant-numeric: tabular-nums;
 }
-.decision-shell .budget-page-navigation > button strong { font-size: 13px; font-weight: 600; }
+.decision-shell .budget-page-navigation > button strong { font-size: var(--budget-body-size); font-weight: 600; }
 .decision-shell .budget-page-navigation > button:hover { color: #173f37; background: #e9efe8; }
 .decision-shell .budget-page-navigation > button[aria-current="page"] { color: #fff; background: #173f37; }
 .decision-shell .budget-page-navigation > button[aria-current="page"] > span { color: #d4e7dc; }
@@ -60,8 +60,8 @@
 .decision-shell.history-budget .history-heading h1,
 .next-year-shell .ny-heading h1 {
   margin: 0;
-  font-size: clamp(26px, 2.6vw, 36px);
-  line-height: 1.35;
+  font-size: var(--budget-page-title-size);
+  line-height: 1.25;
   scroll-margin-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 20px);
 }
 .decision-shell.history-budget .history-heading h1:focus-visible,
@@ -97,7 +97,7 @@
   padding: 8px 16px;
   border-radius: 999px;
   color: #68776e;
-  font-size: 13px;
+  font-size: var(--budget-body-size);
   font-weight: 600;
   line-height: 1.4;
   text-decoration: none;
@@ -123,7 +123,7 @@
   min-width: 0;
 }
 .fy27-topbar .decision-version { display: flex; white-space: nowrap; }
-.fy27-year-label { color: #40564a; font-size: 13px; line-height: 1.4; white-space: nowrap; }
+.fy27-year-label { color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.4; white-space: nowrap; }
 
 @media (max-width: 1000px) {
   .decision-shell:has(.fy27-topbar) { --budget-header-height: 120px; }
@@ -144,13 +144,16 @@
 @media (max-width: 500px) {
   .fy27-header-context { gap: 8px; }
   .fy27-topbar .decision-brand strong { font-size: 13px; }
-  .fy27-year-label { font-size: 11px; }
-  .fy27-topbar .decision-version { font-size: 10px; gap: 4px; }
+  .fy27-year-label { font-size: var(--budget-caption-size); }
+  .fy27-topbar .decision-version { font-size: var(--budget-caption-size); gap: 4px; }
   .fy27-module-switch { width: min(100%, 420px); }
   .fy27-module-switch a { padding: 8px 10px; font-size: 12px; }
 }
+@media (max-width: 767px) {
+  .decision-shell.history-budget .history-heading h1, .next-year-shell .ny-heading h1 { font-size: 1.625rem; line-height: 1.3077; }
+}
 @media (max-width: 380px) {
-  .fy27-module-switch a { padding: 8px 6px; font-size: 11px; }
+  .fy27-module-switch a { padding: 8px 6px; font-size: var(--budget-caption-size); }
   .fy27-topbar .decision-brand { gap: 6px; }
   .fy27-topbar .decision-brand strong { font-size: 12px; }
   .fy27-header-context { gap: 4px; }

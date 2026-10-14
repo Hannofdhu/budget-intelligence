@@ -7,6 +7,7 @@ import {
 import { PublishedBudgetRecord } from "./PublishedBudgetRecord";
 import { BudgetAnalysisView } from "./BudgetAnalysisView";
 import { normalizePublishedFacts, type PublishedRenewalContext } from "./budgetAnalysis";
+import "./auxiliaryDesign.css";
 
 // This page reads existing published results; no calculation or budget write is performed.
 export function BudgetResultsPage({ revisionId, active }: { revisionId: string; active: boolean }) {
@@ -84,11 +85,11 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
   }, [active, loading, result]);
   const facts = useMemo(() => normalizePublishedFacts(result?.items ?? [], headcounts, renewalContext), [result, headcounts, renewalContext]);
   const target = closure?.items.find(item => item.scope_level === "DEPARTMENT")?.target_revenue_yuan;
-  return <section className="budget-overview budget-overview--embedded" aria-label="第五步：预算概览">
-    {loading && <section className="result-state" role="status"><span className="result-loader" /><h1>正在读取预算</h1></section>}
-    {error && <section className="result-state result-state--error" role="alert"><h1>预算暂时无法读取</h1><p>{error}</p><a href={`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=home`}>返回年度预算</a></section>}
+  return <section className="budget-overview budget-overview--embedded budget-auxiliary" aria-label="第五步：预算概览">
+    {loading && <section className="result-state" role="status"><span className="result-loader" /><h1 className="budget-page-title">正在读取预算</h1></section>}
+    {error && <section className="result-state result-state--error" role="alert"><h1 className="budget-page-title">预算暂时无法读取</h1><p className="budget-status" role="alert">{error}</p><a href={`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=home`}>返回年度预算</a></section>}
     {result && !loading && !error && <>
-      <header className="ba-page-heading"><div><p>FY{String(result.fiscal_year).slice(-2)} 学校版</p><h1 ref={pageTitleRef} tabIndex={-1}>预算概览</h1></div><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>变化记录</a></header>
+      <header className="ba-page-heading"><div><h1 className="budget-page-title" ref={pageTitleRef} tabIndex={-1}>预算概览</h1></div><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>变化记录</a></header>
       {countNotice && <p className="ba-notice" role="status">{countNotice}</p>}
       <BudgetAnalysisView facts={facts} contextKey={`budget:${annualBudgetId}:${revisionId}`} fiscalYear={result.fiscal_year}
         annualTarget={target === undefined ? null : Number(target)}

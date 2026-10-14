@@ -24,6 +24,9 @@ import {
   type RevisionResponse,
 } from "./api";
 import { BudgetContextHeader } from "./BudgetContextHeader";
+import { FilterSelect } from "./FilterSelect";
+import { filterValues, type FilterValue } from "./filterSelection";
+import "./auditDesign.css";
 
 const OWNER_ROLE = "DEPARTMENT_BUDGET_OWNER";
 
@@ -155,7 +158,7 @@ interface AuditFilterState {
   eventType: string;
   objectType: string;
   actorId: string;
-  actingRole: string;
+  actingRole: FilterValue;
   reasonContains: string;
   occurredFrom: string;
   occurredTo: string;
@@ -355,7 +358,7 @@ function AuditEventRow({ event, revisionNo }: { event: AuditEvent; revisionNo?: 
       <div className="audit-event__dot" aria-hidden="true" />
       <div className="audit-event__body">
         <div className="audit-event__heading">
-          <h3>{EVENT_LABELS[event.event_type] ?? "预算记录更新"}</h3>
+          <h3 className="budget-subsection-title">{EVENT_LABELS[event.event_type] ?? "预算记录更新"}</h3>
           {revisionNo && <span>R{revisionNo}</span>}
         </div>
         <p className="audit-event__actor">{event.actor_id} · {ROLE_LABELS[event.acting_role] ?? event.acting_role}</p>
@@ -417,7 +420,7 @@ export function VersionAuditPage() {
     eventType: state.eventType.trim() || undefined,
     objectType: state.objectType.trim() || undefined,
     actorId: state.actorId.trim() || undefined,
-    actingRole: state.actingRole || undefined,
+    actingRole: filterValues(state.actingRole).length ? state.actingRole : undefined,
     reasonContains: state.reasonContains.trim() || undefined,
     occurredFrom: state.occurredFrom ? new Date(`${state.occurredFrom}T00:00:00`).toISOString() : undefined,
     occurredTo: state.occurredTo ? new Date(`${state.occurredTo}T23:59:59`).toISOString() : undefined,
@@ -623,7 +626,7 @@ export function VersionAuditPage() {
       window.history.replaceState({}, "", url);
       const [nextDiff, nextAudits] = await Promise.all([
         compareId ? fetchRevisionDiff(revisionId, compareId, identity) : Promise.resolve(null),
-        fetchAuditEvents(budget.annual_budget_id, { revisionId, limit: 50 }, identity),
+        fetchAuditEvents(budget.annual_budget_id, { ...auditApiFilters(nextFilters), revisionId }, identity),
       ]);
       setDiff(nextDiff);
       setAuditEvents(nextAudits.items);
@@ -664,9 +667,9 @@ export function VersionAuditPage() {
   };
 
   if (!budget || !selectedRevision) {
-    if (revisionInput && !error) return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
+    if (revisionInput && !error) return <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
     return (
-      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1>{error ? "变化记录读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
+      <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1 className="budget-page-title">{error ? "变化记录读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 
@@ -691,15 +694,15 @@ export function VersionAuditPage() {
           <header className="audit-heading">
             <div>
               <p>FY{String(budget.fiscal_year).slice(-2)} / 精确修订</p>
-              <h1>R{selectedRevision.revision_no} 相比 {compareRevision ? `R${compareRevision.revision_no}` : "所选版本"}</h1>
+              <h1 className="budget-page-title">R{selectedRevision.revision_no} 相比 {compareRevision ? `R${compareRevision.revision_no}` : "所选版本"}</h1>
 
             </div>
             <a href="#audit-versions">选择其他版本</a>
           </header>
 
-          {error && <div className="inline-error" role="alert"><strong>读取未完成</strong><span>{error}</span><button onClick={() => setError(null)}>×</button></div>}
+          {error && <div className="inline-error" role="alert"><strong>读取未完成</strong><span>{error}</span><button aria-label="关闭错误提示" onClick={() => setError(null)}>×</button></div>}
 
-          <section className="comparison-ribbon" aria-labelledby="comparison-title">
+          <section className="comparison-ribbon budget-surface" aria-labelledby="comparison-title">
             <div className="comparison-ribbon__revision">
               <span>当前版本</span><strong>R{selectedRevision.revision_no}</strong><small>{commandLabel(selectedRevision.command_type)}</small>
             </div>
@@ -745,9 +748,9 @@ export function VersionAuditPage() {
           </details>
 
           <div className="audit-grid">
-            <section className="change-ledger" aria-labelledby="change-ledger-title">
+            <section className="change-ledger budget-surface" aria-labelledby="change-ledger-title">
               <header>
-                <div><p>组件版本差异</p><h2 id="change-ledger-title">这次改了什么</h2></div>
+                <h2 className="budget-section-title" id="change-ledger-title">这次改了什么</h2>
                 <label className="unchanged-toggle"><input type="checkbox" checked={showUnchanged} onChange={(event) => setShowUnchanged(event.target.checked)} /><span>显示沿用项</span></label>
               </header>
               <div className="change-ledger__columns"><span>状态</span><span>业务内容</span><span>查看变化</span></div>
@@ -766,26 +769,27 @@ export function VersionAuditPage() {
               {diff && <details className="audit-diff-hash"><summary>查看差异校验依据</summary><code title={diff.content_hash}>{diff.content_hash}</code></details>}
             </section>
 
-            <section className="audit-timeline" aria-labelledby="audit-timeline-title">
+            <section className="audit-timeline budget-surface" aria-labelledby="audit-timeline-title">
               <header>
-                <div><p>追加式审计</p><h2 id="audit-timeline-title">谁在何时做了什么</h2></div>
-                <span>{relatedEvents.length} 条</span>
+                <h2 className="budget-section-title" id="audit-timeline-title">谁在何时做了什么</h2>
+                <span>{relatedEvents.length} 条已加载</span>
               </header>
               <details className="audit-filters">
-                <summary>筛选审计事件</summary>
+                <summary>筛选审计事件{filterValues(appliedFilters.actingRole).length > 0 ? `（已选 ${filterValues(appliedFilters.actingRole).length} 个角色）` : ""}</summary>
                 <div className="audit-filters__grid">
                   <label className="audit-filter-check"><input type="checkbox" checked={filters.selectedRevisionOnly} onChange={(event) => setFilters({ ...filters, selectedRevisionOnly: event.target.checked })} /><span>仅当前修订</span></label>
                   <label><span>事件</span><input value={filters.eventType} onChange={(event) => setFilters({ ...filters, eventType: event.target.value })} placeholder="如 PUBLISHED" /></label>
                   <label><span>对象</span><input value={filters.objectType} onChange={(event) => setFilters({ ...filters, objectType: event.target.value })} placeholder="如 RATE_PARAMETER" /></label>
                   <label><span>操作者</span><input value={filters.actorId} onChange={(event) => setFilters({ ...filters, actorId: event.target.value })} /></label>
-                  <label><span>角色</span><select value={filters.actingRole} onChange={(event) => setFilters({ ...filters, actingRole: event.target.value })}><option value="">全部角色</option><option value="DATA_MAINTAINER">数据维护人员</option><option value="DEPARTMENT_BUDGET_OWNER">部门预算负责人</option><option value="PERMISSION_ADMIN">权限管理员</option></select></label>
+                  <div className="audit-role-filter"><span>角色</span><FilterSelect aria-label="审计角色" value={filters.actingRole} onChange={(actingRole) => setFilters({ ...filters, actingRole })} allLabel="全部角色" options={Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }))} /></div>
                   <label><span>原因包含</span><input value={filters.reasonContains} onChange={(event) => setFilters({ ...filters, reasonContains: event.target.value })} /></label>
                   <label><span>开始日期</span><input type="date" value={filters.occurredFrom} onChange={(event) => setFilters({ ...filters, occurredFrom: event.target.value })} /></label>
                   <label><span>结束日期</span><input type="date" value={filters.occurredTo} onChange={(event) => setFilters({ ...filters, occurredTo: event.target.value })} /></label>
                 </div>
                 <div className="audit-filters__actions"><button onClick={() => { setFilters(EMPTY_FILTERS); }}>清空</button><button className="button--filter" onClick={() => void applyFilters()} disabled={auditLoading}>{auditLoading ? "筛选中…" : "应用筛选"}</button></div>
               </details>
-              <div className="audit-timeline__body">
+              <div className="audit-timeline__body" aria-busy={auditLoading}>
+                {auditLoading && <p className="audit-empty" role="status">正在读取审计事件…</p>}
                 {relatedEvents.length === 0 ? <p className="audit-empty">没有符合条件的审计事件。</p> : relatedEvents.map((event) => (
                   <AuditEventRow key={event.event_id} event={event} revisionNo={event.budget_revision_id ? revisionById.get(event.budget_revision_id)?.revision_no : undefined} />
                 ))}
@@ -795,11 +799,10 @@ export function VersionAuditPage() {
           </div>
 
           {(detailComponent || detailLoading) && (
-            <section className="detail-drawer" aria-labelledby="detail-drawer-title">
+            <section className="detail-drawer budget-surface" aria-labelledby="detail-drawer-title">
               <header>
                 <div>
-                  <p>逐行变化证据</p>
-                  <h2 id="detail-drawer-title">{detailDiff?.component_label ?? COMPONENT_LABELS[detailComponent] ?? "读取明细"}</h2>
+                  <h2 className="budget-section-title" id="detail-drawer-title">{detailDiff?.component_label ?? COMPONENT_LABELS[detailComponent] ?? "读取明细"}</h2>
 
                 </div>
                 <button className="detail-drawer__close" onClick={() => { setDetailComponent(""); setDetailDiff(null); }} aria-label="关闭逐行差异">×</button>
@@ -848,12 +851,12 @@ export function VersionAuditPage() {
             </section>
           )}
         </section>
-        <aside className="revision-spine" id="audit-versions" aria-label="选择预算版本">
-          <div className="revision-spine__title"><p>FY{String(budget.fiscal_year).slice(-2)} · 版本</p><h2>重要记录</h2><span>当前查看 R{selectedRevision.revision_no}</span></div>
+        <aside className="revision-spine budget-surface" id="audit-versions" aria-label="选择预算版本">
+          <div className="revision-spine__title"><h2 className="budget-section-title">重要记录</h2><span>当前查看 R{selectedRevision.revision_no}</span></div>
           <div className="revision-spine__list">
             {milestoneRevisions.map((item) => {
               const statuses = revisionStatus(item, budget, publishedIds);
-              return <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}><span className="revision-spine__number">R{item.revision_no}</span><span className="revision-spine__meta"><strong>{commandLabel(item.command_type)}</strong><small>{fullDate(item.created_at)}</small><i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i></span></button>;
+              return <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} aria-current={item.budget_revision_id === selectedId ? "true" : undefined} onClick={() => void selectRevision(item.budget_revision_id)}><span className="revision-spine__number">R{item.revision_no}</span><span className="revision-spine__meta"><strong>{commandLabel(item.command_type)}</strong><small>{fullDate(item.created_at)}</small><i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i></span></button>;
             })}
           </div>
           <details className="audit-history-all"><summary>查看全部 {revisions.length} 次修订{hiddenCalculationCount ? `（含 ${hiddenCalculationCount} 次系统计算）` : ""}</summary><div>{revisions.map((item) => <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}>R{item.revision_no} · {commandLabel(item.command_type)} <small>{fullDate(item.created_at)}</small></button>)}</div></details>

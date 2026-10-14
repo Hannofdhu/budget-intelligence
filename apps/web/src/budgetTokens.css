@@ -1,4 +1,4 @@
-/* DESIGN.md v1.0 · additive tokens; only migrated components consume them. */
+/* DESIGN.md v1.0 · shared semantic tokens across the product. */
 :root {
   --budget-font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   --budget-text: #192521;
@@ -9,14 +9,31 @@
   --budget-control-surface: #fff;
   --budget-divider: #d6dad3;
   --budget-control-border: #7c8a80;
+  --budget-page-background: #eef0eb;
+  --budget-warning: #80501c;
+  --budget-warning-background: #f5e9d6;
+  --budget-error: #a23f35;
+  --budget-error-background: #f6e4e0;
+  --budget-page-title-size: 2rem;
   --budget-section-title-size: 1.125rem;
+  --budget-subsection-title-size: 1rem;
   --budget-body-size: .875rem;
+  --budget-label-size: .8125rem;
   --budget-caption-size: .75rem;
+  --budget-metric-size: 2rem;
   --budget-space-1: .25rem;
   --budget-space-2: .5rem;
   --budget-space-3: .75rem;
   --budget-space-4: 1rem;
   --budget-space-6: 1.5rem;
+  --budget-space-8: 2rem;
   --budget-radius-section: 1rem;
   --budget-radius-control: .5rem;
+  --budget-z-content: 0;
+  --budget-z-table: 10;
+  --budget-z-header: 20;
+  --budget-z-navigation: 30;
+  --budget-z-submit: 40;
+  --budget-z-overlay: 50;
+  --budget-z-dialog: 60;
 }

@@ -127,7 +127,7 @@ async def list_audit_events(
     event_type: str | None,
     object_type: str | None,
     actor_id: str | None,
-    acting_role: str | None,
+    acting_role: str | list[str] | None,
     reason_contains: str | None,
     occurred_from: datetime | None,
     occurred_to: datetime | None,
@@ -151,7 +151,8 @@ async def list_audit_events(
     if actor_id:
         conditions.append(AuditEvent.actor_id == actor_id)
     if acting_role:
-        conditions.append(AuditEvent.acting_role == acting_role)
+        roles = [acting_role] if isinstance(acting_role, str) else acting_role
+        conditions.append(AuditEvent.acting_role.in_(list(dict.fromkeys(roles))))
     if reason_contains:
         conditions.append(cast(AuditEvent.detail, Text).ilike(f"%{reason_contains}%"))
     if occurred_from is not None:

@@ -1,14 +1,14 @@
-import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { downloadBudgetWorkbook, type ExportColumn } from "./budgetExport";
 import { copyTableText, readRenderedTable, tableClipboardText, tableCopyRows, tableExportData } from "./tableTransfer";
 import { moveTableSelection, renderedCellGrid, scrollTableViewportToEdge, selectedTableRows, tableMoveKeys, tableSelectionBounds, type TableMove, type TableSelection } from "./tableKeyboard";
 
 type TransferData = { columns: ExportColumn[]; rows: object[]; filename: string };
 type Props = ComponentProps<"table"> & { tableLabel?: string; exportData?: TransferData; copyRows?: string[][]; keyboardNavigation?: boolean;
-  toolbarStart?: ReactNode; scrollClassName?: string };
+  toolbarStart?: ReactNode; scrollClassName?: string; scrollRef?: Ref<HTMLDivElement>; scrollLabel?: string };
 
 /** All tables share honest, visible-table transfers; paged details may supply the full filtered dataset. */
-export function ActionTable({ tableLabel, exportData, copyRows, keyboardNavigation = false, toolbarStart, scrollClassName, children, ref: outerRef,
+export function ActionTable({ tableLabel, exportData, copyRows, keyboardNavigation = false, toolbarStart, scrollClassName, scrollRef, scrollLabel, children, ref: outerRef,
   onKeyDown, onClick, onFocus, onCopy, ...props }: Props) {
   const table = useRef<HTMLTableElement>(null), statusId = useId(), keyboardId = useId();
   const selection = useRef<{ range: TableSelection; signature: string } | null>(null);
@@ -144,5 +144,5 @@ export function ActionTable({ tableLabel, exportData, copyRows, keyboardNavigati
     {keyboardNavigation && selectionLabel && <button type="button" disabled={Boolean(busy)} onClick={() => void copySelected()}>{busy === "selection" ? "正在复制…" : "复制所选"}</button>}
     <button type="button" disabled={Boolean(busy)} onClick={() => void transfer("copy")}>{busy === "copy" ? "正在复制…" : "一键复制"}</button>
     <button type="button" disabled={Boolean(busy)} onClick={() => void transfer("export")}>{busy === "export" ? "正在导出…" : exportData ? "导出明细" : "导出当前表格"}</button>
-  </div>{scrollClassName ? <div className={scrollClassName}>{tableElement}</div> : tableElement}</>;
+  </div>{scrollClassName ? <div className={scrollClassName} ref={scrollRef} aria-label={scrollLabel}>{tableElement}</div> : tableElement}</>;
 }

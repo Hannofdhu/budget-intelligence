@@ -28,6 +28,9 @@ test("cross-quarter table is a compact metric-by-season reader with one full-ran
   const [table] = find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable");
   assert.ok(table);
   assert.equal(table.props.keyboardNavigation, true);
+  assert.equal(table.props.scrollClassName, "qbt-scroll");
+  assert.equal(typeof table.props.scrollRef, "function");
+  assert.equal(table.props.scrollLabel, "招生参数，四季横排，可横向滚动");
   assert.equal(table.props.exportData.rows.length, 31, "not just the 11 visible businesses");
   assert.equal(table.props.copyRows.length, 63, "all 31 businesses times two metrics plus header");
   assert.deepEqual(table.props.copyRows[0], ["业务", "指标", "暑假", "秋季", "寒假", "春季"]);

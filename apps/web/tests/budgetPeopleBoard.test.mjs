@@ -100,3 +100,17 @@ test("the merged campus budget gives old/new/total equal column treatment instea
   assert.doesNotMatch(campus, /scope="rowgroup"|row[Ss]pan="3"|ba-people-metric/);
   assert.doesNotMatch(html, /校区招生人次|校区季度老生新生人次表/);
 });
+
+test("quarter and renewal table transfers stay outside the scroll viewport while tables retain their data and one keyboard entry", () => {
+  const Board = load(name => name === "react" ? { Fragment, useMemo: compute => compute() } : require(name));
+  const facts = [fact(), fact({ id: "b", season: "秋季", old: 0, new: 0, total: 0 })], before = JSON.stringify(facts);
+  const tree = Board(props(facts));
+  for (const label of ["季度招生预算表", "赛道年级跨季续班率表"]) {
+    const [table] = findElements(tree, node => node.type?.name === "ActionTable" && node.props["aria-label"] === label);
+    assert.ok(table); assert.equal(table.props.scrollClassName, "ba-table-wrap");
+    assert.equal(table.props.scrollLabel, `${label}，可横向滚动`); assert.equal(table.props.keyboardNavigation, true);
+    assert.equal(table.props.tabIndex, undefined, "the outer viewport must not add a second read-only table focus stop");
+    assert.ok(findElements(table, node => node.type === "tbody").length);
+  }
+  assert.equal(JSON.stringify(facts), before);
+});

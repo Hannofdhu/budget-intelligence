@@ -48,8 +48,8 @@ export function QuarterlyBusinessTable<Row>({ rows, rowKey, season, businessColu
   const visible = arrangement.groups.slice(currentPage * size, (currentPage + 1) * size);
   return <div className="quarterly-business">
     {arrangement.duplicateCount > 0 && <p className="qbt-duplicate" role="status">{arrangement.duplicateCount} 组业务同季有多条明细，已逐条保留，未跨季配对；可切回逐季明细查看。</p>}
-    <div className="qbt-scroll" ref={observeQuarterlyBusinessScroll} aria-label={`${tableLabel}，四季横排，可横向滚动`}>
-      <ActionTable tableLabel={tableLabel} exportData={{ ...transfer, filename }} copyRows={copyRows} keyboardNavigation>
+      <ActionTable tableLabel={tableLabel} exportData={{ ...transfer, filename }} copyRows={copyRows} keyboardNavigation
+        scrollClassName="qbt-scroll" scrollRef={observeQuarterlyBusinessScroll} scrollLabel={`${tableLabel}，四季横排，可横向滚动`}>
         <thead><tr><th scope="col" className="qbt-business-heading">业务</th><th scope="col">指标</th>{arrangement.seasons.map(value => <th key={value} scope="col">{value}</th>)}</tr></thead>
         <tbody>{visible.flatMap(group => metrics.map((metric, metricIndex) => <tr key={`${group.key}-${metric.key}`} className={metricIndex === 0 ? "qbt-group-start" : undefined}>
           {metricIndex === 0 && <th scope="rowgroup" rowSpan={metrics.length} className="qbt-business-cell">{businessColumns.map(column => <span key={column.key} title={column.label}>{column.render ? column.render(group.sample) : displayed(group.sample, column)}</span>)}{group.duplicate && <small>独立季度明细</small>}</th>}
@@ -60,7 +60,6 @@ export function QuarterlyBusinessTable<Row>({ rows, rowKey, season, businessColu
         </tr>))}</tbody>
       </ActionTable>
       {rows.length === 0 && <p className="qbt-empty">当前范围没有明细。清除筛选可查看全部。</p>}
-    </div>
     <div className="qbt-pagination"><span>{arrangement.groups.length} 条业务 · {rows.length} 条季度明细</span><div>
       <button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</button>
       <span>{pageCount ? currentPage + 1 : 0} / {pageCount} 页</span>

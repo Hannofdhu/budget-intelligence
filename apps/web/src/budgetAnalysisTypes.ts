@@ -1,3 +1,4 @@
+import type { FilterValue } from "./filterSelection.ts";
 // Read-only display facts. Values and calculation versions remain owned by their source.
 export type BudgetDimension = "season" | "track" | "campus" | "product" | "grade" | "subject";
 export type BudgetMetric = "revenue" | "business" | "old" | "new" | "total" | "discount" | "renewal";
@@ -12,7 +13,7 @@ export type BudgetFact = Record<BudgetDimension, string> & {
   // Saved budget input rate × eligible preceding enrollment; not rounded old counts.
   renewalNumerator?: BudgetValue; renewalDenominator?: BudgetValue;
 };
-export type BudgetFilters = Record<BudgetDimension, string>;
+export type BudgetFilters = Record<BudgetDimension, FilterValue>;
 export type BudgetPivotConfig = {
   rows: BudgetDimension[];
   column: BudgetDimension | "none";

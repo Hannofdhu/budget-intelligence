@@ -1,14 +1,14 @@
-.budget-scope-bar { margin: 12px 0 16px; padding: 14px 16px; border: 1px solid #dce3dd; border-radius: 12px; background: #fff; color: #173f37; }
+.budget-scope-bar { margin: 12px 0 16px; padding: 16px; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-section); background: var(--budget-control-surface); color: var(--budget-text); }
 .budget-scope-heading, .budget-scope-summary, .budget-scope-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .budget-scope-heading { justify-content: space-between; margin-bottom: 10px; }
-.budget-scope-summary { font-size: 13px; }
+.budget-scope-summary { font-size: var(--budget-body-size); }
 .budget-scope-summary strong { font-weight: 650; }
-.budget-scope-summary span, .budget-scope-summary small { color: #65756e; font-size: 12px; }
+.budget-scope-summary span, .budget-scope-summary small { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .budget-scope-actions:empty { display: none; }
 .budget-scope-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 8px 12px; }
-.budget-scope-fields > label { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: #65756e; }
+.budget-scope-fields > label { display: grid; gap: 4px; min-width: 0; font-size: var(--budget-label-size); color: var(--budget-text-secondary); }
 .budget-scope-bar .budget-scope-fields select { width: 100%; min-width: 0; min-height: 36px; margin: 0; padding: 6px 10px; border: 1px solid #dce3dd; border-radius: 7px; background: #fff; color: #173f37; font: inherit; font-size: 13px; }
-.budget-scope-bar .budget-scope-actions > button, .budget-scope-bar .budget-scope-chips > button { min-height: 30px; margin: 0; font: inherit; font-size: 12px; }
+.budget-scope-bar .budget-scope-actions > button, .budget-scope-bar .budget-scope-chips > button { min-height: 36px; margin: 0; font: inherit; font-size: var(--budget-caption-size); }
 .budget-scope-bar .budget-scope-actions > button { padding: 5px 10px; border: 1px solid #dce3dd; border-radius: 7px; background: #fff; color: #173f37; cursor: pointer; }
 .budget-scope-actions > label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #65756e; }
 .budget-scope-bar .budget-scope-actions > label select { width: auto; min-height: 32px; padding: 4px 8px; margin: 0; font-size: 12px; }
