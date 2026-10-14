@@ -535,7 +535,7 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
     for name, fields, expected in coverage:
         actual = [tuple(r[field] for field in fields) for r in inputs[name]]
         if len(set(actual)) != len(actual) or set(actual) != expected:
-            raise NextYearError("预算参数必须无重复且完整覆盖四季度业务范围")
+            raise NextYearError("预算参数必须无重复且完整覆盖四季度SKU")
     for name in ("finance", "rates"):
         if len({r["id"] for r in inputs[name]}) != len(inputs[name]):
             raise NextYearError("预算参数编号重复")
@@ -593,7 +593,7 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
     original_ids = {r["id"] for r in original["combinations"]}
     added_ids = combination_ids - original_ids
     if not original_ids <= combination_ids:
-        raise NextYearError("已有预算业务不能删除，请明确关闭业务范围")
+        raise NextYearError("已有预算业务不能删除，请明确关闭SKU")
     for row in combinations:
         if row["id"] in added_ids and (
             not row.get("added")
@@ -615,7 +615,7 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
             original_keys = {tuple(r[k] for k in keys) for r in original[name]}
             current = [r for r in inputs[name] if tuple(r[k] for k in keys) in original_keys]
         if project(current, keys) != project(original[name], keys):
-            raise NextYearError("预算业务范围或来源已变化，不能静默替换")
+            raise NextYearError("预算SKU或来源已变化，不能静默替换")
     target = number(inputs["target_revenue_yuan"]) if inputs["target_revenue_yuan"] is not None else None
     if set(inputs["track_targets"]) != {r["track"] for r in combinations}:
         raise NextYearError("收入目标必须覆盖全部赛道")
@@ -631,7 +631,7 @@ def validate_plan_inputs(inputs: Json, original: Json) -> None:
     for row in inputs["finance"]:
         number(row["price_yuan"], maximum="1000000000")
     if not any(r["enabled"] for r in inputs["combinations"]):
-        raise NextYearError("至少保留一个预算业务范围")
+        raise NextYearError("至少保留一个预算SKU")
 
 
 def calculate_plan(inputs: Json) -> Json:

@@ -9,7 +9,7 @@ export const dimensionLabels: Record<BudgetDimension, string> = {
   season: "季度", track: "赛道", campus: "校区", product: "产品", grade: "年级", subject: "科目",
 };
 export const metricLabels: Record<BudgetMetric, string> = {
-  revenue: "确认收入", business: "业务收入（含税）", old: "老生人次", new: "新生人次", total: "总人次", discount: "综合折扣", renewal: "预算续班率",
+  revenue: "结转收入", business: "业务收入（含税）", old: "老生人次", new: "新生人次", total: "总人次", discount: "综合折扣", renewal: "预算续班率",
 };
 export const seasons = ["暑假", "秋季", "寒假", "春季"];
 export const emptyBudgetFilters: BudgetFilters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
@@ -222,7 +222,10 @@ export function readAnalysisState(search: string): BudgetAnalysisState {
   const params = new URLSearchParams(search), defaults = defaultAnalysisState();
   const rows = params.has("baRows") ? params.get("baRows")!.split(",") as BudgetDimension[] : defaults.config.rows;
   const requestedMetrics = params.has("baMetrics") ? params.get("baMetrics")!.split(",") as BudgetMetric[] : defaults.config.metrics;
-  return { view: params.get("baView") === "pivot" ? "pivot" : "board", unit: params.get("baUnit") === "yuan" ? "yuan" : "wan",
+  // Existing detail links used a nested table mode. Resolve them to the sibling
+  // detail tab before considering baView, preserving the visible destination.
+  const requestedView = params.get("baTable") === "detail" ? "detail" : params.get("baView");
+  return { view: requestedView === "detail" ? "detail" : requestedView === "pivot" ? "pivot" : "board", unit: params.get("baUnit") === "yuan" ? "yuan" : "wan",
     filters: Object.fromEntries(dimensions.map(dimension => [dimension, params.get(`bf_${dimension}`) ?? ""])) as BudgetFilters,
     config: sanitizeConfig({ rows, column: (params.get("baColumn") ?? defaults.config.column) as BudgetPivotConfig["column"],
       metrics: requestedMetrics, sort: params.get("baSort") as BudgetPivotConfig["sort"] }) };
@@ -230,7 +233,8 @@ export function readAnalysisState(search: string): BudgetAnalysisState {
 
 export function writeAnalysisState(search: string, state: BudgetAnalysisState): string {
   const params = new URLSearchParams(search), config = sanitizeConfig(state.config);
-  for (const [key, value] of Object.entries({ baView: state.view === "pivot" ? "pivot" : "board", baRows: config.rows.join(","), baColumn: config.column,
+  params.delete("baTable");
+  for (const [key, value] of Object.entries({ baView: state.view === "detail" ? "detail" : state.view === "pivot" ? "pivot" : "board", baRows: config.rows.join(","), baColumn: config.column,
     baMetrics: config.metrics.join(","), baSort: config.sort, baUnit: state.unit === "yuan" ? "yuan" : "wan" })) params.set(key, value);
   for (const dimension of dimensions) {
     const value = state.filters[dimension];
@@ -245,7 +249,7 @@ export function validateAnalysisState(state: BudgetAnalysisState, facts: BudgetF
     const value = filters[dimension];
     if (value && !facts.some(fact => fact[dimension] === value)) { removedFilters.push(`${dimensionLabels[dimension]}：${value}`); filters[dimension] = ""; }
   }
-  return { state: { view: state.view === "pivot" ? "pivot" : "board", unit: state.unit === "yuan" ? "yuan" : "wan", filters, config: sanitizeConfig(state.config) }, removedFilters };
+  return { state: { view: state.view === "detail" ? "detail" : state.view === "pivot" ? "pivot" : "board", unit: state.unit === "yuan" ? "yuan" : "wan", filters, config: sanitizeConfig(state.config) }, removedFilters };
 }
 
 export function pivotExport(pivot: BudgetPivot, input: BudgetPivotConfig): { columns: ExportColumn[]; rows: object[] } {

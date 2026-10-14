@@ -34,7 +34,7 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
           if (publication.items.length === 0) throw new Error("这版预算尚未定版，请返回年度预算继续审阅。");
         }
         const revenueId = revision.component_manifest.revenue_result_version_id;
-        if (typeof revenueId !== "string") throw new Error("该预算版本还没有收入计算结果。");
+        if (typeof revenueId !== "string") throw new Error("该预算版本还没有结转收入计算结果。");
         const nextResult = await fetchRevenueResultVersion(revenueId, who, controller.signal);
         let countItems: SeasonHeadcountResult[] = [];
         let nextRenewalContext: PublishedRenewalContext | undefined;
@@ -62,7 +62,7 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
             } else nextNotice = "这版人数结果未包含期初依赖，暑假续班率显示为 —。";
           } catch {
             if (controller.signal.aborted) return;
-            nextNotice = "老生、新生人数暂时无法读取；收入和总人次仍按定版结果显示。";
+            nextNotice = "老生、新生人数暂时无法读取；结转收入和总人次仍按定版结果显示。";
           }
         } else nextNotice = "这版结果未包含老生、新生拆解，相关指标显示为 —。";
         const closureId = revision.component_manifest.target_closure_result_version_id;

@@ -27,7 +27,18 @@ function sessionLabel(session: AiAgentSession): string {
     : `工作会话 ${session.id.slice(-6)}`;
 }
 
-export function AiAgentWorkspace({ status, loading, busy, error, notice, sessionId, sessionEnded = false, selectedSession, onSelectSession, onStart, onContinue, onStop, onRetry, terminal }: {
+export const aiAgentBudgetTasks = [
+  { id: "budget", category: "查看预算", question: "结转收入和招生人次主要分布在哪里？", prompt: "请先读取已保存的预算，列明财年、版本、金额单位和数据时间。按季度、赛道和校区分析结转收入与招生人次，指出主要分布和差异。不要修改预算。" },
+  { id: "forecast", category: "达成预测", question: "预计缺口主要来自哪些业务？", prompt: "请先读取最新已保存的达成预测及其预算基准，列明财年、版本、金额单位和数据时间。按季度和赛道解释预计达成率与缺口，区分实际和预测。不要刷新或确认预测。" },
+  { id: "next-year", category: "下一年预算", question: "离经营目标还差多少，先调整什么？", prompt: "请先读取最新已保存的下一年预算及其预测基准，列明财年、版本、金额单位和数据时间。核对经营目标是否已手工设置；未设置时不要自行假定目标。若已设置，分析缺口及招生人次、续班率、学费的调整方向，只给建议，不保存或调平。具体调整仍在下一年预算原有流程完成。" },
+] as const;
+
+/** A task prepares text only. The sole send path remains the user's Pi input. */
+export function aiAgentPreparedPrompt(taskId: string): string {
+  return aiAgentBudgetTasks.find(task => task.id === taskId)?.prompt ?? "";
+}
+
+export function AiAgentWorkspace({ status, loading, busy, error, notice, sessionId, sessionEnded = false, selectedSession, onSelectSession, onStart, onContinue, onStop, onRetry, preparedTaskId = "", onPrepareTask, onCopyPrepared, copyNotice = "", terminal }: {
   status: AiAgentStatus | null;
   loading: boolean;
   busy: boolean;
@@ -41,19 +52,18 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
   onContinue(): void;
   onStop(): void;
   onRetry(): void;
+  preparedTaskId?: string;
+  onPrepareTask?(id: string): void;
+  onCopyPrepared?(): void;
+  copyNotice?: string;
   terminal?: ReactNode;
 }) {
   const sessions = (status?.sessions ?? []).filter(aiAgentSessionActive);
+  const preparedPrompt = aiAgentPreparedPrompt(preparedTaskId);
   return <main className="decision-workspace ai-agent-workspace" aria-busy={loading || busy}>
     <header className="ai-agent-heading">
       <h1>AI智解</h1>
       <div className="ai-agent-actions">
-        {!sessionId && sessions.length > 0 && <>
-          <select aria-label="选择工作会话" value={selectedSession} onChange={event => onSelectSession(event.target.value)} disabled={busy || loading}>
-            {sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}
-          </select>
-          <button onClick={onContinue} disabled={!status?.available || !selectedSession || busy || loading}>继续对话</button>
-        </>}
         {sessionId && !sessionEnded ? <button onClick={onStop} disabled={busy}>停止会话</button>
           : <button className="ai-agent-primary" onClick={onStart} disabled={!status?.available || busy || loading}>{busy ? "正在准备…" : sessionEnded ? "开始新对话" : "开始对话"}</button>}
       </div>
@@ -68,12 +78,32 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
         <span><i aria-hidden="true" />{aiAgentModelLabel(status)}</span>
         <div><span>预算只读</span><span>独立工作区</span></div>
       </div>
-      {sessionId ? terminal : <div className="ai-agent-empty">
-        <span className="ai-agent-pi" aria-hidden="true">π</span>
-        <h2>{loading ? "正在读取 AI 状态…" : "有什么预算问题？"}</h2>
-        <p>看懂预算、理解预测，了解产品怎么用。</p>
-        {!loading && status?.available && <button className="ai-agent-primary" onClick={onStart} disabled={busy}>开始对话</button>}
+      <details className="ai-agent-task-entry" open={!sessionId}>
+        <summary>{sessionId ? "预算问题示例" : loading ? "正在读取 AI 状态…" : "有什么预算问题？"}</summary>
+        <div className="ai-agent-task-grid">
+          {aiAgentBudgetTasks.map(task => <button key={task.id} className={preparedTaskId === task.id ? "is-selected" : ""}
+            aria-pressed={preparedTaskId === task.id} onClick={() => onPrepareTask?.(task.id)}>
+            <span>{task.category}</span><strong>{task.question}</strong>
+          </button>)}
+        </div>
+        {preparedPrompt && <div className="ai-agent-prepared" role="region" aria-label="准备的问题">
+          <p>{preparedPrompt}</p>
+          <div><span>仅准备问题，发送在 Pi 中完成</span><button onClick={onCopyPrepared}>复制问题</button></div>
+          {copyNotice && <p className="ai-agent-copy-notice" role="status">{copyNotice}</p>}
+        </div>}
+        <p className="ai-agent-context-boundary">先读取已保存版本；其他页面未保存的改动不在上下文中。</p>
+      </details>
+      {sessionId ? terminal : <p className="ai-agent-start-hint">点击上方“开始对话”，进入 Pi 后提问。</p>}
+    </section>
+    <section className="ai-agent-recall" aria-label="会话回顾">
+      <h2>会话回顾</h2>
+      {!sessionId && sessions.length > 0 && <div className="ai-agent-recall-actions">
+        <select aria-label="选择工作会话" value={selectedSession} onChange={event => onSelectSession(event.target.value)} disabled={busy || loading}>
+          {sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}
+        </select>
+        <button onClick={onContinue} disabled={!status?.available || !selectedSession || busy || loading}>继续对话</button>
       </div>}
+      <p>{sessionId && !sessionEnded ? "当前对话保留在 Pi 中。输入 " : "开始或继续对话后，输入 "}<code>/resume</code> 回顾历史对话。</p>
     </section>
     <details className="ai-agent-help">
       <summary>使用帮助</summary>
@@ -203,6 +233,8 @@ export function AiAgentPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState("connecting");
   const [selectedSession, setSelectedSession] = useState("");
+  const [preparedTaskId, setPreparedTaskId] = useState("");
+  const [copyNotice, setCopyNotice] = useState("");
   const controller = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const operation = useRef(false);
@@ -249,6 +281,15 @@ export function AiAgentPage() {
     } catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "会话未能停止"); }
     finally { operation.current = false; if (mounted.current) setBusy(false); }
   };
+  const copyPrepared = async () => {
+    const prompt = aiAgentPreparedPrompt(preparedTaskId);
+    if (!prompt) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("unavailable");
+      await navigator.clipboard.writeText(prompt);
+      if (mounted.current) setCopyNotice("已复制，在 Pi 中粘贴后发送");
+    } catch { if (mounted.current) setCopyNotice("复制失败，请选中问题后使用系统复制快捷键"); }
+  };
   return <div className="decision-shell ai-agent-shell">
     <FY27Header active="ai"><span className="ai-agent-header-model" title={aiAgentModelLabel(status)}>{aiAgentModelLabel(status)}</span></FY27Header>
     <AiAgentWorkspace status={status} loading={loading} busy={busy} error={error} notice={notice} sessionId={sessionId}
@@ -256,6 +297,8 @@ export function AiAgentPage() {
       selectedSession={selectedSession} onSelectSession={setSelectedSession} onStart={() => { void start(); }}
       onContinue={() => { if (selectedSession && status?.available) { setError(""); setNotice(""); setSessionState("connecting"); setSessionId(selectedSession); } }}
       onStop={() => { void stop(); }} onRetry={() => { void load(); }}
+      preparedTaskId={preparedTaskId} onPrepareTask={id => { setPreparedTaskId(id); setCopyNotice(""); }}
+      onCopyPrepared={() => { void copyPrepared(); }} copyNotice={copyNotice}
       terminal={sessionId ? <AiAgentTerminal key={sessionId} sessionId={sessionId} onState={setSessionState} /> : null} />
   </div>;
 }

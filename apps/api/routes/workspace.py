@@ -37,7 +37,7 @@ FORMS: dict[str, tuple[str, str, str, type[BaseModel], str]] = {
         "/targets:replace-and-lock",
     ),
     "combinations": (
-        "业务范围",
+        "SKU",
         "combination_set_version_id",
         "get_combination_set_version",
         c.CombinationReplaceDraftRequest,

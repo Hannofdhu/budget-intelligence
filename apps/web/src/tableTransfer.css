@@ -5,4 +5,11 @@
 .table-transfer > button:active:not(:disabled) { transform: scale(.98); }
 .table-transfer > button:focus-visible { outline: 2px solid #4c8363; outline-offset: 2px; }
 .table-transfer > button:disabled { opacity: .5; cursor: wait; }
+.table-keyboard-help { position: relative; color: #5c7366; font-size: .75rem; }
+.table-keyboard-help > summary { cursor: pointer; padding: .4rem .3rem; }
+.table-keyboard-help > summary:focus-visible { outline: 2px solid #4c8363; outline-offset: 2px; border-radius: .25rem; }
+.table-keyboard-help > p { position: absolute; z-index: 8; top: 100%; right: 0; width: min(23rem, 75vw); margin: .3rem 0 0; padding: .8rem; border: 1px solid #d6e0d7; border-radius: .5rem; background: #fff; color: #315a48; line-height: 1.65; box-shadow: 0 4px 16px #173f3710; }
+table[data-table-keyboard]:focus-visible { outline: 2px solid #4c8363; outline-offset: -2px; }
+table[data-table-keyboard] :is(th, td)[data-table-selected] { background-color: #e1eee5 !important; }
+table[data-table-keyboard] :is(th, td)[data-table-active] { outline: 2px solid #376e53; outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) { .table-transfer > button { transition: none; } .table-transfer > button:active:not(:disabled) { transform: none; } }

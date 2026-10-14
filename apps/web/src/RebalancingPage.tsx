@@ -178,7 +178,7 @@ function ContributionBar({ scenario }: { scenario: RebalancingScenario }) {
         <span>续班率 <strong>{retentionShare === null ? "—" : `${retentionShare.toFixed(1)}%`}</strong></span>
         <span>新生占比 <strong>{retentionShare === null ? "—" : `${(100 - retentionShare).toFixed(1)}%`}</strong></span>
       </div>
-      <div className="contribution__track" aria-label={retentionShare === null ? "无可计算的收入贡献" : `实际收入贡献 ${retentionShare.toFixed(1)} 比 ${(100 - retentionShare).toFixed(1)}`}>
+      <div className="contribution__track" aria-label={retentionShare === null ? "无可计算的结转收入贡献" : `实际结转收入贡献 ${retentionShare.toFixed(1)} 比 ${(100 - retentionShare).toFixed(1)}`}>
         <span style={{ width: `${retentionShare ?? 50}%` }} />
       </div>
       {retentionShare !== null && target && <small>目标贡献 {target[0]}/{target[1]}</small>}
@@ -488,7 +488,7 @@ export function RebalancingPage() {
           {canGenerate ? <button className="decision-primary" onClick={() => void generate()} disabled={state === "working"}>{state === "working" ? "正在生成…" : run ? "重新生成方案" : "生成方案"}</button> : <a className="decision-primary" href={isPublished ? resultHref : !isCurrentDraft || !closure ? workspaceHref : `/budget/publication?revision=${encodeURIComponent(revision.budget_revision_id)}`}>{isPublished ? "查看预算结果" : !isCurrentDraft ? "返回年度预算" : !closure ? "继续预算计算" : "继续确认预算"}</a>}
         </section>
 
-        {!closure && <div className="rebalance-notice rebalance-notice--blocked">当前修订缺少目标闭合结果，请先完成人数、班均、收入与目标校验。</div>}
+        {!closure && <div className="rebalance-notice rebalance-notice--blocked">当前修订缺少目标闭合结果，请先完成人数、班均、结转收入与目标校验。</div>}
         {error && <div className="global-error" role="alert">{error}</div>}
         {application && !applicationRevert && (
           <details className="application-receipt" key={canRevertApplication ? "reversible" : "historic"} open={canRevertApplication}>
@@ -538,7 +538,7 @@ export function RebalancingPage() {
             <header><div><span>差异明细</span><h2>{scenarioName(selected.scenario_types, run?.scenarios.indexOf(selected) ?? 0)}</h2></div><button onClick={() => setShowDetails(false)} aria-label="关闭明细">×</button></header>
             <div className="scenario-detail__summary">
               <dl>
-                <div><dt>收入结果</dt><dd>{selected.objective_values.department_revenue_yuan === undefined ? "—" : formatCompactMoney(asNumber(selected.objective_values.department_revenue_yuan))}</dd></div>
+                <div><dt>结转收入结果</dt><dd>{selected.objective_values.department_revenue_yuan === undefined ? "—" : formatCompactMoney(asNumber(selected.objective_values.department_revenue_yuan))}</dd></div>
                 <div><dt>班均与整数人次</dt><dd>{selected.objective_values.validation_codes === undefined ? "历史记录未单列" : asStringArray(selected.objective_values.validation_codes).length ? "需复核" : "候选复算通过"}</dd></div>
                 <div><dt>人数结果行</dt><dd>{selected.headcount_signature.length.toLocaleString("zh-CN")}</dd></div>
                 <div><dt>结果指纹</dt><dd><code>{shortKey(selected.result_hash)}</code></dd></div>

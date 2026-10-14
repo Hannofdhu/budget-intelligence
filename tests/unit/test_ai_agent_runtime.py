@@ -23,12 +23,19 @@ from packages.ai_agent.runtime import (
     MAX_HISTORY,
     MAX_INPUT_BYTES,
     MAX_OUTPUT_BYTES,
+    SYSTEM_PROMPT,
     RuntimeErrorSafe,
     RuntimeManager,
     Session,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_system_prompt_uses_product_revenue_terminology_without_changing_other_metrics() -> None:
+    assert "季度和全年预算、预测中的对应收入指标统一称为“结转收入”，保留原单位" in SYSTEM_PROMPT
+    assert "不要与业务收入（含税）、原价收入或结转比例混称" in SYSTEM_PROMPT
+    assert "将预算业务范围统一称为 SKU；内部字段、工具和数据键保持原样" in SYSTEM_PROMPT
 
 
 class Bridge:

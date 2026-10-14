@@ -101,3 +101,24 @@ test("URL and cross-year saved-view cleanup preserve revision context and valid 
   assert.equal(cleaned.state.filters.campus, ""); assert.equal(cleaned.state.filters.product, "智慧空间");
   assert.equal(JSON.stringify(facts), before);
 });
+
+test("switching sibling analysis tabs retains the same scoped facts and immutable budget totals", () => {
+  const { revenue, count } = publishedRow("headcount-one", "ENTRY", 0, 12);
+  const facts = normalizePublishedFacts([revenue], [count]), before = JSON.stringify(facts);
+  const initial = { ...defaultAnalysisState(), filters: { ...defaultAnalysisState().filters, campus: "西直门", product: "智慧空间" }, config };
+  const expected = aggregateBudgetFacts(filterBudgetFacts(facts, initial.filters));
+  let search = "archive=fy27&step=5&revision=immutable-version&baView=pivot&baTable=detail";
+  assert.equal(readAnalysisState(search).view, "detail");
+  for (const view of ["detail", "pivot", "board", "detail"]) {
+    search = writeAnalysisState(search, { ...initial, view });
+    const resolved = validateAnalysisState(readAnalysisState(search), facts);
+    assert.equal(resolved.state.view, view);
+    assert.deepEqual(resolved.state.filters, initial.filters);
+    assert.deepEqual(resolved.state.config, initial.config);
+    assert.deepEqual(resolved.removedFilters, []);
+    assert.deepEqual(aggregateBudgetFacts(filterBudgetFacts(facts, resolved.state.filters)), expected);
+    assert.equal(new URLSearchParams(search).get("revision"), "immutable-version");
+    assert.equal(new URLSearchParams(search).has("baTable"), false);
+  }
+  assert.equal(JSON.stringify(facts), before);
+});

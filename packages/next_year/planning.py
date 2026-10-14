@@ -385,7 +385,7 @@ def _class_diagnostics(calculation: Json) -> list[Json]:
         ),
         "ENABLED_COMBINATION_ALL_SEASONS_ZERO": (
             "部分已启用业务四季人次均为零",
-            "关闭不开展的业务范围；需要开展时，先分配入口人次或填写季度新生人次。",
+            "关闭不开展的SKU；需要开展时，先分配入口人次或填写季度新生人次。",
             ["combinations.enabled", "combinations.entry_students", "plans.students"],
         ),
     }

@@ -71,7 +71,7 @@ function applyAction(
     const matches = (row: NextYearInputs["combinations"][number]) => row.id === action.combination_id;
     const before = rowAt(original.combinations, matches), after = rowAt(proposed.combinations, matches);
     if (!before.enabled || !effectiveEntry(before) || count(action.after) !== after.entry_students) {
-      return failure("入口建议与业务范围不一致，请重新生成方案");
+      return failure("入口建议与SKU不一致，请重新生成方案");
     }
     count(action.before);
     if (action.before_input !== undefined && !same(action.before_input, before.entry_students ?? null)) {
@@ -210,7 +210,7 @@ export function nextYearBalanceActions(
   }
   for (const [track, value] of Object.entries(original.track_targets)) {
     if (!same(value, proposed.track_targets[track])) actions.push({ kind: "TRACK_TARGET", field: "target_revenue_yuan", track,
-      before: value, after: proposed.track_targets[track], reason: "将已填写的全年经营目标按预算收入分配到赛道，全年目标不变" });
+      before: value, after: proposed.track_targets[track], reason: "将已填写的全年经营目标按预算结转收入分配到赛道，全年目标不变" });
   }
   // Also verifies that no source, price, minimum, plan or other hidden edit is accepted.
   const keys = new Set(actions.map(nextYearActionKey));

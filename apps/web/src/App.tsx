@@ -45,7 +45,7 @@ const GROUP_LABELS: Record<string, string> = {
   RESOURCE_FINANCE: "班均与财务参数",
   DISCOUNT: "折扣参数",
   CALCULATION: "计算结果链",
-  REVENUE: "收入与折扣校验",
+  REVENUE: "结转收入与折扣校验",
   TARGET: "目标闭合",
 };
 
@@ -66,7 +66,7 @@ const ACTUAL_LABELS: Record<string, string> = {
   current: "结果链为当前",
   headcount_publishable: "人数可发布",
   class_size_publishable: "班均可发布",
-  revenue_publishable: "收入可发布",
+  revenue_publishable: "结转收入可发布",
   closure_status: "闭合状态",
   department_count: "部门目标数",
   track_count: "赛道目标数",
@@ -473,7 +473,7 @@ function PublicationPage() {
         {job && actionState === "confirming" && (
           <section className="job-strip" aria-live="polite">
             <span className="job-strip__pulse" aria-hidden="true" />
-            <div><strong>正在执行完整复算</strong><span>人数 → 班均 → 收入 → 目标闭合</span></div>
+            <div><strong>正在执行完整复算</strong><span>人数 → 班均 → 结转收入 → 目标闭合</span></div>
             <code>{job.status} · 尝试 {job.attempt_no}</code>
           </section>
         )}

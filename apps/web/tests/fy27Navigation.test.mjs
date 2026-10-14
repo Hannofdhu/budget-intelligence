@@ -119,10 +119,25 @@ test("budget, forecast and next-year budget share the header without separate mo
     assert.doesNotMatch(page, /className="(?:history-product-nav|forecast-navigation)"/, name);
     assert.doesNotMatch(page, /aria-label="(?:预算财年|切换预算)"|className="forecast-year"/, name);
   }
-  assert.match(source("HistoricalBudgetPage.tsx"), /className="decision-progress"/,
+  assert.match(source("HistoricalBudgetPage.tsx"), /<BudgetPageNavigation\b/,
     "budget detail navigation stays available below the shared module switch");
   assert.match(source("NextYearBudgetPage.tsx"), /<FY27Header\b[^>]*fiscalYear=\{fiscalYear\}/,
     "a retained year-specific URL must not be mislabeled as the default fiscal year");
+});
+
+test("historical and next-year pages share explicit current-page navigation and compact title placement", () => {
+  const historical = source("HistoricalBudgetPage.tsx"), next = source("NextYearBudgetPage.tsx");
+  assert.match(historical, /useBudgetPagePosition\(step, Boolean\(data\), heading\)/);
+  assert.doesNotMatch(historical, /className="decision-progress"|is-done|label\.slice\(0, 2\)|<p>FY27 学校版/);
+  assert.match(historical, /if \(next === step\) return;/);
+  assert.match(next, /if \(next === task\) return;/);
+  assert.match(next, /useBudgetPagePosition\(task, Boolean\(data\?\.draft\) && busy !== "load", heading\)/);
+  assert.match(next, /draft \? nextYearTasks\[task - 1\]/);
+  const main = next.slice(next.indexOf('<main className="decision-workspace"'));
+  assert.ok(main.indexOf('className="ny-heading"') < main.indexOf("<NextYearTopMetrics"));
+  assert.ok(main.indexOf("scopeBar(") >= 0, "task ranges use the shared scope control");
+  assert.ok(main.indexOf('className="ny-heading"') < main.indexOf("scopeBar("));
+  assert.doesNotMatch(main, /className="ny-task-heading"|className="ny-task-subtitle"/);
 });
 
 test("the common header remains sticky and centered with one shared narrow-screen layout", () => {

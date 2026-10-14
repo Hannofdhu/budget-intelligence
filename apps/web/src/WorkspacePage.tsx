@@ -5,6 +5,7 @@ import { RateTableEditor } from "./RateTableEditor";
 import { BudgetResultsPage } from "./BudgetResultsPage";
 import { BudgetLifecycle } from "./BudgetLifecycle";
 import { initialBudgetRevision } from "./budgetBrowse";
+import { skuText } from "./budgetDisplay";
 
 type RecordValue = Record<string, Value>;
 type Section = { key: string; label: string; schema: Schema; value: Value; data: RecordValue; path: string; confirm: { path: string; body: RecordValue } | null };
@@ -29,15 +30,15 @@ const tasks = [
 ] as const;
 
 const sectionNames: Record<string, string> = {
-  source: "数据来源", targets: "收入目标", combinations: "业务范围", "entry-total": "年度入口总量",
+  source: "数据来源", targets: "结转收入目标", combinations: "SKU", "entry-total": "年度入口总量",
   "campus-suggestions": "校区分配建议", campus: "校区入口人数", "entry-scope": "入口范围例外", "entry-detail": "入口人数拆分",
   rates: "续班率与新生占比", planned: "计划新生人数", "planned-unlock": "调整计划新生",
   resources: "班均、价格与结转", discount: "折扣与综合目标", results: "计算结果",
 };
 
 const pageCopy: Record<string, { title: string; primary?: string }> = {
-  targets: { title: "收入目标", primary: "保存目标" },
-  combinations: { title: "业务范围", primary: "保存业务范围" },
+  targets: { title: "结转收入目标", primary: "保存目标" },
+  combinations: { title: "SKU", primary: "保存SKU" },
   "entry-total": { title: "年度入口总量", primary: "保存入口总量" },
   "campus-suggestions": { title: "校区分配建议", primary: "生成校区建议" },
   campus: { title: "校区入口人数", primary: "保存校区人数" },
@@ -50,7 +51,7 @@ const pageCopy: Record<string, { title: string; primary?: string }> = {
   discount: { title: "折扣与综合目标", primary: "保存折扣参数" },
 };
 
-const resultRoutes: Record<string, string> = { "入口分配": "entry-detail-set", "人数": "headcount-result", "班均": "class-size-result", "收入": "revenue-result", "目标差额": "target-closure-result" };
+const resultRoutes: Record<string, string> = { "入口分配": "entry-detail-set", "人数": "headcount-result", "班均": "class-size-result", "结转收入": "revenue-result", "目标差额": "target-closure-result" };
 
 function taskFor(section: string) { return tasks.find(task => task.sections.some(key => key === section)) ?? tasks[0]; }
 function taskTarget(workspace: Workspace, task: typeof tasks[number], next: ReturnType<typeof nextStep> | null): string {
@@ -103,7 +104,7 @@ function isSectionComplete(workspace: Workspace, key: string): boolean {
 }
 function sectionBlocker(workspace: Workspace, key: string): { text: string; section: string } | null {
   if (key !== "entry-detail") return null;
-  if (!isConfirmed(workspace, "combinations")) return { text: "请先完成业务范围确认。", section: "combinations" };
+  if (!isConfirmed(workspace, "combinations")) return { text: "请先完成SKU确认。", section: "combinations" };
   if (!isConfirmed(workspace, "campus")) return { text: "请先在“校区入口人数”完成部门预算负责人确认。", section: "campus" };
   if (!isConfirmed(workspace, "entry-scope")) return { text: "请先在“入口范围例外”完成部门预算负责人确认。", section: "entry-scope" };
   return null;
@@ -161,8 +162,8 @@ function taskState(workspace: Workspace, taskKey: string): "done" | "active" | "
   return stageState(workspace, taskKey);
 }
 function nextStep(workspace: Workspace): { section?: string; href?: string; label: string } {
-  if (!hasSavedSection(workspace, "targets")) return { section: "targets", label: "填写收入目标" };
-  if (!isConfirmed(workspace, "combinations")) return { section: "combinations", label: hasSavedSection(workspace, "combinations") ? "确认业务范围" : "填写业务范围" };
+  if (!hasSavedSection(workspace, "targets")) return { section: "targets", label: "填写结转收入目标" };
+  if (!isConfirmed(workspace, "combinations")) return { section: "combinations", label: hasSavedSection(workspace, "combinations") ? "确认SKU" : "填写SKU" };
   if (!hasSavedSection(workspace, "entry-total")) return { section: "entry-total", label: "填写年度入口总量" };
   if (!hasSavedSection(workspace, "campus-suggestions")) return { section: "campus-suggestions", label: "生成校区分配建议" };
   if (!hasSavedSection(workspace, "campus")) return { section: "campus", label: "填写校区入口人数" };
@@ -185,8 +186,8 @@ function errorHelp(message: string): { text: string; section?: string } {
   if (/尚不满足确认条件|CAMPUS_ENTRY_SET_NOT_CONFIRMABLE/i.test(message)) return { text: "校区入口人数还缺少必填依据或调整原因。请按页面提示补齐并保存后再确认。", section: "campus" };
   if (/校区入口|CAMPUS_ENTRY/i.test(message)) return { text: "校区入口人数已保存，但尚未由部门预算负责人确认。", section: "campus" };
   if (/入口范围|ENTRY_SCOPE/i.test(message)) return { text: "入口范围已保存，但尚未由部门预算负责人确认。", section: "entry-scope" };
-  if (/业务范围|组合|COMBINATION/i.test(message)) return { text: "业务范围尚未确认。完成确认后即可继续。", section: "combinations" };
-  if (/目标|TARGET/i.test(message)) return { text: "收入目标还不完整。请先补齐部门和赛道目标。", section: "targets" };
+  if (/业务范围|SKU|组合|COMBINATION/i.test(message)) return { text: "SKU尚未确认。完成确认后即可继续。", section: "combinations" };
+  if (/目标|TARGET/i.test(message)) return { text: "结转收入目标还不完整。请先补齐部门和赛道目标。", section: "targets" };
   if (/入口总|ENTRY_TOTAL/i.test(message)) return { text: "年度入口总量尚未保存。请先完成入口总量。", section: "entry-total" };
   if (/比例|RATE/i.test(message)) return { text: "比例参数尚未保存或确认。请先处理比例范围。", section: "rates" };
   if (/tax_factor|class_size_items|revenue_items|opening_carryover_items|资源与财务/i.test(message)) return { text: "资源与财务参数没有填写完整。请按页面的保存前检查逐项补齐。", section: "resources" };
@@ -337,8 +338,8 @@ export function WorkspacePage() {
     <main className="decision-workspace" id="workspace-content">
       {workspace && <nav className="decision-progress" aria-label="预算任务进度">{tasks.map(task => { const state = taskState(workspace, task.key); const active = activeTask.key === task.key && selected !== "home"; const target = taskTarget(workspace, task, next); const taskLabel = workspace.is_published && task.key === "review" ? "预算概览" : task.label; const stateLabel = state === "done" ? "已完成" : active ? "正在处理" : "待处理"; return <button key={task.key} className={`is-${state} ${active ? "is-active" : ""}`} aria-current={active ? "step" : undefined} aria-label={`任务 ${task.no}：${taskLabel}，${stateLabel}`} onClick={() => changeSection(target)}><span>{task.no}</span><strong>{taskLabel}</strong><em className="decision-progress-short">{workspace.is_published && task.key === "review" ? "概览" : task.short}</em><small>{state === "done" ? "完成" : active ? "正在处理" : ""}</small></button>; })}</nav>}
       {workspace && <BudgetLifecycle key={workspace.revision_id} busy={busy} mode={workspace.is_published ? "published" : "draft"} onView={!workspace.is_published && activeBudget?.published_revision_id ? () => switchBudgetMode(activeBudget.published_revision_id!, "results") : undefined} onContinue={workspace.is_published && latest && latest !== workspace.revision_id ? () => switchBudgetMode(latest) : undefined} onStart={workspace.is_published && workspace.is_current_draft && identity?.roles.includes("DATA_MAINTAINER") ? reason => execute(":derive", { reason }, false, "修订草稿已创建，定版预算保持不变。") : undefined} />}
-      {error && <div className="decision-question" role="alert"><div><strong>还差一步</strong><p>{help.text}</p><details><summary>技术信息</summary><code>{error}</code></details></div>{help.section && <button onClick={() => changeSection(help.section!)}>去处理</button>}<button className="decision-dismiss" aria-label="关闭提示" onClick={() => setError("")}>关闭</button></div>}
-      {notice && <div className="decision-notice" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
+      {error && <div className="decision-question" role="alert"><div><strong>还差一步</strong><p>{skuText(help.text)}</p><details><summary>技术信息</summary><code>{skuText(error)}</code></details></div>{help.section && <button onClick={() => changeSection(help.section!)}>去处理</button>}<button className="decision-dismiss" aria-label="关闭提示" onClick={() => setError("")}>关闭</button></div>}
+      {notice && <div className="decision-notice" role="status"><span>{skuText(notice)}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
       {!workspace && !busy && <section className="workspace-empty"><h2>暂时无法读取预算</h2><p>请重新启动本机试用服务。</p></section>}
       {workspace && selected === "home" && <section className="decision-home">
         <div className="decision-home__copy"><p className="decision-kicker">FY{String(workspace.fiscal_year).slice(-2)} 学校版 · {completedTasks}/5</p><h1 ref={pageTitleRef} tabIndex={-1}>{workspace.is_published ? "预算已定版" : "预算已经准备好"}</h1>{workspace.is_published ? <a className="decision-primary" href={`/budget/results?revision=${encodeURIComponent(workspace.revision_id)}`}>查看预算概览</a> : next?.href ? <a className="decision-primary" href={next.href}>继续</a> : <button className="decision-primary" onClick={() => next?.section && changeSection(next.section)}>继续</button>}</div>

@@ -16,7 +16,12 @@ from apps.api.routes import historical_review
 from apps.api.routes import next_year as route
 from packages.domain.identity.models import Actor, Role
 from packages.forecast.store import ForecastStore, fingerprint
-from packages.next_year.calculation import calculate_plan, validate_plan_inputs
+from packages.next_year.calculation import (
+    calculate_plan,
+    forecast_basis,
+    prepare_inputs,
+    validate_plan_inputs,
+)
 from packages.next_year.store import NextYearStore
 
 Json = dict[str, Any]
@@ -226,6 +231,282 @@ async def test_prepare_preview_revise_keep_source_data_and_only_add_draft_events
     assert second["draft"]["calculation"] == preview["calculation"]
     assert _bytes(_forecast_store().root) == before_forecast
     assert all(_bytes(route.store.root)[name] == data for name, data in before_draft.items())
+
+
+@pytest.mark.asyncio
+async def test_basis_preview_is_read_only_and_matches_explicit_prepare(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, baseline = setup_route
+    source = _forecast(actor)
+    before_forecast = _bytes(_forecast_store().root)
+    before_baseline = deepcopy(baseline)
+    append = route.store.append_draft
+
+    def forbidden_append(**_: Any) -> Json:
+        pytest.fail("read-only basis preview must not append a draft")
+
+    monkeypatch.setattr(route.store, "append_draft", forbidden_append)
+    result = await route.prepare_preview(request, route.PreparePreview(forecast_id=source["id"]), actor)
+    assert set(result) == {
+        "read_only",
+        "fiscal_year",
+        "parent_id",
+        "source_id",
+        "source",
+        "inputs",
+        "calculation",
+    }
+    assert result["read_only"] is True
+    assert result["fiscal_year"] == 2028
+    assert result["parent_id"] is None
+    assert result["source_id"] == source["id"] == result["source"]["id"]
+    assert result["calculation"] == calculate_plan(result["inputs"])
+    assert _bytes(route.store.root) == {}
+    assert (await route.current(request, actor))["draft"] is None
+    assert _bytes(_forecast_store().root) == before_forecast
+    assert baseline == before_baseline
+    assert "source_snapshot" not in str(result)
+    assert "source evidence" not in str(result)
+    monkeypatch.setattr(route.store, "append_draft", append)
+    saved = await route.prepare(
+        request,
+        route.Prepare(forecast_id=source["id"], reason="explicit create after preview"),
+        actor,
+        "prepare-after-preview",
+    )
+    assert saved["draft"]["inputs"] == result["inputs"]
+    assert saved["draft"]["calculation"] == result["calculation"]
+    assert saved["draft"]["source"] == result["source"]
+
+
+@pytest.mark.asyncio
+async def test_basis_preview_rebuilds_inputs_without_inheriting_saved_manual_changes(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, _ = setup_route
+    initial = await _prepare(request, actor)
+    changed = deepcopy(initial["draft"]["inputs"])
+    changed["entry_total"] = 999
+    changed["target_revenue_yuan"] = "123456"
+    changed["track_targets"] = {"智慧空间": "123456"}
+    revised = await route.revise(
+        request,
+        route.Revise(parent_id=initial["draft"]["id"], inputs=changed, reason="manual changes"),
+        actor,
+        "revise-before-basis-preview",
+    )
+    new_source = _forecast(actor, parent=initial["draft"]["source"]["id"], sequence=2)
+    fresh = _inputs()
+    fresh["entry_total"] = 12
+    fresh["target_revenue_yuan"] = None
+    fresh["track_targets"] = {"智慧空间": None}
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(fresh))
+    before_drafts, before_forecasts = _bytes(route.store.root), _bytes(_forecast_store().root)
+    result = await route.prepare_preview(
+        request, route.PreparePreview(forecast_id=new_source["id"], parent_id=revised["draft"]["id"]), actor
+    )
+    assert result["inputs"] == fresh != changed
+    assert result["calculation"]["annual"]["target_revenue_yuan"] is None
+    assert result["calculation"]["annual"]["gap_yuan"] is None
+    assert result["source_id"] == new_source["id"]
+    assert result["parent_id"] == revised["draft"]["id"]
+    assert (await route.current(request, actor))["draft"] == revised["draft"]
+    assert _bytes(route.store.root) == before_drafts
+    assert _bytes(_forecast_store().root) == before_forecasts
+    saved = await route.prepare(
+        request,
+        route.Prepare(forecast_id=new_source["id"], parent_id=result["parent_id"], reason="use basis"),
+        actor,
+        "prepare-reviewed-basis",
+    )
+    assert saved["draft"]["inputs"] == result["inputs"]
+    assert saved["draft"]["calculation"] == result["calculation"]
+
+
+@pytest.mark.asyncio
+async def test_basis_preview_and_prepare_use_real_preparation_and_calculation_engines(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, baseline = setup_route
+    version = _forecast(actor)
+    scopes = [
+        {key: combo[key] for key in ("track", "product", "grade", "subject", "campus")}
+        for combo in _inputs()["combinations"]
+    ]
+    baseline["rows"] = [
+        {
+            **dims,
+            "season": season,
+            "entry": "是" if dims["grade"] == "七年级" else "否",
+            "price": "106",
+            "discount": "1",
+            "recognition": "0.8",
+            "renewal": "0.8",
+            "share": "0.2",
+            "minimum": 5,
+            "old": 80,
+            "new": 20,
+            "total": 100,
+            "revenue": "1000",
+        }
+        for dims in scopes
+        for season in SEASONS
+    ]
+    version["calculation"]["rows"] = [
+        {
+            **dims,
+            "season": season,
+            "forecast_old": 80,
+            "forecast_new": 20,
+            "forecast_total": 100,
+            "forecast_revenue": "1000",
+            "forecast_carryout": "0",
+            "counts_not_applicable": False,
+        }
+        for dims in scopes
+        for season in SEASONS
+    ]
+    version["states"] = {"暑假": "FINALIZED", "秋季": "FUTURE", "寒假": "FUTURE", "春季": "FUTURE"}
+    version["assumptions"]["states"] = version["states"]
+    version["snapshot"]["rows"] = [
+        {
+            **dims,
+            "season": "暑假",
+            "enrollment": 100,
+            "new_business": 13,
+            "new_base": 20,
+            "old_base": 80,
+            "actual_revenue": "1000",
+            "actual_carryout": "0",
+        }
+        for dims in scopes
+    ]
+    version["snapshot_hash"] = fingerprint(version["snapshot"])
+
+    async def selected_forecasts(_: Actor) -> list[Json]:
+        return [deepcopy(version)]
+
+    monkeypatch.setattr(route, "prepare_inputs", prepare_inputs)
+    monkeypatch.setattr(route, "_forecasts", selected_forecasts)
+    before_source = fingerprint((baseline, version))
+    before_ledger = _bytes(_forecast_store().root)
+    preview = await route.prepare_preview(request, route.PreparePreview(forecast_id=version["id"]), actor)
+    assert preview["inputs"] == prepare_inputs(baseline, version)
+    assert preview["inputs"]["entry_total"] == 13
+    assert preview["inputs"]["target_revenue_yuan"] is None
+    assert preview["calculation"] == calculate_plan(preview["inputs"])
+    assert preview["calculation"]["complete"] is True
+    assert preview["calculation"]["annual"]["revenue_yuan"] is not None
+    assert _bytes(route.store.root) == {}
+    saved = await route.prepare(
+        request,
+        route.Prepare(forecast_id=version["id"], reason="real adapter parity"),
+        actor,
+        "prepare-real-parity",
+    )
+    assert saved["draft"]["inputs"] == preview["inputs"]
+    assert saved["draft"]["calculation"] == preview["calculation"]
+    assert fingerprint((baseline, version)) == before_source
+    assert _bytes(_forecast_store().root) == before_ledger
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["bound_source", "bound_baseline", "parent_year", "input_year"])
+async def test_basis_preview_rejects_mismatched_frozen_parent_and_prepared_year(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    request, actor, _ = setup_route
+    saved = await _prepare(request, actor)
+    parent = route.store.current(actor.department_id)
+    if mutation == "bound_source":
+        parent["draft"]["source"]["id"] = "tampered-source"
+    elif mutation == "bound_baseline":
+        parent["draft"]["source_snapshot"]["baseline"]["sha256"] = "other-baseline"
+    elif mutation == "parent_year":
+        parent["draft"]["inputs"]["fiscal_year"] = 2029
+    else:
+        incompatible = _inputs()
+        incompatible["fiscal_year"] = 2029
+        monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(incompatible))
+    monkeypatch.setattr(route.store, "current", lambda _: deepcopy(parent))
+    before = _bytes(route.store.root)
+    with pytest.raises(HTTPException) as error:
+        await route.prepare_preview(
+            request,
+            route.PreparePreview(forecast_id=saved["draft"]["source"]["id"], parent_id=saved["draft"]["id"]),
+            actor,
+        )
+    assert error.value.status_code == 409
+    assert _bytes(route.store.root) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_kind", ["missing", "stale", "other_department"])
+async def test_basis_preview_rejects_wrong_parent_without_writing(
+    setup_route: tuple[Request, Actor, Json], parent_kind: str
+) -> None:
+    request, actor, _ = setup_route
+    first = await _prepare(request, actor)
+    before = _bytes(route.store.root)
+    parent_id = None if parent_kind == "missing" else "not-the-current-draft"
+    if parent_kind == "other_department":
+        other = Actor("other", "other department", actor.roles)
+        other_source = _forecast(other)
+        other_draft = route.store.append_draft(
+            department=other.department_id,
+            actor=other.user_id,
+            request_id="other-department-draft",
+            request_hash="other-department-content",
+            parent_id=None,
+            source=forecast_basis(other_source),
+            inputs=_inputs(),
+            calculation=calculate_plan(_inputs()),
+            reason="other department",
+            operation="PREPARE",
+            source_snapshot={"baseline": setup_route[2], "forecast": other_source},
+        )
+        parent_id = other_draft["draft"]["id"]
+        before = _bytes(route.store.root)
+    with pytest.raises(HTTPException) as error:
+        await route.prepare_preview(
+            request,
+            route.PreparePreview(forecast_id=first["draft"]["source"]["id"], parent_id=parent_id),
+            actor,
+        )
+    assert error.value.status_code == 409
+    assert _bytes(route.store.root) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("year", ["fy29", "2029", "fy27", "bad-year"])
+async def test_basis_preview_rejects_cross_year_source(
+    setup_route: tuple[Request, Actor, Json], year: str
+) -> None:
+    request, actor, _ = setup_route
+    source = _forecast(actor)
+    with pytest.raises(HTTPException) as error:
+        await route.prepare_preview(request, route.PreparePreview(forecast_id=source["id"]), actor, year)
+    assert error.value.status_code == (422 if year in {"fy27", "bad-year"} else 409)
+    assert _bytes(route.store.root) == {}
+    assert _bytes(route.store.root / "fy2029") == {}
+
+
+@pytest.mark.asyncio
+async def test_basis_preview_rejects_unknown_source_and_unauthorized_actor(
+    setup_route: tuple[Request, Actor, Json],
+) -> None:
+    request, actor, _ = setup_route
+    source = _forecast(actor)
+    for caller, source_id, status in (
+        (actor, "unknown-forecast", 404),
+        (Actor("admin", actor.department_id, frozenset({Role.PERMISSION_ADMIN})), source["id"], 403),
+        (Actor("other", "other department", actor.roles), source["id"], 403),
+    ):
+        with pytest.raises(HTTPException) as error:
+            await route.prepare_preview(request, route.PreparePreview(forecast_id=source_id), caller)
+        assert error.value.status_code == status
+    assert _bytes(route.store.root) == {}
 
 
 @pytest.mark.asyncio
@@ -518,6 +799,7 @@ async def test_invalid_numeric_bounds_and_extra_fields_are_rejected(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["prepare", "prepare_preview"])
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -532,7 +814,7 @@ async def test_invalid_numeric_bounds_and_extra_fields_are_rejected(
     ],
 )
 async def test_prepare_rejects_ineligible_forecast_without_appending(
-    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, mutation: str
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, mutation: str, command: str
 ) -> None:
     request, actor, _ = setup_route
     version = _forecast(actor)
@@ -559,9 +841,12 @@ async def test_prepare_rejects_ineligible_forecast_without_appending(
 
     monkeypatch.setattr(route, "_forecasts", invalid_forecasts)
     with pytest.raises(HTTPException) as exc:
-        await route.prepare(
-            request, route.Prepare(forecast_id=invalid["id"], reason="invalid"), actor, "prepare-1"
-        )
+        if command == "prepare":
+            await route.prepare(
+                request, route.Prepare(forecast_id=invalid["id"], reason="invalid"), actor, "prepare-1"
+            )
+        else:
+            await route.prepare_preview(request, route.PreparePreview(forecast_id=invalid["id"]), actor)
     assert exc.value.status_code == 409
     assert _bytes(route.store.root) == {}
 
@@ -615,7 +900,7 @@ async def test_permission_admin_alone_cannot_write_even_on_replay(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["current", "prepare", "revise", "preview"])
+@pytest.mark.parametrize("command", ["current", "prepare", "prepare_preview", "revise", "preview"])
 async def test_every_route_reuses_real_local_only_historical_guard(
     setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, command: str
 ) -> None:
@@ -645,6 +930,8 @@ async def test_every_route_reuses_real_local_only_historical_guard(
             await route.revise(
                 external, route.Revise(parent_id="draft", reason="test", inputs=_inputs()), actor, "revise-1"
             )
+        elif command == "prepare_preview":
+            await route.prepare_preview(external, route.PreparePreview(forecast_id="forecast"), actor)
         else:
             await route.preview(external, route.Preview(parent_id="draft", inputs=_inputs()), actor)
     assert exc.value.status_code == 403
@@ -726,6 +1013,35 @@ def test_http_wiring_strict_bodies_and_no_publish_interface(setup_route: tuple[R
             == 422
         )
     app.dependency_overrides.clear()
+
+
+def test_http_basis_preview_requires_no_write_token_and_rejects_forged_inputs(
+    setup_route: tuple[Request, Actor, Json],
+) -> None:
+    _, actor, _ = setup_route
+    source = _forecast(actor)
+    app = create_app()
+    app.dependency_overrides[current_actor] = lambda: actor
+    before_forecast = _bytes(_forecast_store().root)
+    try:
+        with TestClient(app) as client:
+            endpoint = "/api/v1/next-year-budgets/fy28/prepare-preview"
+            result = client.post(endpoint, json={"forecast_id": source["id"], "parent_id": None})
+            assert result.status_code == 200
+            assert result.json()["read_only"] is True
+            assert result.json()["source_id"] == source["id"]
+            for extra in ({"inputs": _inputs()}, {"reason": "fake-save"}, {"source": {"id": "forged"}}):
+                assert client.post(endpoint, json={"forecast_id": source["id"], **extra}).status_code == 422
+            assert client.post(endpoint, json={"forecast_id": ""}).status_code == 422
+            assert (
+                client.post(endpoint, json={"forecast_id": source["id"], "parent_id": "stale"}).status_code
+                == 409
+            )
+            assert client.get("/api/v1/next-year-budgets/fy28/current").json()["draft"] is None
+        assert _bytes(route.store.root) == {}
+        assert _bytes(_forecast_store().root) == before_forecast
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize(

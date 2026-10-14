@@ -321,6 +321,17 @@ def test_combination_source_and_dimensions_are_frozen(field: str, value: object)
         validate_plan_inputs(changed, original)
 
 
+def test_frozen_sku_source_error_uses_sku_label_without_mutating_inputs() -> None:
+    original = _plan_inputs()
+    changed = deepcopy(original)
+    changed["combinations"][0]["source_entry_weight"] += 1
+    before = fingerprint(changed)
+    with pytest.raises(NextYearError, match="预算SKU或来源已变化，不能静默替换"):
+        validate_plan_inputs(changed, original)
+    assert fingerprint(changed) == before
+    assert original["combinations"][0]["source_entry_weight"] == 10
+
+
 @pytest.mark.parametrize("name", ["rates", "finance", "plans", "class_sizes"])
 @pytest.mark.parametrize("operation", ["missing", "duplicate"])
 def test_parameter_sets_have_unique_complete_business_coverage(name: str, operation: str) -> None:
@@ -331,6 +342,15 @@ def test_parameter_sets_have_unique_complete_business_coverage(name: str, operat
         inputs[name].append(deepcopy(inputs[name][0]))
     with pytest.raises(NextYearError):
         calculate_plan(inputs)
+
+
+def test_incomplete_sku_parameters_keep_quarter_coverage_validation() -> None:
+    inputs = _plan_inputs()
+    inputs["finance"].pop()
+    before = fingerprint(inputs)
+    with pytest.raises(NextYearError, match="预算参数必须无重复且完整覆盖四季度SKU"):
+        calculate_plan(inputs)
+    assert fingerprint(inputs) == before
 
 
 def test_zero_entry_allocation_cannot_resurrect_source_or_plan_seed() -> None:

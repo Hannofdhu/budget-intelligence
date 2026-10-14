@@ -20,7 +20,7 @@ const compiled = await build({
 });
 const module = { exports: {} };
 new Function("require", "module", "exports", compiled.outputFiles[0].text)(id => id.endsWith(".css") ? {} : require(id), module, module.exports);
-const { AiAgentPage, AiAgentWorkspace, aiAgentModelLabel, aiAgentStateLabel } = module.exports;
+const { AiAgentPage, AiAgentWorkspace, aiAgentModelLabel, aiAgentStateLabel, aiAgentBudgetTasks, aiAgentPreparedPrompt } = module.exports;
 const source = fs.readFileSync(new URL("../src/AiAgentPage.tsx", import.meta.url), "utf8");
 const status = (overrides = {}) => ({ available: true, default_model: "configured-provider/business-model", pi_version: "1.2.0",
   models: [{ provider: "configured-provider", id: "business-model", name: "业务模型" }], fallbacks: [],
@@ -271,4 +271,80 @@ test("start, retry and stop controls dispatch only the user's selected action", 
   nodes(AiAgentWorkspace({ ...props, sessionId: "s" })).find(node => node.type === "button" && node.props.children === "停止会话").props.onClick();
   nodes(AiAgentWorkspace({ ...props, error: "failed" })).find(node => node.type === "button" && node.props.children === "重新读取").props.onClick();
   assert.deepEqual([started, stopped, retried], [1, 1, 1]);
+});
+
+test("business entry has one process-start control and no competing chat or budget editor", () => {
+  const initial = nodes(AiAgentWorkspace(workspaceProps()));
+  const starts = initial.filter(node => node.type === "button" && node.props.children === "开始对话");
+  assert.equal(starts.length, 1);
+  assert.equal(initial.some(node => ["textarea", "form"].includes(node.type)), false);
+  assert.equal(initial.filter(node => node.type === "button" && typeof node.props["aria-pressed"] === "boolean").length, 3);
+  const html = render({});
+  assert.match(text(html), /查看预算 结转收入和招生人次主要分布在哪里/);
+  assert.match(text(html), /达成预测 预计缺口主要来自哪些业务/);
+  assert.match(text(html), /下一年预算 离经营目标还差多少/);
+  assert.match(text(html), /点击上方“开始对话”，进入 Pi 后提问/);
+  assert.doesNotMatch(html, /<iframe|contenteditable|发送问题|立即调平|保存预算/);
+});
+
+test("preparing or copying a business task never starts, resumes, stops or sends a session", () => {
+  let starts = 0, continues = 0, stops = 0, copies = 0;
+  const prepared = [];
+  const props = workspaceProps({ onStart() { starts++; }, onContinue() { continues++; }, onStop() { stops++; },
+    onPrepareTask(id) { prepared.push(id); }, onCopyPrepared() { copies++; } });
+  for (const task of aiAgentBudgetTasks) {
+    const buttons = nodes(AiAgentWorkspace(props)).filter(node => node.type === "button");
+    buttons.find(node => node.props.children?.some?.(child => child?.props?.children === task.question)).props.onClick();
+  }
+  assert.deepEqual(prepared, ["budget", "forecast", "next-year"]);
+  nodes(AiAgentWorkspace({ ...props, preparedTaskId: "forecast" })).find(node => node.type === "button" && node.props.children === "复制问题").props.onClick();
+  assert.deepEqual([starts, continues, stops, copies], [0, 0, 0, 1]);
+  const prepareCallbacks = source.slice(source.indexOf("preparedTaskId={preparedTaskId}"), source.indexOf("terminal={sessionId ?"));
+  assert.doesNotMatch(prepareCallbacks, /createAiAgentSession|\.input\(|\.paste\(|fetch\(|start\(\)|onContinue/);
+  const copyOperation = source.slice(source.indexOf("const copyPrepared = async"), source.indexOf("return <div className=\"decision-shell ai-agent-shell\""));
+  assert.match(copyOperation, /navigator\.clipboard\.writeText\(prompt\)/);
+  assert.doesNotMatch(copyOperation, /createAiAgentSession|\.input\(|\.paste\(|fetch\(|start\(\)/);
+});
+
+test("prepared tasks require actual saved-data reads and never invent a bound version or target", () => {
+  for (const task of aiAgentBudgetTasks) {
+    const prompt = aiAgentPreparedPrompt(task.id);
+    assert.equal(prompt, task.prompt);
+    assert.match(prompt, /先读取.*已保存/);
+    assert.match(prompt, /财年、版本、金额单位和数据时间/);
+    assert.doesNotMatch(prompt, /FY27|FY28|P\d+|N\d+|当前筛选|已绑定|13000|13,000/);
+  }
+  assert.match(aiAgentPreparedPrompt("budget"), /不要修改预算/);
+  assert.match(aiAgentPreparedPrompt("forecast"), /不要刷新或确认预测/);
+  assert.match(aiAgentPreparedPrompt("next-year"), /未设置时不要自行假定目标/);
+  assert.match(aiAgentPreparedPrompt("next-year"), /只给建议，不保存或调平/);
+  assert.match(aiAgentPreparedPrompt("next-year"), /原有流程完成/);
+  assert.equal(aiAgentPreparedPrompt("../unknown"), "");
+  assert.equal(aiAgentPreparedPrompt(""), "");
+  assert.match(text(render({})), /先读取已保存版本；其他页面未保存的改动不在上下文中/);
+});
+
+test("question preparation remains inside the original Pi paper and native Pi is preserved", () => {
+  const html = render({ preparedTaskId: "forecast", copyNotice: "已复制，在 Pi 中粘贴后发送" });
+  assert.match(html, /class="ai-agent-paper"[^]*class="ai-agent-prepared"[^]*复制问题/);
+  assert.match(html, /role="region" aria-label="准备的问题"/);
+  assert.match(text(html), /仅准备问题，发送在 Pi 中完成/);
+  assert.match(html, /role="status">已复制，在 Pi 中粘贴后发送/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.doesNotMatch(render({ preparedTaskId: "unknown" }), /aria-label="准备的问题"/);
+  const running = render({ preparedTaskId: "budget", sessionId: "s", terminal: createElement("div", { "data-test": "native-terminal" }, "native") });
+  assert.match(running, /预算问题示例/);
+  assert.doesNotMatch(running, /class="ai-agent-task-entry" open/);
+  assert.match(running, /data-test="native-terminal"/);
+  for (const command of ["/model", "/settings", "/resume", "/tree", "/fork", "/compact", "/hotkeys"]) assert.ok(running.includes(command), command);
+});
+
+test("conversation recall is visible without claiming access to stopped transcript contents", () => {
+  const html = render({ status: status({ sessions: [{ id: "live", state: "running", created_at: "2026-10-14T02:00:00Z" }, { id: "old", state: "stopped" }] }), selectedSession: "live" });
+  assert.match(html, /<section class="ai-agent-recall" aria-label="会话回顾">/);
+  assert.match(html, /选择工作会话/);
+  assert.match(html, /继续对话/);
+  assert.doesNotMatch(html, /value="old"|历史对话 2|已读取历史内容/);
+  assert.match(text(html), /输入 \/resume 回顾历史对话/);
+  assert.match(render({}), /aria-label="会话回顾"/);
 });

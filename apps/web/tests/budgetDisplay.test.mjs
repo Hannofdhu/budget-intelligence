@@ -30,7 +30,7 @@ test("mixed pivot export uses renewal transition labels and original revenue qua
   const pivot = buildBudgetPivot(facts, config), before = structuredClone(pivot);
   const exported = pivotExport(pivot, config);
   for (let index = 0; index < seasons.length; index++) {
-    const revenue = exported.columns.find(column => column.label === `${seasons[index]} · 确认收入（元）`);
+    const revenue = exported.columns.find(column => column.label === `${seasons[index]} · 结转收入（元）`);
     const renewal = exported.columns.find(column => column.label === `${stages[index]} · 预算续班率`);
     assert.ok(revenue); assert.ok(renewal);
     assert.equal(exported.rows[0][revenue.key], 100);

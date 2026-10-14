@@ -32,7 +32,7 @@ export type BudgetPivot = {
   columnTotals: Record<string, BudgetMetricValues>;
 };
 export type BudgetAnalysisState = {
-  view: "board" | "pivot";
+  view: "board" | "pivot" | "detail";
   filters: BudgetFilters;
   config: BudgetPivotConfig;
   unit: "yuan" | "wan";

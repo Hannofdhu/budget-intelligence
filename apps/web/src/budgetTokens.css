@@ -1,0 +1,22 @@
+/* DESIGN.md v1.0 · additive tokens; only migrated components consume them. */
+:root {
+  --budget-font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --budget-text: #192521;
+  --budget-text-secondary: #5f6d65;
+  --budget-accent: #173f37;
+  --budget-focus: #286355;
+  --budget-surface: #fbfcf8;
+  --budget-control-surface: #fff;
+  --budget-divider: #d6dad3;
+  --budget-control-border: #7c8a80;
+  --budget-section-title-size: 1.125rem;
+  --budget-body-size: .875rem;
+  --budget-caption-size: .75rem;
+  --budget-space-1: .25rem;
+  --budget-space-2: .5rem;
+  --budget-space-3: .75rem;
+  --budget-space-4: 1rem;
+  --budget-space-6: 1.5rem;
+  --budget-radius-section: 1rem;
+  --budget-radius-control: .5rem;
+}

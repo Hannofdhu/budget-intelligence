@@ -106,9 +106,9 @@ test("saved confirmation checks and all INFO raw evidence are traceable only ins
   assert.match(html, /<details class="forecast-how-details"><summary>确认核验记录/);
   assert.doesNotMatch(html, /<details[^>]*\bopen(?:=""|>)/);
   assert.match(readable, /冻结来源完整 通过/); assert.match(readable, /预算金额、人次为零 通过/);
-  assert.match(readable, /无冻结结转 通过/); assert.match(readable, /收入勾稽 通过/); assert.match(readable, /人次勾稽 通过/);
+  assert.match(readable, /无冻结结转 通过/); assert.match(readable, /结转收入勾稽 通过/); assert.match(readable, /人次勾稽 通过/);
   assert.match(readable, /不阻断的空组合 47项/);
-  assert.match(readable, /已知明细收入（元） 36123456\.789012/); assert.match(readable, /部门实际收入（元） 36123456\.789012/);
+  assert.match(readable, /已知明细结转收入（元） 36123456\.789012/); assert.match(readable, /部门实际结转收入（元） 36123456\.789012/);
   assert.match(readable, /已知明细人次 12642/); assert.match(readable, /部门实际人次 12642/);
   assert.equal((html.match(/<code>FINALIZED_ACTUAL_MISSING<\/code>/g) ?? []).length, 47);
   assert.match(html, /confirmation_exemption/); assert.match(html, /forecast_revenue&quot;: null/); assert.match(html, /forecast_total&quot;: null/);
@@ -116,7 +116,7 @@ test("saved confirmation checks and all INFO raw evidence are traceable only ins
   assert.doesNotMatch(html, /<button|<input|<select|<form/); assert.equal(JSON.stringify(saved), before);
   assert.equal(render(ForecastConfirmationEvidence, { calculation: { issues: [] } }), "");
   const failedCheck = render(ForecastConfirmationEvidence, { calculation: { issues: [], confirmation_checks: [confirmationCheck({ revenue_matched: false, known_revenue: null, actual_revenue: 0 })] } });
-  assert.match(text(failedCheck), /收入勾稽 未通过/); assert.match(text(failedCheck), /已知明细收入（元） 未提供/); assert.match(text(failedCheck), /部门实际收入（元） 0/);
+  assert.match(text(failedCheck), /结转收入勾稽 未通过/); assert.match(text(failedCheck), /已知明细结转收入（元） 未提供/); assert.match(text(failedCheck), /部门实际结转收入（元） 0/);
 });
 
 test("missing frozen actuals are grouped by exact campus, retain all dimensions and source issues, and never combine similar campus names", () => {
@@ -272,7 +272,7 @@ test("drawer open state keeps children mounted and does not invent new navigatio
 // hook values. Effects are deliberately not run: it is not a DOM renderer,
 // does not call the network, and cannot establish focus/modal/layout behavior.
 const pageStateNames = ["identity", "data", "busy", "error", "notice", "drawerOpen", "drawerTab", "assumptions", "reason",
-  "mapping", "adjustment", "showConfirm", "confirmationReason", "trialDraftChanged", "pendingNavigation", "selectedVersionId", "failure"];
+  "mapping", "adjustment", "showConfirm", "confirmationReason", "trialDraftChanged", "pendingNavigation", "selectedVersionId", "failure", "versionsOpen"];
 function pageHarness(overrides = {}) {
   const assumptions = { states: { ...defaultForecastStates }, minimum_sample: 30, mappings: [], adjustments: [], forecast_scopes: [], fixed_rules_version: fixedForecastRulesVersion, trial_mode: false };
   const current = version({ states: { ...defaultForecastStates }, as_of: "2026-10-06 12:00:00", assumptions,
@@ -283,7 +283,7 @@ function pageHarness(overrides = {}) {
     busy: "", error: "", notice: "", drawerOpen: false, drawerTab: "people", assumptions, reason: "",
     mapping: { source: { track: "", campus: "", product: "", grade: "", subject: "" }, target: { track: "", campus: "", product: "", grade: "", subject: "" }, reason: "" },
     adjustment: { season: "秋季", campus: "", kind: "additional", value: "", reason: "" },
-    showConfirm: false, confirmationReason: "", trialDraftChanged: false, pendingNavigation: "", selectedVersionId: "", failure: null, ...overrides };
+    showConfirm: false, confirmationReason: "", trialDraftChanged: false, pendingNavigation: "", selectedVersionId: "", failure: null, versionsOpen: false, ...overrides };
   let cursor = 0, refCursor = 0;
   const refs = [];
   const exports = loadPage(name => name === "react" ? { ...require(name),
@@ -299,6 +299,60 @@ function pageHarness(overrides = {}) {
 const elementText = node => Array.isArray(node) ? node.map(elementText).join("") : node && typeof node === "object" ? elementText(node.props?.children) : node == null || typeof node === "boolean" ? "" : String(node);
 const buttons = (tree, label) => find(tree, node => node.type === "button" && elementText(node) === label);
 const component = (tree, name) => find(tree, node => typeof node.type === "function" && node.type.name === name)[0];
+
+test("one version panel owns the only history list and frozen snapshot entry, with header and records sharing its open state", () => {
+  const h = pageHarness(), before = JSON.stringify(h.state.data);
+  let tree = h.page();
+  assert.equal(find(tree, node => node.type === "section" && node.props["aria-label"] === "预测记录").length, 1);
+  assert.equal(find(tree, node => node.type === "select" && node.props["aria-label"] === "查看保存版本").length, 0);
+  assert.equal(buttons(tree, "下载本次快照").length, 1);
+  const panel = component(tree, "BudgetUtilityPanel");
+  assert.equal(panel.props.open, false); assert.equal(panel.props.title, "预测版本与快照");
+  buttons(tree, `版本记录 P${h.current.sequence}`)[0].props.onClick();
+  tree = h.page(); assert.equal(component(tree, "BudgetUtilityPanel").props.open, true);
+  component(tree, "BudgetUtilityPanel").props.onClose(); assert.equal(h.state.versionsOpen, false);
+  component(h.page(), "ForecastDashboard").props.onRecords(); assert.equal(h.state.versionsOpen, true);
+  assert.equal(JSON.stringify(h.state.data), before); assert.equal(h.state.busy, "");
+});
+
+test("the unique fixed confirmation bar owns the compact pending entry and opens existing data review without changing any data", () => {
+  const h = pageHarness();
+  h.state.data.version = { ...h.current, calculation: { ...h.current.calculation, ready: false,
+    issues: [missing(), missing({ code: "UPSTREAM_HEADCOUNT_UNAVAILABLE", season: "寒假" }), warning(), confirmationInfo()] } };
+  const before = JSON.stringify(h.state.data), tree = h.page();
+  const bars = find(tree, node => node.type === "footer" && node.props["aria-label"] === "预测确认操作");
+  assert.equal(bars.length, 1); assert.equal(buttons(tree, "待处理 2").length, 1);
+  assert.equal(component(tree, "ForecastDataNotice"), undefined);
+  buttons(bars[0], "待处理 2")[0].props.onClick();
+  assert.equal(h.state.drawerOpen, true); assert.equal(h.state.drawerTab, "data");
+  assert.equal(component(h.page(), "ForecastDataReview").props.issues, h.state.data.version.calculation.issues);
+  assert.equal(buttons(h.page(), "确认本版预测结果")[0].props.disabled, true);
+  assert.equal(JSON.stringify(h.state.data), before);
+  const css = fs.readFileSync(new URL("../src/forecast.css", import.meta.url), "utf8");
+  const source = fs.readFileSync(new URL("../src/ForecastPage.tsx", import.meta.url), "utf8");
+  assert.match(css, /\.forecast-confirm\s*\{[^}]*position:\s*fixed/);
+  assert.match(css, /padding-bottom:\s*calc\(var\(--forecast-action-height/);
+  assert.match(source, /ResizeObserver\(measure\)/); assert.match(source, /observer\?\.disconnect\(\)/);
+});
+
+test("confirmation expands to one reason-required form and still uses the exact saved parent and original server readiness guard", async () => {
+  const h = pageHarness(), original = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify({ ...h.state.data, version: { ...h.current, status: "CONFIRMED" } }), { status: 200 }); };
+  try {
+    buttons(h.page(), "确认本版预测结果")[0].props.onClick();
+    let tree = h.page();
+    assert.equal(buttons(tree, "确认本版预测结果").length, 1, "initial trigger is replaced by submit, not duplicated");
+    assert.equal(buttons(tree, "确认本版预测结果")[0].props.disabled, true);
+    const form = find(tree, node => node.type === "form")[0];
+    find(form, node => node.type === "input")[0].props.onChange({ target: { value: "确认保存版本，不改预算" } });
+    tree = h.page(); assert.equal(buttons(tree, "确认本版预测结果")[0].props.disabled, false);
+    find(tree, node => node.type === "form")[0].props.onSubmit({ preventDefault() {} });
+    await settlePage(() => !h.state.busy && h.state.data.version.status === "CONFIRMED");
+    assert.equal(calls.length, 1); assert.equal(calls[0].url, `/api/v1/forecasts/fy27/${h.current.id}/confirm`);
+    const payload = JSON.parse(calls[0].options.body); assert.equal(payload.reason, "确认保存版本，不改预算");
+    assert.equal(h.state.showConfirm, false); assert.equal(h.state.confirmationReason, "");
+  } finally { globalThis.fetch = original; }
+});
 
 test("the main page has one adjustment entry, an in-place three-panel drawer and saved help only at the footer", () => {
   const h = pageHarness(), tree = h.page();
@@ -321,7 +375,7 @@ test("the main page has one adjustment entry, an in-place three-panel drawer and
   updated.props.onTabChange("business");
   assert.deepEqual(find(component(h.page(), "ForecastSettingsDrawer").props.children, node => node.type === "section" && node.props.role === "tabpanel").map(node => node.props.hidden), [true, false, true]);
   assert.equal(component(component(h.page(), "ForecastSettingsDrawer").props.children, "ForecastTrialScopeEditor").key, editor.key, "changing tabs never changes the editor's mount key");
-  component(h.page(), "ForecastDashboard").props.onReview();
+  buttons(h.page(), "数据核对")[0].props.onClick();
   assert.equal(h.state.drawerTab, "data"); assert.equal(h.state.drawerOpen, true);
 });
 
@@ -434,7 +488,7 @@ test("the confirmation area names this version's result and keeps exempt evidenc
   h.state.data.version = { ...h.current, calculation: { ...h.current.calculation,
     issues: Array.from({ length: 47 }, () => confirmationInfo()), confirmation_policy_version: "fy27-empty-budget-actual-v1", confirmation_checks: [confirmationCheck()] } };
   const before = JSON.stringify(h.state.data.version), tree = h.page();
-  const confirm = find(tree, node => node.type === "section" && node.props.className === "forecast-confirm")[0];
+  const confirm = find(tree, node => node.type === "footer" && node.props.className === "forecast-confirm")[0];
   assert.equal(buttons(confirm, "确认本版预测结果").length, 1); assert.equal(buttons(confirm, "确认本版预测结果")[0].props.disabled, false);
   assert.doesNotMatch(elementText(confirm), /47|待核对|逐项/); assert.equal(h.state.showConfirm, false);
   assert.equal(find(confirm, node => node.type === "p" && node.props.id === "forecast-confirm-hint").length, 0);
@@ -591,8 +645,8 @@ test("history selection reads the exact saved version, is readonly for all mutat
   h.state.data = envelope;
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify({ ...envelope, version: url.endsWith(`/versions/${old.id}`) ? old : current }), { status: 200 }); };
   try {
-    const selector = find(h.page(), node => node.type === "select" && node.props["aria-label"] === "查看保存版本")[0];
-    selector.props.onChange({ target: { value: old.id } });
+    const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"] === "查看预测 P3")[0];
+    selector.props.onClick();
     await settlePage(() => !h.state.busy && h.state.selectedVersionId === old.id);
     assert.equal(calls[0].url, "/api/v1/forecasts/fy27/versions/saved-p3");
     assert.equal(calls[0].options.method, undefined);
@@ -619,9 +673,9 @@ test("history selection reads the exact saved version, is readonly for all mutat
 
 test("history selection remains blocked while there are pending current-version edits", () => {
   const h = pageHarness({ reason: "尚未保存的调整" });
-  const selector = find(h.page(), node => node.type === "select" && node.props["aria-label"] === "查看保存版本")[0];
+  const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"] === `查看预测 P${h.current.sequence}`)[0];
   assert.equal(selector.props.disabled, true);
-  selector.props.onChange({ target: { value: "older-version" } });
+  selector.props.onClick();
   assert.equal(h.state.selectedVersionId, ""); assert.equal(h.state.reason, "尚未保存的调整");
 });
 

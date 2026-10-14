@@ -32,6 +32,118 @@ const calculation = (overrides = {}) => ({ rule_version: "test-only", ready: tru
   rows: [row()], issues: [], campuses: [], ...overrides });
 const render = data => renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, onReview() {} }));
 
+const findTree = (node, predicate) => Array.isArray(node) ? node.flatMap(child => findTree(child, predicate)) : !node || typeof node !== "object" ? []
+  : [...(predicate(node) ? [node] : []), ...findTree(typeof node.type === "function" && node.type.name === "BudgetScopeBar" ? node.type(node.props) : node.props?.children, predicate)];
+function dashboardHarness(data, trialMode = false, props = {}) {
+  const states = [], refs = [];
+  let cursor = 0, refCursor = 0;
+  const exports = { exports: {} };
+  new Function("require", "module", "exports", compiled.outputFiles[0].text)(name => name === "react" ? { ...require(name),
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
+      return [states[index], update => { states[index] = typeof update === "function" ? update(states[index]) : update; }];
+    }, useEffect() {}, useRef: current => refs[refCursor++] ??= { current }, useMemo: compute => compute(),
+  } : require(name), exports, exports.exports);
+  return () => { cursor = 0; refCursor = 0; return exports.exports.ForecastDashboard({ calculation: data, trialMode, ...props }); };
+}
+
+test("board and detail navigation shares one exact scope, preserves it across tabs, and never changes the whole-year or quarter result", () => {
+  const data = calculation({ rows: [row(), row({ campus: "西直门南" }), row({ season: "秋季" })] });
+  const before = JSON.stringify(data), page = dashboardHarness(data);
+  const scopeBar = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0];
+  const label = node => Array.isArray(node) ? node.map(label).join("") : node && typeof node === "object" ? label(node.props?.children) : typeof node === "string" ? node : "";
+  const click = (tree, value) => findTree(tree, node => node.type === "button" && label(node) === value)[0].props.onClick();
+  let tree = page();
+  assert.equal(scopeBar(tree).props.count, 3);
+  const allYear = findTree(tree, node => node.type === "section" && node.props["aria-label"] === "FY27 部门全年预测")[0];
+  const quarters = findTree(tree, node => node.type === "div" && node.props["aria-label"] === "季度达成明细表")[0];
+  scopeBar(tree).props.onChange({ season: "暑假", track: "", campus: "西直门", product: "", grade: "", subject: "" });
+  tree = page();
+  assert.equal(scopeBar(tree).props.count, 1);
+  assert.deepEqual(findTree(tree, node => node.type === "section" && node.props["aria-label"] === "FY27 部门全年预测")[0], allYear);
+  assert.deepEqual(findTree(tree, node => node.type === "div" && node.props["aria-label"] === "季度达成明细表")[0], quarters);
+  click(tree, "明细"); tree = page();
+  assert.equal(findTree(tree, node => node.type === "div" && node.props.className === "forecast-board-overview")[0].props.hidden, true);
+  const detail = findTree(tree, node => node.type === "section" && node.props.children?.[0]?.props?.className === "forecast-detail-summary")[0];
+  assert.equal(detail.props.hidden, false);
+  assert.equal(findTree(detail, node => node.type === "details").length, 0, "details is a peer view, not another folded footer");
+  const transfer = findTree(detail, node => typeof node.type === "function" && node.type.name === "ActionTable")[0].props.exportData;
+  assert.equal(transfer.rows.length, 1); assert.equal(transfer.rows[0].campus, "西直门");
+  click(tree, "看板"); tree = page();
+  assert.equal(scopeBar(tree).props.filters.campus, "西直门");
+  scopeBar(tree).props.onClear(); tree = page();
+  assert.equal(scopeBar(tree).props.count, 3);
+  assert.ok(Object.values(scopeBar(tree).props.filters).every(value => value === ""));
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("the records peer control is a dialog launcher, not a fake tab or a second record list", () => {
+  let opened = 0;
+  const page = dashboardHarness(calculation(), false, { onRecords() { opened++; } });
+  const tree = page(), records = findTree(tree, node => node.type === "button" && node.props.children === "记录")[0];
+  assert.equal(records.props.role, undefined); assert.equal(records.props["aria-haspopup"], "dialog");
+  records.props.onClick(); assert.equal(opened, 1);
+  assert.equal(findTree(tree, node => node.type === "ol").length, 0);
+  assert.equal(findTree(tree, node => node.type === "button" && node.props.children === "明细")[0].props["aria-current"], undefined);
+});
+
+test("forecast details own one copy/export group and transfer every filtered row rather than only the visible page", () => {
+  const rows = [...Array.from({ length: 61 }, (_, index) => row({ campus: "西直门", product: `产品${index}`, forecast_revenue: index ? "98000.123456" : "-0.01" })),
+    ...Array.from({ length: 7 }, () => row({ campus: "西直门南" })), row({ season: "秋季" })];
+  const data = calculation({ rows }), before = JSON.stringify(data), page = dashboardHarness(data);
+  const detail = tree => findTree(tree, node => node.type === "div" && node.props["aria-label"] === "预测明细表")[0];
+  const transfer = tree => findTree(detail(tree), node => typeof node.type === "function" && node.type.name === "ActionTable")[0];
+  const detailMarkup = render(data).match(/<section class="forecast-section" hidden=""><header class="forecast-detail-summary">[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.equal((detailMarkup.match(/>一键复制<\/button>/g) ?? []).length, 1);
+  assert.equal((detailMarkup.match(/>导出明细<\/button>/g) ?? []).length, 1);
+  assert.equal((detailMarkup.match(/class="table-transfer"/g) ?? []).length, 1);
+  let tree = page();
+  const selects = findTree(tree, node => node.type === "select");
+  selects[0].props.onChange({ target: { value: "暑假" } });
+  tree = page();
+  findTree(tree, node => node.type === "select")[2].props.onChange({ target: { value: "西直门" } });
+  tree = page();
+  assert.equal(transfer(tree).props.exportData.rows.length, 61);
+  assert.equal(transfer(tree).props.exportData.filename, "FY27-达成预测明细");
+  assert.ok(transfer(tree).props.exportData.rows.every(row => row.campus === "西直门" && row.season === "暑假"));
+  assert.equal(transfer(tree).props.exportData.rows[0].forecast_revenue, "-0.01");
+  for (const key of ["budget_revenue", "forecast_revenue"]) assert.equal(transfer(tree).props.exportData.columns.find(column => column.key === key).format, "money");
+  for (const key of ["budget_total", "forecast_total"]) assert.equal(transfer(tree).props.exportData.columns.find(column => column.key === key).format, "count");
+  const body = findTree(transfer(tree).props.children, node => node.type === "tbody")[0];
+  assert.equal(findTree(body, node => node.type === "tr").length, 30);
+  const next = findTree(tree, node => node.type === "button" && node.props.children === "下一页")[0];
+  next.props.onClick(); tree = page();
+  assert.equal(transfer(tree).props.exportData.rows.length, 61, "pagination never shrinks copy/export scope");
+  assert.equal(transfer(tree).props.exportData.rows[1].forecast_revenue, "98000.123456");
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("forecast detail transfer retains trial filenames and honest empty filter results", () => {
+  const page = dashboardHarness(calculation({ rows: [row({ season: "秋季" })] }), true);
+  let tree = page();
+  const table = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0];
+  assert.equal(table(tree).props.exportData.filename, "FY27-试用预测明细");
+  findTree(tree, node => node.type === "select")[0].props.onChange({ target: { value: "寒假" } });
+  tree = page();
+  assert.deepEqual(table(tree).props.exportData.rows, []);
+});
+
+test("forecast revenue labels use carryover terminology with original units and unchanged field values", () => {
+  const data = calculation(), before = JSON.stringify(data), tree = dashboardHarness(data)();
+  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData;
+  assert.deepEqual(transfer.columns.filter(column => ["budget_revenue", "forecast_revenue"].includes(column.key)), [
+    { key: "budget_revenue", label: "定版预算结转收入（元）", format: "money" },
+    { key: "forecast_revenue", label: "预计结转收入（元）", format: "money" },
+  ]);
+  const html = render(data);
+  for (const label of ["定版预算结转收入", "预计全年结转收入", "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "预算结转收入（元）", "预计 / 实际结转收入（元）"]) assert.ok(text(html).includes(label), label);
+  assert.doesNotMatch(html, /确认收入|预算收入|实际收入|预计收入|全年收入|结转结转收入/);
+  assert.equal(transfer.rows[0].budget_revenue, data.rows[0].budget_revenue);
+  assert.equal(transfer.rows[0].forecast_revenue, data.rows[0].forecast_revenue);
+  assert.equal(JSON.stringify(data), before);
+});
+
 test("explicit business-owned quarter states are stable and include ENDED, not calendar assumptions", () => {
   assert.deepEqual(defaultForecastStates, { 暑假: "FINALIZED", 秋季: "OPEN", 寒假: "FUTURE", 春季: "FUTURE" });
   assert.equal(forecastStateLabels.ENDED, "招生结束");
@@ -110,9 +222,9 @@ test("detail and export presentation blanks unmatched budget contributions witho
 test("forecast XLSX roundtrip keeps unmatched budgets blank, known budget zero numeric, and actual money/counts numeric without mutating rows", async () => {
   const columns = [
     { key: "campus", label: "校区" },
-    { key: "budget_revenue", label: "预算收入（元）", format: "money" },
+    { key: "budget_revenue", label: "预算结转收入（元）", format: "money" },
     { key: "budget_total", label: "预算人次", format: "count" },
-    { key: "forecast_revenue", label: "实际 / 预计收入（元）", format: "money" },
+    { key: "forecast_revenue", label: "实际 / 预计结转收入（元）", format: "money" },
     { key: "forecast_total", label: "实际 / 预计人次", format: "count" },
   ];
   const originals = [
@@ -147,17 +259,17 @@ test("a finalized quarter labels its frozen-actual variance as actual rather tha
 });
 test("board distinguishes final actuals, open terminal forecasts and future states in one context", () => {
   const html = render(calculation()), readable = text(html);
-  for (const label of ["定版预算", "预计全年收入", "预计缺口", "预计达成率", "季度达成", "维度达成", "已定版", "招生中", "未开始", "冻结实际", "94%", "2.4 万"]) assert.ok(readable.includes(label), label);
+  for (const label of ["定版预算结转收入", "预计全年结转收入", "预计缺口", "预计达成率", "季度达成", "当前范围达成", "已定版", "招生中", "未开始", "冻结实际", "94%", "2.4 万"]) assert.ok(readable.includes(label), label);
   assert.match(html, /aria-label="季度达成明细表"/);
-  assert.match(html, /aria-label="暑假，已定版，预算10 万，冻结实际9\.8 万/);
+  assert.match(html, /aria-label="暑假，已定版，预算结转收入10 万，冻结实际结转收入9\.8 万/);
   assert.doesNotMatch(readable, /Excel|来源与口径|查看依据|参数来源|调平|上次正式/);
 });
 test("unready annual forecast is a dash, never copied from baseline or partially summed", () => {
   const data = calculation({ ready: false, annual: { budget_revenue: "113004618.59", forecast_revenue: null, gap: null, achievement: null },
     rows: [row({ forecast_revenue: null, forecast_total: null })], issues: [{ code: "SOURCE_UNMAPPED", severity: "BLOCKING", season: "秋季", dims: row(), message: "实际明细尚未对应预算维度" }] });
   const html = render(data), readable = text(html);
-  assert.match(readable, /部分数据待核对，预测尚未完整/); assert.match(readable, /查看待核对数据/);
-  assert.match(readable, /数据待核对 · 1项/);
+  assert.match(readable, /部分数据待核对，预测尚未完整/);
+  assert.doesNotMatch(html, /forecast-data-notice/);
   assert.match(readable, /待预测 — 预计达成率 —/);
   assert.doesNotMatch(readable, /预计达成率 100%/);
   assert.doesNotMatch(readable, /实际业务待对应 秋季 1 条明细|实际明细尚未对应预算维度/);
@@ -179,27 +291,27 @@ test("missing actuals cannot create NaN, Infinity or invented numerical percenta
   assert.match(text(html), /无显著缺口 0 万/); assert.match(text(html), /当前范围暂无预测明细/);
   assert.doesNotMatch(html, /NaN|Infinity|undefined/);
 });
-test("large readiness issue sets show one compact notice and mount no raw issue details on the board", () => {
+test("large readiness issue sets mount no repeated notice or raw issue details on the board", () => {
   const issues = Array.from({ length: 80 }, (_, index) => ({ code: "SOURCE_UNMAPPED", season: "秋季", severity: "BLOCKING", dims: row({ campus: `校区${index}` }), message: `测试条件 ${index}` }));
   const html = render(calculation({ ready: false, issues })), readable = text(html);
-  assert.match(readable, /部分数据待核对，预测尚未完整/); assert.match(readable, /数据待核对 · 80项/);
-  assert.equal((html.match(/class="forecast-data-notice"/g) ?? []).length, 1);
+  assert.match(readable, /部分数据待核对，预测尚未完整/);
+  assert.equal((html.match(/class="forecast-data-notice"/g) ?? []).length, 0);
   assert.doesNotMatch(html, /forecast-issue-group-toggle|forecast-review-evidence/);
   assert.doesNotMatch(readable, /测试条件|校区0|实际业务待对应/);
   const grouped = groupForecastIssues(issues);
   assert.equal(grouped.length, 1); assert.equal(grouped[0].issues.length, 80);
   assert.equal(grouped[0].issues[79], issues[79], "all source blockers remain available to data review");
 });
-test("the compact notice counts all blockers while grouped review keeps automatic dependencies distinct from manual tasks", () => {
+test("board delegates blocker counts to the page bar while grouped review keeps automatic dependencies distinct from manual tasks", () => {
   const issues = [
     ...Array.from({ length: 80 }, () => ({ code: "SOURCE_UNMAPPED", season: "秋季", severity: "BLOCKING", message: "实际业务待对应" })),
     ...Array.from({ length: 50 }, () => ({ code: "UPSTREAM_HEADCOUNT_UNAVAILABLE", season: "寒假", severity: "BLOCKING", message: "等待前季人数" })),
     ...Array.from({ length: 50 }, () => ({ code: "UPSTREAM_HEADCOUNT_UNAVAILABLE", season: "春季", severity: "BLOCKING", message: "等待前季人数" })),
   ];
   const html = render(calculation({ ready: false, issues })), readable = text(html);
-  assert.match(readable, /数据待核对 · 180项/);
+  assert.doesNotMatch(readable, /数据待核对 · 180项/);
   assert.doesNotMatch(readable, /前季预测完成后自动计算|等待前季人数|180 项待处理/);
-  assert.equal((html.match(/class="forecast-data-notice"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="forecast-data-notice"/g) ?? []).length, 0);
   const groups = groupForecastIssues(issues);
   assert.equal(groups.length, 3); assert.equal(groups.reduce((sum, group) => sum + group.issues.length, 0), 180);
   const groupedReview = text(renderToStaticMarkup(createElement(ForecastIssueGroups, { issues })));
@@ -336,7 +448,7 @@ test("trial scope XLSX preserves blank unbudgeted columns and numeric forecast v
   const raw = row({ budget_covered: false, budget_revenue: 0, budget_total: 0, forecast_revenue: "-7.25", forecast_total: 15 });
   const before = JSON.stringify(raw);
   const workbook = await budgetWorkbook([{ key: "budget_revenue", label: "预算", format: "money" }, { key: "budget_total", label: "预算人次", format: "count" },
-    { key: "forecast_revenue", label: "预计收入", format: "money" }, { key: "forecast_total", label: "预计人次", format: "count" }], [forecastPresentationRow(raw)], "试用预测");
+    { key: "forecast_revenue", label: "预计结转收入", format: "money" }, { key: "forecast_total", label: "预计人次", format: "count" }], [forecastPresentationRow(raw)], "试用预测");
   const { default: ExcelJS } = await import("exceljs"), loaded = new ExcelJS.Workbook();
   await loaded.xlsx.load(await workbook.xlsx.writeBuffer()); const sheet = loaded.worksheets[0];
   assert.equal(sheet.getCell("A2").value, null); assert.equal(sheet.getCell("B2").value, null);
@@ -349,11 +461,10 @@ test("trial completeness shows known department totals even if child actuals are
     rows: [row({ forecast_revenue: null, forecast_total: null, data_status: "ACTUAL_UNAVAILABLE" })],
     issues: [{ code: "ACTUAL_UNAVAILABLE", severity: "BLOCKING", season: "暑假", message: "部分实际明细未对应" }] });
   const html = renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, trialMode: true })), readable = text(html);
-  assert.match(readable, /预计全年收入 12,100 万/); assert.match(readable, /预计超额 799\.54 万/); assert.match(readable, /预计达成率 107\.08%/);
+  assert.match(readable, /预计全年结转收入 12,100 万/); assert.match(readable, /预计超额 799\.54 万/); assert.match(readable, /预计达成率 107\.08%/);
   assert.doesNotMatch(readable, /尚不能完成预测|类预测条件待处理/);
-  assert.match(readable, /数据待核对 · 1项/);
-  assert.match(html, /class="forecast-data-notice"/); assert.doesNotMatch(html, /forecast-section forecast-issues|部分实际明细未对应/);
-  assert.match(html, /<option selected="">秋季<\/option>/); assert.equal(data.rows[0].forecast_revenue, null);
+  assert.doesNotMatch(html, /class="forecast-data-notice"|forecast-section forecast-issues|部分实际明细未对应/);
+  assert.match(html, /<option value="秋季" selected="">秋季<\/option>/); assert.equal(data.rows[0].forecast_revenue, null);
 });
 
 test("formal confirmation never accepts trial completeness or skips owner, dirty or server readiness gates", () => {
@@ -378,7 +489,7 @@ test("trial interactions keep complete dimensions visible and distinguish estima
   assert.equal(forecastRowLabel(row({ data_status: "TRIAL_SIZE_HELD" })), "暂按上一季人数");
   assert.equal(forecastRowLabel(row({ data_status: "BASELINE_ESTIMATE" })), "预算参数估计");
   assert.equal(forecastRowLabel(row({ data_status: "ACTUAL_UNAVAILABLE" })), "实际未对应");
-  assert.equal(forecastRowLabel(row({ data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: null })), "实际收入按0计");
+  assert.equal(forecastRowLabel(row({ data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: null })), "实际结转收入按0计");
   assert.doesNotMatch(readable, /Excel|来源与口径|参数来源|查看依据|定版规则/);
 });
 
@@ -387,8 +498,8 @@ test("trial default dimension view uses open-quarter results without altering de
   const html = renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, trialMode: true }));
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);
-  assert.match(text(html), /预计全年收入 37\.6 万/); assert.equal(data.annual.forecast_revenue, "376000");
-  const all = render(data); assert.doesNotMatch(text(all), /\d+条实际(?:收入|人次)/);
+  assert.match(text(html), /预计全年结转收入 37\.6 万/); assert.equal(data.annual.forecast_revenue, "376000");
+  const all = render(data); assert.doesNotMatch(text(all), /\d+条实际(?:结转收入|人次)/);
   assert.doesNotMatch(text(all), /全年分组暂不合计/);
   const allTable = all.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(allTable), /20 6\.8 缺口 13\.2 34% 200 68/);
@@ -477,10 +588,10 @@ test("fixed forecast completeness displays known totals but cannot bypass data, 
   const before = JSON.stringify(data), html = render(data), readable = text(html);
   assert.equal(forecastCalculationComplete(data), true);
   assert.equal(forecastCalculationComplete({ ...data, forecast_complete: false }), false);
-  assert.match(readable, /预计全年收入 37\.6 万/); assert.match(readable, /预计达成率 94%/);
-  assert.match(readable, /数据待核对 · 1项/); assert.doesNotMatch(readable, /尚不能完成预测|类预测条件待处理/);
-  assert.match(html, /<option selected="">秋季<\/option>/);
-  assert.match(html, /class="forecast-data-notice"/); assert.doesNotMatch(html, /forecast-section forecast-issues|部分实际明细未对应/);
+  assert.match(readable, /预计全年结转收入 37\.6 万/); assert.match(readable, /预计达成率 94%/);
+  assert.doesNotMatch(readable, /数据待核对 · 1项|尚不能完成预测|类预测条件待处理/);
+  assert.match(html, /<option value="秋季" selected="">秋季<\/option>/);
+  assert.doesNotMatch(html, /class="forecast-data-notice"|forecast-section forecast-issues|部分实际明细未对应/);
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);
   assert.equal(JSON.stringify(data), before); assert.equal(data.rows[0].forecast_revenue, null);
@@ -501,13 +612,13 @@ test("only unavailable frozen actual income and headcounts default to zero; raw 
   assert.equal(forecastActualRevenueDefaultsToZero(unavailable), true);
   assert.equal(presented.forecast_revenue, 0); assert.equal(presented.forecast_total, 0);
   assert.equal(forecastActualHeadcountDefaultsToZero(unavailable), true);
-  assert.equal(forecastRowLabel(unavailable), "实际收入、人次按0计");
+  assert.equal(forecastRowLabel(unavailable), "实际结转收入、人次按0计");
   const unavailableMethod = row({ method: "ACTUAL_UNAVAILABLE", forecast_revenue: null, forecast_total: null });
   assert.equal(forecastActualRevenueDefaultsToZero(unavailableMethod), true);
   assert.equal(forecastPresentationRow(unavailableMethod).forecast_revenue, 0);
   assert.equal(forecastActualHeadcountDefaultsToZero(unavailableMethod), true);
   assert.equal(forecastPresentationRow(unavailableMethod).forecast_total, 0);
-  assert.equal(forecastRowLabel(unavailableMethod), "实际收入、人次按0计");
+  assert.equal(forecastRowLabel(unavailableMethod), "实际结转收入、人次按0计");
   assert.equal(JSON.stringify(unavailable), before); assert.equal(unavailable.forecast_revenue, null);
   for (const other of [row({ forecast_revenue: null }), row({ season: "秋季", method: "TERMINAL_FORECAST", forecast_revenue: null }),
     row({ season: "寒假", method: "PARENT_PARAMETER_PROJECTION", forecast_revenue: null }),
@@ -548,14 +659,14 @@ test("summer dimension achievement and detail display zero-default actual revenu
   const dimension = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(dimension), /智慧空间 10 0 缺口 10 0% 100 0/);
   const detail = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(detail), /100,000 0 100 0 实际收入、人次按0计/);
-  assert.doesNotMatch(readable, /\d+条实际(?:收入|人次)/); assert.match(readable, /数据待核对 · 47项/);
-  assert.match(readable, /预计全年收入 37\.6 万/); assert.match(readable, /7\.5 万/);
+  assert.match(text(detail), /100,000 0 100 0 实际结转收入、人次按0计/);
+  assert.doesNotMatch(readable, /\d+条实际(?:结转收入|人次)|数据待核对 · 47项/);
+  assert.match(readable, /预计全年结转收入 37\.6 万/); assert.match(readable, /7\.5 万/);
   assert.doesNotMatch(readable, /全年分组暂不合计/);
   assert.equal(canConfirmForecast(fixedVersion({ calculation: data }), { userId: "owner", departmentId: "test", roles: ["DEPARTMENT_BUDGET_OWNER"] }), false);
   assert.equal(JSON.stringify(data), before);
   const openQuarter = render(calculation({ ...data, quarters: calculation().quarters, rows: [missing, row({ season: "秋季", forecast_revenue: "68000", method: "TERMINAL_FORECAST" })] }));
-  assert.doesNotMatch(text(openQuarter), /\d+条实际(?:收入|人次)/, "the compact zero-default summaries are removed in every filtered view");
+  assert.doesNotMatch(text(openQuarter), /\d+条实际(?:结转收入|人次)/, "the compact zero-default summaries are removed in every filtered view");
 });
 
 test("forecast export uses the same actual income and headcount zero defaults and method label, while missing non-actual values remain blank", async () => {
@@ -565,13 +676,13 @@ test("forecast export uses the same actual income and headcount zero defaults an
     row({ data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: "5000", forecast_total: null, counts_not_applicable: true })];
   const before = JSON.stringify(originals);
   const exported = originals.map(item => ({ ...forecastPresentationRow(item), method_label: forecastRowLabel(item) }));
-  const workbook = await budgetWorkbook([{ key: "forecast_revenue", label: "预计收入（元）", format: "money" },
+  const workbook = await budgetWorkbook([{ key: "forecast_revenue", label: "预计结转收入（元）", format: "money" },
     { key: "forecast_total", label: "预计人次", format: "count" }, { key: "method_label", label: "预测方式" }], exported, "FY27达成预测");
   const { default: ExcelJS } = await import("exceljs"), loaded = new ExcelJS.Workbook();
   await loaded.xlsx.load(await workbook.xlsx.writeBuffer()); const sheet = loaded.worksheets[0];
   assert.equal(sheet.getCell("A2").type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell("A2").value, 0);
   assert.equal(sheet.getCell("B2").type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell("B2").value, 0);
-  assert.equal(sheet.getCell("C2").value, "实际收入、人次按0计");
+  assert.equal(sheet.getCell("C2").value, "实际结转收入、人次按0计");
   assert.equal(sheet.getCell("A3").value, null); assert.equal(sheet.getCell("B3").value, null);
   assert.equal(sheet.getCell("A4").value, -325.987654); assert.equal(sheet.getCell("A4").type, ExcelJS.ValueType.Number);
   assert.equal(sheet.getCell("B4").value, 0); assert.equal(sheet.getCell("B4").type, ExcelJS.ValueType.Number);
@@ -611,14 +722,14 @@ test("dimension view omits zero-default summaries while income-only and headcoun
   const incomeOnly = row({ data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: null, forecast_total: 17 });
   const countOnly = row({ data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: "50000", forecast_total: null, campus: "另一校区" });
   const html = render(calculation({ rows: [incomeOnly, countOnly] })), readable = text(html);
-  assert.doesNotMatch(readable, /\d+条实际(?:收入|人次)/);
+  assert.doesNotMatch(readable, /\d+条实际(?:结转收入|人次)/);
   const detail = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(detail), /100,000 0 100 17 实际收入按0计/);
+  assert.match(text(detail), /100,000 0 100 17 实际结转收入按0计/);
   assert.match(text(detail), /100,000 50,000 100 0 实际人次按0计/);
   const moreCounts = render(calculation({ rows: [incomeOnly, countOnly, { ...countOnly, campus: "第三校区" }] }));
-  assert.doesNotMatch(text(moreCounts), /\d+条实际(?:收入|人次)/);
+  assert.doesNotMatch(text(moreCounts), /\d+条实际(?:结转收入|人次)/);
   const headcountOnlyHtml = render(calculation({ rows: [countOnly] }));
-  assert.doesNotMatch(text(headcountOnlyHtml), /\d+条实际(?:收入|人次)/);
+  assert.doesNotMatch(text(headcountOnlyHtml), /\d+条实际(?:结转收入|人次)/);
   assert.match(text(headcountOnlyHtml), /实际人次按0计/);
 });
 
@@ -633,12 +744,12 @@ test("removing dimension hints does not alter grouped values, unmatched warnings
   const before = JSON.stringify(data), groupedBefore = groupForecastRows(data.rows, "track");
   const html = render(data), readable = text(html);
   const dimension = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.doesNotMatch(readable, /\d+条实际(?:收入|人次)|含未单列业务/);
+  assert.doesNotMatch(readable, /\d+条实际(?:结转收入|人次)|含未单列业务/);
   assert.match(text(dimension), /智慧空间 10 0\.5 缺口 9\.5 5% 100 5/);
   assert.match(text(dimension), /智慧伴学 含未对应实际 — 0\.25 — — — 3/);
-  assert.match(readable, /数据待核对 · 2项/);
+  assert.doesNotMatch(readable, /数据待核对 · 2项/);
   const details = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(details), /100,000 0 100 0 实际收入、人次按0计/);
+  assert.match(text(details), /100,000 0 100 0 实际结转收入、人次按0计/);
   assert.match(text(details), /未单列 5,000 未单列 5/);
   assert.match(text(details), /— 2,500 — 3 未对应实际/);
   assert.deepEqual(groupForecastRows(data.rows, "track"), groupedBefore); assert.equal(JSON.stringify(data), before);

@@ -61,6 +61,10 @@ export interface NextYearEnvelope {
   history: { id: string; sequence: number; created_at: string; [key: string]: unknown }[];
   latest_draft_id?: string; read_only?: boolean;
 }
+export interface NextYearBasisPreview {
+  read_only: true; fiscal_year: number; parent_id: string | null; source_id: string;
+  source: ForecastBasis; inputs: NextYearInputs; calculation: NextYearCalculation;
+}
 export interface NextYearCatalog {
   source_fiscal_year: number; sources: ForecastBasis[];
   fiscal_years: { fiscal_year: number; has_draft: boolean; latest_sequence?: number | null; [key: string]: unknown }[];
@@ -126,6 +130,10 @@ async function command<T>(path: string, identity: ApiIdentity, body: unknown, ye
 }
 export function prepareNextYearBudget(identity: ApiIdentity, forecastId: string, parentId: string | null, year = 2028): Promise<NextYearEnvelope> {
   return command("/prepare", identity, { forecast_id: forecastId, parent_id: parentId, reason: `基于已确认 FY${String(year - 1).slice(-2)} 预测生成 FY${String(year).slice(-2)} 预算草稿` }, year);
+}
+/** Read-only new-basis calculation; creating a version remains an explicit prepare call. */
+export async function previewNextYearBasis(identity: ApiIdentity, forecastId: string, parentId: string | null, year = 2028): Promise<NextYearBasisPreview> {
+  return response(await fetch(`${baseFor(year)}/prepare-preview`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json" }, body: JSON.stringify({ forecast_id: forecastId, parent_id: parentId }) }));
 }
 export function reviseNextYearBudget(identity: ApiIdentity, parentId: string, inputs: NextYearInputs, reason: string): Promise<NextYearEnvelope> {
   return command("/revise", identity, { parent_id: parentId, inputs, reason }, inputs.fiscal_year);
@@ -205,7 +213,7 @@ export function applyNextYearEdits(original: NextYearInputs, edits: NextYearEdit
       }
     } else if (section === "entry-count") {
       const item = inputs.combinations.find(row => row.id === id);
-      if (!item) fail(key, "业务范围不存在");
+      if (!item) fail(key, "SKU不存在");
       else if (!raw.trim()) { item.entry_students = null; item.entry_locked = false; }
       else if (number === null || !Number.isSafeInteger(number) || number < 0 || number > 10000000) fail(key, "人数须为0至1000万的整数");
       else { item.entry_students = number; item.entry_locked = true; }

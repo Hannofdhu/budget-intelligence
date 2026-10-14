@@ -1,24 +1,26 @@
 import { ActionTable } from "./ActionTable";
-import { Fragment, useMemo } from "react";
+import { useMemo } from "react";
 import { aggregateBudgetFacts, buildBudgetPivot, seasons } from "./budgetAnalysis";
 import { renewalStageLabel } from "./budgetDisplay";
 import type { BudgetDimension, BudgetFact, BudgetMetric } from "./budgetAnalysisTypes";
+import { BudgetTrackSubjectBoard } from "./BudgetTrackSubjectBoard";
+import { BudgetCampusBoard } from "./BudgetCampusBoard";
 
 type Props = {
   facts: BudgetFact[];
+  unit?: "yuan" | "wan";
+  fiscalYear?: number;
   onSelect: (path: Partial<Record<BudgetDimension, string>>, label: string) => void;
   onFilterCampus: (campus: string) => void;
   onPivot: (metric: "total" | "renewal") => void;
 };
 const peopleMetrics = ["old", "new", "total"] as const;
-const peopleLabels = { old: "老生", new: "新生", total: "合计" };
 const number = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 8 }).format(value);
 const rate = (value: number | null) => value === null ? "—" : `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value * 100)}%`;
 
 /** Uses the same filtered facts as revenue. No parameters, calculations or budgets are written. */
-export function BudgetPeopleBoard({ facts, onSelect, onFilterCampus, onPivot }: Props) {
+export function BudgetPeopleBoard({ facts, unit = "wan", fiscalYear = 2027, onSelect, onFilterCampus, onPivot }: Props) {
   const quarters = useMemo(() => seasons.map(season => ({ season, ...aggregateBudgetFacts(facts.filter(fact => fact.season === season)) })), [facts]);
-  const campusPivot = useMemo(() => buildBudgetPivot(facts, { rows: ["campus"], column: "season", metrics: ["old", "new", "total", "renewal"], sort: "name-asc" }), [facts]);
   const renewalPivot = useMemo(() => buildBudgetPivot(facts, { rows: ["track", "grade"], column: "season", metrics: ["renewal"], sort: "name-asc" }), [facts]);
   const renewalRows = renewalPivot.rows.filter(row => row.leaf);
   const maxPeople = Math.max(1, ...quarters.map(quarter => quarter.old !== null && quarter.new !== null && quarter.old >= 0 && quarter.new >= 0 ? quarter.old + quarter.new : 0));
@@ -33,12 +35,10 @@ export function BudgetPeopleBoard({ facts, onSelect, onFilterCampus, onPivot }: 
     if (!segments.length) segments.push([]);
     segments[segments.length - 1].push(`${rateX(index)},${rateY(quarter.renewal)}`);
   });
-  const cellValue = (row: typeof campusPivot.rows[number], season: string, metric: BudgetMetric, columns = campusPivot.columns) => {
+  const cellValue = (row: typeof renewalPivot.rows[number], season: string, metric: BudgetMetric, columns = renewalPivot.columns) => {
     const column = columns.find(item => item.value === season);
     return column ? row.cells[column.key]?.[metric] ?? null : null;
   };
-  const select = (campus: string, season: string | null, metric: BudgetMetric, value: number | null) => <button className="ba-cell" aria-label={`${campus}，${season ?? "合计"}，${metric === "renewal" ? "预算续班率" : `${peopleLabels[metric as keyof typeof peopleLabels]}人次`}，${metric === "renewal" ? rate(value) : number(value)}`}
-    onClick={() => onSelect(season ? { campus, season } : { campus }, `${campus} / ${season ?? "合计"} · ${metric === "renewal" ? "预算续班率" : `${peopleLabels[metric as keyof typeof peopleLabels]}人次`}`)}>{metric === "renewal" ? rate(value) : number(value)}</button>;
   // Continuous intensity communicates only the magnitude; no performance thresholds are introduced.
   const renewalHeat = (value: number | null) => value !== null && Number.isFinite(value) && value >= 0 && value <= 1
     ? { backgroundColor: `rgba(54, 106, 85, ${0.04 + value * 0.16})` } : undefined;
@@ -67,12 +67,11 @@ export function BudgetPeopleBoard({ facts, onSelect, onFilterCampus, onPivot }: 
         </svg>
       </section>
     </div>
-    <section className="ba-panel"><header><h3>季度招生预算</h3><small>人次 / %</small></header><div className="ba-table-wrap" tabIndex={0} aria-label="季度招生预算表"><ActionTable className="ba-table"><thead><tr><th scope="col">季度</th><th scope="col">老生人次</th><th scope="col">新生人次</th><th scope="col">总人次</th><th scope="col">续班阶段</th><th scope="col">续班率</th></tr></thead><tbody>{quarters.map(quarter => <tr key={quarter.season}><th scope="row">{quarter.season}</th>{peopleMetrics.map(metric => <td key={metric}>{number(quarter[metric])}</td>)}<td>{renewalStageLabel(quarter.season)}</td><td>{rate(quarter.renewal)}</td></tr>)}</tbody></ActionTable></div></section>
-    <section className="ba-panel"><header><h3>校区招生人次</h3><div className="ba-toolbar"><small>人次</small><button onClick={() => onPivot("total")}>透视人次</button></div></header>
-      <div className="ba-table-wrap" tabIndex={0} aria-label="校区季度老生新生人次表"><ActionTable className="ba-table ba-student-table"><thead><tr><th scope="col">校区</th><th scope="col" className="ba-people-metric">人次</th>{seasons.map(season => <th scope="col" key={season}>{season}</th>)}<th scope="col">合计</th></tr></thead><tbody>{campusPivot.rows.map(row => <Fragment key={row.key}>{peopleMetrics.map((metric, index) => <tr key={metric} className={metric === "total" ? "ba-people-total" : ""}>{index === 0 && <th scope="rowgroup" rowSpan={3}><button className="ba-text-button" onClick={() => onFilterCampus(row.label)}>{row.label}</button></th>}<th scope="row" className="ba-people-metric">{peopleLabels[metric]}</th>{seasons.map(season => <td key={season}>{select(row.label, season, metric, cellValue(row, season, metric))}</td>)}<td>{select(row.label, null, metric, row.total[metric])}</td></tr>)}</Fragment>)}</tbody><tfoot>{peopleMetrics.map((metric, index) => <tr key={metric}>{index === 0 && <th scope="rowgroup" rowSpan={3}>合计</th>}<th scope="row" className="ba-people-metric">{peopleLabels[metric]}</th>{quarters.map(quarter => <td key={quarter.season}>{number(quarter[metric])}</td>)}<td>{number(campusPivot.totals[metric])}</td></tr>)}</tfoot></ActionTable></div>
-    </section>
+    <section className="ba-panel"><header><h3>季度招生预算</h3><small>人次 / %</small></header><div className="ba-table-wrap" aria-label="季度招生预算表"><ActionTable keyboardNavigation aria-label="季度招生预算表" className="ba-table"><thead><tr><th scope="col">季度</th><th scope="col">老生人次</th><th scope="col">新生人次</th><th scope="col">总人次</th><th scope="col">续班阶段</th><th scope="col">续班率</th></tr></thead><tbody>{quarters.map(quarter => <tr key={quarter.season}><th scope="row">{quarter.season}</th>{peopleMetrics.map(metric => <td key={metric}>{number(quarter[metric])}</td>)}<td>{renewalStageLabel(quarter.season)}</td><td>{rate(quarter.renewal)}</td></tr>)}</tbody></ActionTable></div></section>
+    <BudgetTrackSubjectBoard facts={facts} unit={unit} fiscalYear={fiscalYear} onSelect={onSelect} />
+    <BudgetCampusBoard facts={facts} unit={unit} fiscalYear={fiscalYear} onSelect={onSelect} onFilterCampus={onFilterCampus} onPivot={() => onPivot("total")} />
     <section className="ba-panel"><header><h3>赛道与年级续班率</h3><div className="ba-toolbar"><small>%</small><button onClick={() => onPivot("renewal")}>透视续班率</button></div></header>
-      <div className="ba-table-wrap" tabIndex={0} aria-label="赛道年级跨季续班率表"><ActionTable className="ba-table ba-renewal-table">
+      <div className="ba-table-wrap" aria-label="赛道年级跨季续班率表"><ActionTable keyboardNavigation aria-label="赛道年级跨季续班率表" className="ba-table ba-renewal-table">
         <thead><tr><th scope="col">赛道</th><th scope="col">年级</th>{seasons.map(season => <th scope="col" key={season}>{renewalStageLabel(season)}</th>)}</tr></thead>
         <tbody>{renewalRows.map(row => <tr key={row.key}><th scope="row">{row.path.track}</th><th scope="row">{row.path.grade}</th>{seasons.map(season => {
           const value = cellValue(row, season, "renewal", renewalPivot.columns);

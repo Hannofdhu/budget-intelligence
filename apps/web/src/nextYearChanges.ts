@@ -119,7 +119,7 @@ export function summarizeNextYearChanges(baseline: NextYearInputs, staged: NextY
   // Malformed keys are normally rejected before the legacy summarizer. Keep them visible and undoable.
   for (const [key, raw] of Object.entries(edits)) if (!ordinary.some(item => item.key === key) && validation[key] && !pathOf(key).length) ordinary.push({ key, category: "other", task: 1, label: "无效编辑项", beforeDisplay: null, afterDisplay: raw || "（空值）", beforeNumber: null, afterNumber: null, unit: "count", invalid: true });
   const items = [...ordinary, ...states];
-  const labels: [NextYearEditCategory, string][] = [["target", "全年经营目标"], ["track_target", "赛道目标"], ["entry_total", "年度入口人次"], ["entry_detail", "入口分配"], ["rates", "续班率与新生占比"], ["bounds", "调平范围"], ["plan", "计划新生"], ["finance", "学费 / 折扣 / 结转"], ["class_size", "班均参数"], ["tax", "含税转换系数"], ["other", "业务范围"]];
+  const labels: [NextYearEditCategory, string][] = [["target", "全年经营目标"], ["track_target", "赛道目标"], ["entry_total", "年度入口人次"], ["entry_detail", "入口分配"], ["rates", "续班率与新生占比"], ["bounds", "调平范围"], ["plan", "计划新生"], ["finance", "学费 / 折扣 / 结转"], ["class_size", "班均参数"], ["tax", "含税转换系数"], ["other", "SKU"]];
   return { groups: labels.flatMap(([category, label]) => {
     const members = items.filter(item => item.category === category);
     return members.length ? [{ category, label, items: members, scale: changeScale(category, members) }] : [];

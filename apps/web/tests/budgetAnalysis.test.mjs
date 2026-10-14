@@ -114,6 +114,38 @@ test("analysis URL roundtrips and preserves fiscal year, revision, section and u
   assert.ok(!new URLSearchParams(cleared).has("bf_campus"));
 });
 
+test("board, pivot and detail are sibling URL views with unchanged filters and pivot configuration", () => {
+  const original = { ...defaultAnalysisState(), unit: "yuan", filters: { ...emptyBudgetFilters, campus: "西直门", season: "秋季" },
+    config: config({ rows: ["track", "subject"], metrics: ["old", "new", "total", "revenue"], sort: "name-asc" }) };
+  for (const view of ["board", "pivot", "detail"]) {
+    const state = { ...original, view };
+    const search = writeAnalysisState("archive=fy27&step=5&revision=r150", state);
+    assert.equal(new URLSearchParams(search).get("baView"), view);
+    assert.deepEqual(readAnalysisState(search), state);
+    assert.deepEqual(validateAnalysisState(state, [fact({ campus: "西直门", season: "秋季" })]).state, state);
+  }
+});
+
+test("legacy raw-detail links resolve to detail and state writes remove the obsolete nested mode", () => {
+  for (const view of ["board", "pivot", "detail", "evil"]) {
+    const search = `archive=fy27&step=5&baView=${view}&baTable=detail&bf_campus=西直门&baRows=track,subject&baMetrics=old,new,total,revenue`;
+    const state = readAnalysisState(search);
+    assert.equal(state.view, "detail");
+    assert.equal(state.filters.campus, "西直门");
+    assert.deepEqual(state.config.rows, ["track", "subject"]);
+    const canonical = writeAnalysisState(search, state), params = new URLSearchParams(canonical);
+    assert.equal(params.get("baView"), "detail");
+    assert.equal(params.has("baTable"), false);
+    assert.deepEqual(readAnalysisState(canonical), state);
+    for (const nextView of ["board", "pivot"]) {
+      const next = writeAnalysisState(search, { ...state, view: nextView });
+      assert.equal(new URLSearchParams(next).has("baTable"), false);
+      assert.equal(readAnalysisState(next).view, nextView);
+    }
+  }
+  assert.equal(readAnalysisState("baView=pivot&baTable=unknown").view, "pivot");
+});
+
 test("invalid URL config and duplicate dimensions are sanitized without evaluating input", () => {
   const state = readAnalysisState("baRows=campus,campus,unknown,season&baColumn=season&baMetrics=revenue,revenue,evil&baSort=evil&baView=evil&baUnit=evil");
   assert.deepEqual(state.config, config({ rows: ["campus", "season"], column: "none" }));

@@ -110,7 +110,7 @@ test("hidden protected source, operating target, finance, minimum or business ed
     value => { value.class_sizes[0].minimum = 11; }, value => { value.combinations[0].enabled = false; },
     value => { value.combinations[0].source_entry_weight = 20; }, value => { value.combinations[0].opening_carryover_yuan = "1"; }];
   for (const mutate of mutations) { const { original, proposed, actions } = proposal(); mutate(proposed);
-    assert.throws(() => apply(original, proposed, actions, selected(actions)), /未列出|业务范围/); }
+    assert.throws(() => apply(original, proposed, actions, selected(actions)), /未列出|SKU/); }
 });
 test("unlisted editable changes are not smuggled into a full selection", () => {
   const { original, proposed, actions } = proposal(); proposed.rates[1].share_ppm = 260000;

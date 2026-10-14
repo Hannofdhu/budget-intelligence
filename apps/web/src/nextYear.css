@@ -7,7 +7,6 @@
 .ny-selection-group input, .ny-action-selection td input[type=checkbox] { width: 20px; height: 20px; accent-color: #173f37; }
 .ny-selection-group span { color: #526b5c; font-variant-numeric: tabular-nums; }
 .ny-selection-conflict { padding: 14px; background: #fff3e7; border-left: 3px solid #9b6330; color: #7d481f; }
-.ny-side-panel { width: 380px; }
 .ny-side-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding-bottom: 12px; }
 .ny-side-tabs button { padding: 12px 6px; border: 0; border-radius: 8px; background: #edf3ee; color: #526b5c; }
 .ny-side-tabs button[aria-selected=true] { background: #173f37; color: #fff; }
@@ -35,9 +34,7 @@
 .ny-side-content .ny-table-tools input { width: 100%; }
 .ny-diff-embedded .ny-diff-groups { overflow: visible; }
 .ny-table-wrap .ny-field > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-@media (min-width: 1400px) { .next-year-shell:has(.ny-side-panel) .decision-workspace { width: min(1120px, calc(100% - 460px)); } }
-@media (max-width: 1399px) { .ny-side-panel { width: min(420px, calc(100% - 32px)); } }
-@media (max-width: 600px) { .ny-side-panel { width: auto; } .ny-side-content .ny-form-grid { gap: 16px; } }
+@media (max-width: 600px) { .ny-side-content .ny-form-grid { gap: 16px; } }
 .ny-year-context { font-size: 13px; font-weight: 600; color: #476b5f; white-space: nowrap; }
 .ny-year-context select { border: 0; background: transparent; color: inherit; font: inherit; padding: 8px; max-width: 170px; }
 .next-year-shell button, .next-year-shell input, .next-year-shell select, .next-year-shell textarea { transition: border-color .18s, background-color .18s, box-shadow .18s; }
@@ -272,19 +269,238 @@
 .ny-diff-body { display: flex; flex-direction: column; min-height: 0; }
 .ny-panel-toggle { display: none; }
 
-/* Reserve space on wide screens so main content never slides under the panel. */
-@media (min-width: 1400px) {
-  .next-year-shell:has(.ny-diff-panel) .decision-workspace { width: min(1120px, calc(100% - 400px)); margin-left: max(24px, calc((100% - 1520px) / 2)); }
-}
-
 /* Below 1400px there's not enough room for a side panel; collapse to a bottom-right pill that expands upward. */
 @media (max-width: 1399px) {
   .ny-diff-panel { top: auto; right: 16px; bottom: 16px; width: min(360px, calc(100% - 32px)); max-height: 60dvh; }
   .ny-panel-toggle { display: flex; justify-content: space-between; gap: 16px; padding: 10px 4px; border: 0; background: transparent; color: #173f37; font-weight: 600; }
   .ny-diff-panel:not(.is-open) .ny-diff-body { display: none; }
   .ny-diff-panel.is-open .ny-diff-body { overflow-y: auto; }
-  .next-year-shell .decision-workspace { padding-bottom: 100px; }
 }
 @media (max-width: 600px) {
   .ny-diff-panel { right: 8px; bottom: 8px; left: 8px; width: auto; max-height: 55dvh; padding: 14px; }
+}
+
+/* Keep the current task ahead of its annual summary; only the results page needs full KPI cards. */
+.next-year-shell { --ny-action-bar-height: 94px; }
+.next-year-shell:has(.ny-action-bar) .decision-workspace { padding-bottom: calc(var(--ny-action-bar-height) + 32px); }
+.next-year-shell .ny-summary-compact {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 0;
+  padding: 12px 0;
+  border-top: 1px solid #dce3dd;
+  border-bottom: 1px solid #dce3dd;
+}
+.ny-summary-compact .ny-top-status { flex: 0 0 auto; flex-direction: column; gap: 4px; margin: 0; font-size: 11px; }
+.ny-summary-compact .ny-metrics {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 2px;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: thin;
+}
+.ny-summary-compact .ny-metrics > div { display: flex; align-items: baseline; flex: 1 0 auto; flex-wrap: wrap; column-gap: 10px; row-gap: 3px; padding: 0; border: 0; background: transparent; }
+.ny-summary-compact .ny-metrics span { color: #65756e; font-size: 11px; white-space: nowrap; }
+.ny-summary-compact .ny-metrics strong { font-size: 18px; line-height: 1.4; color: #173f37; white-space: nowrap; }
+.ny-summary-compact .ny-metrics small { flex-basis: 100%; font-size: 10px; line-height: 1.4; }
+.ny-summary-compact .ny-metrics button { padding: 0; font-size: 11px; }
+.ny-summary-compact.is-preview { background: #fffaf2; }
+.ny-summary-compact.is-preview .ny-metrics { background: transparent; }
+.ny-task-content { min-width: 0; }
+.ny-task-content > .ny-section:first-child { padding-top: 16px; border-top: 0; }
+.ny-task-content > .ny-section:first-child > h3:first-child { margin-top: 0; }
+.ny-tool-entries { align-items: center; gap: 8px; margin: 0 0 14px; }
+.ny-tool-entries button { min-height: 36px; padding: 7px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.ny-tool-entries button[aria-expanded="true"], .ny-tool-entry[aria-expanded="true"] { border-color: #6f9986; background: #e7efe8; color: #173f37; }
+.ny-task-content .ny-table-tools { gap: 12px; flex-wrap: wrap; }
+.ny-task-content .ny-table-tools > span { margin-right: auto; }
+.ny-impact-preview { scroll-margin-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 100px); scroll-margin-bottom: calc(var(--ny-action-bar-height) + 20px); }
+.ny-impact-preview:focus-visible { outline: 2px solid #427e69; outline-offset: 6px; }
+.next-year-shell .ny-table-wrap, .next-year-shell .ny-pagination, .next-year-shell input, .next-year-shell textarea, .next-year-shell .ny-how { scroll-margin-bottom: calc(var(--ny-action-bar-height) + 20px); }
+
+/* There is one persistent commit point. Its measured height also reserves table and panel space. */
+.ny-action-bar {
+  position: fixed;
+  z-index: 40;
+  inset: auto 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+  padding: 12px max(24px, calc((100% - 1280px) / 2));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid #dce3dd;
+  background: #f5f6f2;
+  color: #173f37;
+  font-size: 12px;
+}
+.ny-action-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+.ny-action-status > span { color: #65756e; font-size: 11px; }
+.ny-action-bar button { min-height: 40px; padding: 9px 15px; border: 1px solid #cad8ce; border-radius: 8px; background: #fff; color: #315a48; font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.ny-action-bar button:hover:not(:disabled) { border-color: #96b5a4; background: #edf3ee; }
+.ny-action-status button { min-height: 36px; padding: 7px 11px; }
+.ny-action-status button.ny-edit-state { border-color: #d8c3a3; background: #fffaf2; }
+.ny-action-buttons { display: flex; align-items: flex-end; justify-content: flex-end; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.ny-action-buttons .ny-field { gap: 5px; width: 220px; }
+.ny-action-buttons .ny-field > span { font-size: 11px; }
+.ny-action-buttons .ny-field input { min-height: 36px; padding: 7px 10px; }
+.ny-action-bar .decision-primary { background: #173f37; color: #fff; border-color: #173f37; }
+.ny-action-bar .decision-primary:hover:not(:disabled) { background: #245548; border-color: #245548; }
+.next-year-shell .ny-action-bar button { margin: 0; }
+.next-year-shell .ny-action-bar .ny-field input { margin: 0; min-height: 36px; padding: 7px 10px; }
+
+/* Context tools appear only on request, without reducing the page to an empty-sidebar layout. */
+.ny-context-panel {
+  position: fixed;
+  z-index: 35;
+  top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 12px);
+  right: max(16px, calc((100% - 1280px) / 2));
+  bottom: calc(var(--ny-action-bar-height) + 12px);
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100% - 32px));
+  min-height: 0;
+  max-height: 720px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #cbd9ce;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgb(23 63 55 / 12%);
+  color: #173f37;
+}
+.ny-context-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border-bottom: 1px solid #dce3dd; }
+.ny-context-heading h2 { margin: 0; min-width: 0; font-size: 17px; line-height: 1.4; }
+.ny-context-heading h2:focus { outline: none; }
+.ny-context-heading h2:focus-visible { outline: 2px solid #427e69; outline-offset: 4px; }
+.ny-context-heading button { flex-shrink: 0; min-height: 36px; padding: 7px 10px; border: 1px solid #dce3dd; border-radius: 7px; background: #fff; color: #315a48; font: inherit; font-size: 12px; cursor: pointer; }
+.ny-context-heading button:hover { background: #edf3ee; }
+.ny-context-content { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px; scrollbar-width: thin; }
+.ny-context-content .ny-tools-panel { min-width: 0; }
+.ny-context-content .ny-tools-panel > h2 { margin-top: 0; }
+.ny-context-content .ny-tools-panel > section { margin: 0; padding-top: 0; border-top: 0; }
+.ny-context-content .ny-tools-panel > section > h3 { margin-top: 0; }
+.ny-context-content .ny-bulk-panel { border-radius: 8px; background: #f3f6f1; }
+.ny-context-content .ny-bulk-toolbar { align-items: stretch; }
+.ny-context-content .ny-bulk-toolbar label { flex: 1 1 100%; }
+.ny-context-content .ny-bulk-toolbar input { max-width: none; }
+.ny-context-content .ny-bulk-panel > .ny-heading-actions { flex-wrap: wrap; gap: 8px; }
+.ny-context-content .ny-bulk-panel > .ny-heading-actions button { flex: 1; }
+.ny-context-content .ny-bounds .ny-table-wrap table, .ny-context-content .ny-plans .ny-table-wrap table { min-width: 600px; }
+.ny-context-content .ny-table-tools, .ny-context-content .table-transfer { flex-wrap: wrap; gap: 8px; }
+.ny-context-content .ny-table-tools input { width: 100%; max-width: none; }
+.ny-context-content .ny-table-tools .table-transfer { width: 100%; }
+.ny-context-content .ny-pagination { justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+.ny-context-content .ny-diff-head { align-items: flex-start; }
+.ny-context-content .ny-diff-head > div { min-width: 0; }
+.ny-context-content .ny-diff-groups { overflow: visible; }
+.ny-context-content .ny-diff-undo-all { flex-shrink: 0; min-height: 32px; }
+.ny-context-content .ny-diff-item-undo { width: 32px; height: 32px; }
+
+@media (max-width: 1000px) {
+  .ny-action-bar { flex-wrap: wrap; gap: 10px; padding-inline: 16px; }
+  .ny-action-status { flex: 1 1 200px; }
+  .ny-action-buttons { flex: 1 1 420px; }
+  .ny-action-buttons .ny-field { flex: 1 1 170px; width: auto; }
+  .ny-context-panel { top: calc(var(--budget-header-height, 120px) + var(--budget-page-nav-height, 62px) + 8px); }
+}
+@media (max-width: 600px) {
+  .next-year-shell { --ny-action-bar-height: 160px; }
+  .ny-summary-compact { gap: 12px; padding-block: 10px; }
+  .ny-summary-compact .ny-metrics { gap: 16px; }
+  .ny-summary-compact .ny-metrics > div { gap: 4px 8px; }
+  .ny-summary-compact .ny-metrics strong { font-size: 16px; }
+  .ny-action-bar { gap: 8px; padding: 10px 14px max(10px, env(safe-area-inset-bottom)); }
+  .ny-action-status { gap: 6px 10px; font-size: 11px; }
+  .ny-action-buttons { gap: 8px; flex-basis: 100%; }
+  .ny-action-buttons .ny-field { flex: 1 1 100%; }
+  .ny-action-buttons > button { flex: 1 1 0; }
+  .ny-action-buttons .ny-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .ny-context-panel { right: 8px; width: calc(100% - 16px); bottom: calc(var(--ny-action-bar-height) + 8px); border-radius: 10px; }
+  .ny-context-heading { padding: 12px 14px; }
+  .ny-context-content { padding: 14px; }
+  .ny-context-content .ny-bulk-panel { padding: 12px; }
+  .ny-context-content .ny-form-grid { gap: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .next-year-shell button, .next-year-shell input, .next-year-shell select, .next-year-shell textarea { transition: none; }
+  .ny-context-content, .ny-summary-compact .ny-metrics { scroll-behavior: auto; }
+}
+
+/* Whole-year inputs stay outside view filters; secondary inspection shares one modal surface. */
+.next-year-shell .ny-scope-label { color: #173f37; font-size: 11px; font-weight: 650; }
+.ny-global-fields { margin: 0 0 18px; padding: 14px 16px; border-left: 3px solid #789d89; background: #edf3ed; border-radius: 3px 9px 9px 3px; }
+.ny-global-fields > h3 { margin: 0 0 14px; color: #173f37; font-size: 13px; }
+.ny-global-fields .ny-form-grid { gap: 12px; margin-bottom: 0; }
+.ny-global-fields > button { min-height: 34px; margin: 12px 0 0; padding: 6px 10px; border: 1px solid #cad8ce; border-radius: 7px; background: #fff; color: #315a48; font: inherit; font-size: 12px; cursor: pointer; }
+.ny-heading-actions .ny-problem-count { display: inline-flex; justify-content: center; align-items: center; min-width: 20px; height: 20px; padding: 0 5px; margin-left: 6px; border-radius: 5px; background: #f5e8d2; color: #825521; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.ny-heading-actions small { margin-left: 6px; color: #82683e; font-size: 11px; }
+.next-year-shell .ny-heading { flex-wrap: wrap; }
+.next-year-shell .ny-heading > div:first-child { min-width: 0; }
+.next-year-shell .ny-heading > .ny-heading-actions { flex-wrap: wrap; }
+.ny-version-dot { display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: #b27e35; vertical-align: middle; }
+.ny-version-context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 18px; padding: 14px 16px; border: 1px solid #dce3dd; border-radius: 9px; background: #fff; font-size: 13px; color: #173f37; }
+.ny-version-context :is(span,small,p) { margin: 0; font-size: 12px; color: #65756e; }
+.ny-basis-preview { min-width: 0; margin: 18px 0 0; padding-top: 18px; border-top: 1px solid #dce3dd; }
+.ny-basis-preview > h3 { margin: 0 0 12px; color: #173f37; font-size: 16px; }
+.ny-basis-preview > p { margin: 8px 0 14px; color: #65756e; font-size: 12px; line-height: 1.6; }
+.ny-problem-overview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 24px; margin: 0 0 18px; padding: 14px 16px; border: 1px solid #dce3dd; border-radius: 9px; background: #edf3ed; color: #173f37; font-size: 13px; }
+.ny-problem-overview.has-issues { border-color: #dfd9c7; background: #fffaf1; color: #80582b; }
+.ny-quarter-editor[hidden] { display: none !important; }
+.next-year-shell .ny-quarter-layout { display: inline-flex; gap: 4px; margin: 4px 0 14px; padding: 4px; border: 1px solid #dce3dd; border-radius: 8px; background: #edf2eb; }
+.next-year-shell .ny-quarter-layout button { margin: 0; min-height: 34px; padding: 6px 14px; border: 0; border-radius: 5px; color: #65756e; background: transparent; font-size: 13px; }
+.next-year-shell .ny-quarter-layout button[aria-pressed="true"] { color: #173f37; background: #fff; font-weight: 700; }
+.next-year-shell .ny-quarter-layout button:focus-visible { outline: 2px solid #3e7966; outline-offset: 2px; }
+.ny-quarter-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin: 4px 0 14px; }
+.next-year-shell .ny-quarter-toolbar .ny-quarter-layout, .next-year-shell .ny-quarter-toolbar .ny-tool-entries { margin: 0; }
+.ny-problem-overview strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.ny-problem-overview p { flex-basis: 100%; margin: 0; color: #65756e; font-size: 12px; line-height: 1.6; }
+.next-year-shell .budget-utility-panel { overflow-x: hidden; }
+.budget-utility-panel .budget-utility-content, .budget-utility-panel .ny-section, .budget-utility-panel .ny-data, .budget-utility-panel .ny-source-picker { min-width: 0; }
+.budget-utility-panel .ny-section { margin-bottom: 22px; padding-top: 18px; }
+.budget-utility-panel .ny-section > h2 { margin-bottom: 16px; font-size: 17px; }
+.budget-utility-panel .ny-section > h3 { margin: 0 0 14px; font-size: 15px; }
+.budget-utility-panel .ny-section > p { margin: 10px 0 14px; font-size: 13px; line-height: 1.65; color: #65756e; }
+.budget-utility-panel .ny-section-heading { align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.budget-utility-panel .ny-section-heading h2 { margin: 0 0 5px; font-size: 18px; }
+.budget-utility-panel .ny-heading-actions { flex-wrap: wrap; align-items: center; gap: 8px; }
+.budget-utility-panel .ny-table-wrap { min-width: 0; width: 100%; max-width: 100%; overflow: auto; }
+.budget-utility-panel .ny-table-wrap table { min-width: max-content; }
+.budget-utility-panel .ny-table-wrap :is(th,td) { padding: 11px 12px; }
+.budget-utility-panel .ny-table-tools { align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 10px; }
+.budget-utility-panel .ny-table-tools > span { margin-right: auto; }
+.budget-utility-panel .ny-table-tools input { width: min(240px,100%); max-width: 100%; }
+.budget-utility-panel .table-transfer { max-width: 100%; flex-wrap: wrap; }
+.budget-utility-panel .ny-pagination { flex-wrap: wrap; gap: 8px 14px; }
+.budget-utility-panel .ny-source-picker { margin-bottom: 18px; align-items: flex-end; }
+.budget-utility-panel .ny-source-picker label { min-width: min(240px,100%); }
+.budget-utility-panel .ny-source-picker select { width: 100%; min-width: 0; }
+.budget-utility-panel .ny-source-picker > button, .budget-utility-panel .ny-basis-preview > button { min-height: 36px; margin: 0; padding: 7px 12px; border: 1px solid #cad8ce; border-radius: 7px; background: #fff; color: #315a48; font: inherit; font-size: 12px; cursor: pointer; }
+.next-year-shell .budget-utility-panel .decision-primary { min-height: 40px; margin: 0; padding: 8px 16px; border-radius: 8px; font-size: 12px; }
+.budget-utility-panel .ny-impact { margin: 0 0 18px; padding: 0; border: 0; }
+.budget-utility-panel .ny-impact-metrics { grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 8px; margin: 14px 0; }
+.budget-utility-panel .ny-impact-metrics > div { gap: 8px; padding: 12px; }
+.budget-utility-panel .ny-impact-metrics strong { font-size: 23px; }
+.budget-utility-panel .ny-class-check { padding: 18px 16px; margin: 0 0 20px; }
+.budget-utility-panel .ny-class-proposal { padding: 18px 16px; margin-bottom: 20px; }
+.budget-utility-panel .ny-class-check-summary { gap: 10px 20px; padding: 12px 0 16px; }
+.budget-utility-panel .ny-issues { margin: 0 0 18px; padding: 12px 0; }
+@media (max-width: 600px) {
+  .ny-global-fields { padding: 12px; }
+  .ny-version-context, .ny-problem-overview { gap: 8px 12px; padding: 12px; }
+  .next-year-shell .budget-utility-panel .ny-section-heading { flex-direction: column; align-items: stretch; }
+  .budget-utility-panel .ny-heading-actions { width: 100%; }
+  .budget-utility-panel .ny-heading-actions > button { flex: 1 1 auto; }
+  .budget-utility-panel .ny-source-picker { align-items: stretch; gap: 10px; }
+  .budget-utility-panel .ny-source-picker > label { flex-basis: 100%; max-width: none; }
+  .budget-utility-panel .ny-class-check, .budget-utility-panel .ny-class-proposal { padding: 14px 10px; }
+  .budget-utility-panel .ny-class-check-filters { gap: 10px; }
+  .budget-utility-panel .ny-impact-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }

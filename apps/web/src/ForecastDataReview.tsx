@@ -1,4 +1,5 @@
 import { ActionTable } from "./ActionTable";
+import { skuText } from "./budgetDisplay";
 import type { ApiIdentity } from "./api";
 import { canConfirmForecast, forecastDimensionLabels, forecastSeasons, groupForecastIssues, type ForecastDimension, type ForecastDimensions, type ForecastIssue, type ForecastVersion } from "./forecastApi";
 import "./forecastReview.css";
@@ -11,7 +12,7 @@ const businessTitles: Record<string, string> = {
   SOURCE_UNMAPPED: "实际业务待对应", FROZEN_CARRYIN_UNMAPPED: "结转实际待对应",
   CURRENT_SOURCE_MISSING: "当前实际待补齐", UPSTREAM_HEADCOUNT_UNAVAILABLE: "等待前季人数",
   WITHDRAWAL_HISTORY_MISSING: "退班预测待补齐", WITHDRAWAL_METRICS_UNVERIFIED: "退班数据待核对",
-  REVENUE_PARAMETER_INVALID: "收入参数待补齐", RENEWAL_RATE_INVALID: "续班率待核对",
+  REVENUE_PARAMETER_INVALID: "结转收入参数待补齐", RENEWAL_RATE_INVALID: "续班率待核对",
   NEW_STUDENT_SHARE_INVALID: "新生占比待核对", MINIMUM_SAMPLE_INVALID: "历史样本门槛待核对",
   SOURCE_NEGATIVE_VALUE: "来源负数待核对", SOURCE_COUNT_INVALID: "来源人次待核对",
   SOURCE_KEY_DUPLICATED: "来源明细重复", SOURCE_DIMENSIONS_MISSING: "来源业务维度待补齐",
@@ -26,8 +27,8 @@ const businessTitles: Record<string, string> = {
   ADJUSTMENT_INVALID: "人数调整待核对", ADJUSTMENT_DUPLICATED: "人数调整重复",
   ADDITIONAL_ALLOCATION_INFEASIBLE: "新增人数无法分配", WITHDRAWAL_ADJUSTMENT_INFEASIBLE: "退班人数无法分配",
   FINALIZED_ADJUSTMENT_FORBIDDEN: "已定版季度不能调整", FINANCIAL_ONLY_SOURCE_HAS_STUDENTS: "纯财务范围混入学生人次",
-  FINANCIAL_ONLY_ADDITIONAL_FORBIDDEN: "纯财务范围不能新增学生", FORECAST_SCOPE_INVALID: "独立业务范围待核对",
-  FORECAST_SCOPE_DUPLICATED: "独立业务范围重复", FORECAST_SCOPE_ADDITIONAL_INVALID: "独立业务新增待核对",
+  FINANCIAL_ONLY_ADDITIONAL_FORBIDDEN: "纯财务范围不能新增学生", FORECAST_SCOPE_INVALID: "独立SKU待核对",
+  FORECAST_SCOPE_DUPLICATED: "独立SKU重复", FORECAST_SCOPE_ADDITIONAL_INVALID: "独立业务新增待核对",
   FIXED_RULES_VERSION_INVALID: "预测规则版本待核对", FIXED_RULES_TRIAL_CONFLICT: "预测规则状态冲突",
   QUARTER_STATE_REQUIRED: "季度状态待补齐", FROZEN_CARRYIN_AMOUNT_INVALID: "冻结结转金额待核对",
   FROZEN_CARRYIN_DIMENSIONS_MISSING: "冻结结转维度待补齐", FROZEN_CARRYIN_INVALID: "冻结结转待核对",
@@ -86,7 +87,7 @@ export function ForecastDataNotice({ issues, onOpen }: { issues: ForecastIssue[]
 }
 
 function IssueEvidence({ issues }: { issues: ForecastIssue[] }) {
-  return <details className="forecast-review-evidence"><summary>技术信息</summary>{issues.map((issue, index) => <div key={index}><code>{issue.code}</code><p>{issue.message}</p><pre>{JSON.stringify(issue, null, 2)}</pre></div>)}</details>;
+  return <details className="forecast-review-evidence"><summary>技术信息</summary>{issues.map((issue, index) => <div key={index}><code>{issue.code}</code><p>{skuText(issue.message)}</p><pre>{JSON.stringify(issue, null, 2)}</pre></div>)}</details>;
 }
 
 const recordValue = (record: ForecastWarningRecord) => {
@@ -104,7 +105,7 @@ export function ForecastDataReview({ issues, onUpdate, busy = false }: { issues:
   return <div className="forecast-data-review">
     {missingCount > 0 && <section className="forecast-review-missing"><header><h2>已定版实际</h2><span>{missingCount}项待核对</span></header>
       <div className="forecast-review-next"><p>目前按0展示；核对来源后更新预测。此处不能补录已定版实际。</p>{onUpdate && <button type="button" className="forecast-primary" disabled={busy} onClick={onUpdate}>{busy ? "正在更新…" : "更新预测"}</button>}</div>
-      <div className="forecast-review-campus-list">{missingGroups.map(group => <details className="forecast-review-campus" key={group.campus}><summary><strong>{group.campus}</strong><span>{group.issues.length}项</span></summary><div className="forecast-review-table-wrap" tabIndex={0} aria-label={`${group.campus}待核对实际`}><ActionTable><thead><tr><th>季度</th><th>业务维度</th><th>缺少数据</th></tr></thead><tbody>{group.issues.map((issue, index) => <tr key={index}><td>{issue.season || "未填写"}</td><th>{dimensionText(issue.dims, false)}<IssueEvidence issues={[issue]}/></th><td>收入、人次</td></tr>)}</tbody></ActionTable></div></details>)}</div>
+      <div className="forecast-review-campus-list">{missingGroups.map(group => <details className="forecast-review-campus" key={group.campus}><summary><strong>{group.campus}</strong><span>{group.issues.length}项</span></summary><div className="forecast-review-table-wrap" tabIndex={0} aria-label={`${group.campus}待核对实际`}><ActionTable><thead><tr><th>季度</th><th>业务维度</th><th>缺少数据</th></tr></thead><tbody>{group.issues.map((issue, index) => <tr key={index}><td>{issue.season || "未填写"}</td><th>{dimensionText(issue.dims, false)}<IssueEvidence issues={[issue]}/></th><td>结转收入、人次</td></tr>)}</tbody></ActionTable></div></details>)}</div>
     </section>}
     {otherGroups.length > 0 && <section className="forecast-review-other"><header><h2>其他待核对数据</h2><span>{otherGroups.reduce((sum, group) => sum + group.issues.length, 0)}项</span></header>{otherGroups.map(group => <details className="forecast-review-problem" key={group.key}><summary><strong>{forecastReviewIssueTitle(group.code)}</strong>{group.season && <span>{group.season}</span>}<span>{group.issues.length}项</span></summary><ul>{group.issues.map((issue, index) => <li key={index}><span>{issue.dims ? dimensionText(issue.dims) : "部门数据"}</span><IssueEvidence issues={[issue]}/></li>)}</ul></details>)}</section>}
     {warnings.length > 0 && <details className="forecast-review-records"><summary><strong>{warningTitle}</strong><span>{warnings.length}项</span></summary>{warnings.map(record => <article key={record.id}><h3>{record.dims ? dimensionText(record.dims) : record.title}</h3><dl><div><dt>季度</dt><dd>{record.seasons.join("、") || "未填写"}</dd></div>{record.field && <div><dt>{fieldLabels[record.field] ?? (record.code === "BASELINE_NEGATIVE_VALUE" ? "原预算字段" : "相关字段")}</dt><dd>{recordValue(record)}</dd></div>}{!record.field && <div><dt>记录</dt><dd>{record.title}</dd></div>}</dl><IssueEvidence issues={record.issues}/></article>)}</details>}

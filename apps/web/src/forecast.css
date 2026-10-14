@@ -1,4 +1,16 @@
 .forecast-shell { --forecast-green: #214f43; --forecast-muted: #6a7770; --forecast-line: #dce3dc; }
+.forecast-shell:has(.forecast-confirm) .decision-workspace { padding-bottom: calc(var(--forecast-action-height, 112px) + 28px); }
+.forecast-content-tabs { display: flex; align-items: center; gap: 28px; margin-bottom: 22px; border-bottom: 1px solid var(--forecast-line); }
+.forecast-shell .forecast-content-tabs button { min-height: 44px; padding: 10px 0; border: 0; border-radius: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--forecast-muted); font-size: 14px; }
+.forecast-shell .forecast-content-tabs button[aria-current="page"] { color: var(--forecast-green); border-bottom-color: var(--forecast-green); font-weight: 700; }
+.forecast-board-overview[hidden], .forecast-section[hidden] { display: none !important; }
+.forecast-global-scope { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; margin: 0 0 12px; }
+.forecast-global-scope strong { color: var(--forecast-green); font-size: 14px; }
+.forecast-global-scope span, .forecast-overview-status { color: var(--forecast-muted); font-size: 12px; line-height: 1.7; }
+.forecast-overview-status { margin: -16px 0 22px; }
+.forecast-version-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.forecast-version-pending { color: #8a6234; font-size: 12px; line-height: 1.7; }
+.forecast-history h3 { margin: 0 0 14px; color: var(--forecast-green); font-size: 15px; }
 .forecast-shell button, .forecast-shell a, .forecast-shell input, .forecast-shell select { -webkit-tap-highlight-color: transparent; }
 .forecast-shell button { transition: background-color .18s, transform .18s, border-color .18s; }
 .forecast-shell button:active:not(:disabled) { transform: translateY(1px); }
@@ -170,13 +182,17 @@
 .forecast-edits button { min-height: 28px; padding: 5px 8px; }
 .forecast-settings-actions { display: flex; align-items: center; gap: 18px; margin-top: 18px; }
 .forecast-settings-actions > span { color: #9c7a42; font-size: 11px; }
-.forecast-confirm { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; padding: 23px 2px; margin: 10px 0; border-block: 1px solid var(--forecast-line); }
+.forecast-confirm { position: fixed; inset: auto 0 0; z-index: 60; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; padding: 14px max(24px, calc((100vw - 1280px) / 2)); margin: 0; max-height: 50dvh; overflow: auto; border-top: 1px solid var(--forecast-line); background: #fcfdfb; box-shadow: 0 -5px 24px rgb(23 63 55 / 5%); }
 .forecast-confirm > div { display: flex; align-items: center; gap: 20px; }
 .forecast-confirm strong { color: #345b48; font-size: 14px; }
 .forecast-confirm span { color: var(--forecast-muted); font-size: 11px; }
 .forecast-confirm form { display: flex; align-items: flex-end; width: 100%; gap: 18px; }
 .forecast-confirm form label { flex: 1; }
 .forecast-confirm form > div { display: flex; gap: 8px; }
+.forecast-confirm .forecast-confirm-actions { display: flex; flex-wrap: wrap; flex-direction: row; align-items: center; gap: 10px; }
+.forecast-confirm-status { min-width: 0; }
+.forecast-confirm-status > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 14px; }
+.forecast-confirm-status p { margin: 7px 0 0; font-size: 11px; color: #8a6234; }
 .forecast-history { padding: 18px 2px; color: #607467; }
 .forecast-history summary { cursor: pointer; font-size: 12px; }
 .forecast-history ol { list-style: none; padding: 0; margin-top: 15px; }
@@ -268,3 +284,13 @@
 @media (max-width: 760px) { .forecast-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 25px 0; } .forecast-metrics > div:nth-child(3) { border-left: 0; padding-left: 0; } .forecast-quarter-bars { grid-template-columns: 1fr; } .forecast-state-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .forecast-adjustment-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .forecast-mapping-pair { grid-template-columns: 1fr; } .forecast-heading { align-items: flex-start; gap: 16px; } .forecast-heading > div { align-items: flex-end; flex-direction: column; gap: 10px; } .forecast-start-states { grid-template-columns: repeat(2, minmax(0, 1fr)); } .forecast-start-states > div:nth-child(3) { border-left: 0; padding-left: 0; } .forecast-logic ol { grid-template-columns: 1fr; gap: 17px; } .forecast-logic li { flex-direction: row; gap: 18px; padding: 0; } .forecast-logic strong { min-width: 74px; line-height: 1.7; } .forecast-logic li:not(:last-child)::after { content: none; } .forecast-scope-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .forecast-trial-status { flex-wrap: wrap; } }
 @media (max-width: 500px) { .forecast-shell .decision-workspace { width: calc(100% - 32px); padding-top: 16px; } .forecast-year { font-size: 11px; } .forecast-heading { margin: 30px 0 22px; } .forecast-metrics strong { font-size: 23px; } .forecast-section { padding: 18px; border-radius: 13px; } .forecast-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .forecast-section > header { flex-wrap: wrap; } .forecast-confirm form { flex-direction: column; align-items: stretch; } .forecast-confirm > div { flex-direction: column; align-items: flex-start; gap: 9px; } .forecast-start { padding: 22px; } .forecast-skeleton { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .forecast-shell *, .forecast-shell *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+@media (max-width: 760px) {
+  .forecast-heading { flex-wrap: wrap; }
+  .forecast-heading > div { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px; }
+  .forecast-heading > div > span { flex-basis: 100%; text-align: left; }
+  .forecast-confirm { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); gap: 12px; }
+  .forecast-confirm .forecast-confirm-actions { margin-left: auto; }
+  .forecast-confirm form { gap: 10px; }
+  .forecast-shell .forecast-history li > button { grid-template-columns: 40px 52px 1fr; }
+  .forecast-history li > button small { grid-column: 2 / -1; }
+}

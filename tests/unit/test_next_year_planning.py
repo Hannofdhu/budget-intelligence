@@ -352,6 +352,14 @@ def test_class_constraints_return_actionable_groups_without_relaxation_or_source
     assert sum(group["count"] for group in diagnostics) == len(result["constraints"]["class_issues"])
     assert all(0 < len(group["examples"]) <= 3 for group in diagnostics)
     assert all(group["action"] and group["editable_fields"] for group in diagnostics)
+    assert (
+        next(
+            group["action"]
+            for group in diagnostics
+            if group["code"] == "ENABLED_COMBINATION_ALL_SEASONS_ZERO"
+        )
+        == "关闭不开展的SKU；需要开展时，先分配入口人次或填写季度新生人次。"
+    )
     assert all(bound["source"] == "LOCKED" for bound in result["constraints"]["rate_bounds"])
     assert result["constraints"]["rate_step_limit_applies_to"] == "UNSPECIFIED_BOUNDS_ONLY"
     assert fingerprint(inputs) == before

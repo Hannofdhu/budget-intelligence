@@ -1,4 +1,9 @@
 /** Presentation labels only. Fiscal-season keys, filters and calculations stay unchanged. */
+/** Old saved messages retain their original content; only their rendered terminology changes. */
+export function skuText(value: string): string {
+  return value.replaceAll("业务范围", "SKU");
+}
+
 export function renewalStageLabel(season: string): string {
   return ({ 暑假: "春续暑", 秋季: "暑续秋", 寒假: "秋续寒", 春季: "寒续春" } as Record<string, string>)[season] ?? season;
 }

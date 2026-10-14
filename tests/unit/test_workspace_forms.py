@@ -1,5 +1,15 @@
-from apps.api.routes.workspace import entry_detail_form_value, project, resource_finance_form_seed
-from packages.contracts.versioning import ResourceFinanceReplaceDraftRequest
+from apps.api.routes.workspace import FORMS, entry_detail_form_value, project, resource_finance_form_seed
+from packages.contracts.versioning import CombinationReplaceDraftRequest, ResourceFinanceReplaceDraftRequest
+
+
+def test_sku_form_label_keeps_existing_manifest_and_command() -> None:
+    assert FORMS["combinations"] == (
+        "SKU",
+        "combination_set_version_id",
+        "get_combination_set_version",
+        CombinationReplaceDraftRequest,
+        "/combinations:replace-draft",
+    )
 
 
 def test_form_projection_keeps_exact_money_and_explicit_zero() -> None:

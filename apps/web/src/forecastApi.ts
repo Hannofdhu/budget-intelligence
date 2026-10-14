@@ -22,7 +22,7 @@ const mappingIssueCodes = new Set(["SOURCE_UNMAPPED", "FROZEN_CARRYIN_UNMAPPED"]
 const issueTitles: Record<string, string> = {
   SOURCE_UNMAPPED: "实际业务待对应", FROZEN_CARRYIN_UNMAPPED: "结转实际待对应",
   CURRENT_SOURCE_MISSING: "缺少当前实际", UPSTREAM_HEADCOUNT_UNAVAILABLE: "前季预测完成后自动计算",
-  WITHDRAWAL_HISTORY_MISSING: "退班预测待补充", REVENUE_PARAMETER_INVALID: "收入参数待补齐",
+  WITHDRAWAL_HISTORY_MISSING: "退班预测待补充", REVENUE_PARAMETER_INVALID: "结转收入参数待补齐",
 };
 export function groupForecastIssues(issues: ForecastIssue[]): ForecastIssueGroup[] {
   const groups = new Map<string, ForecastIssueGroup>();

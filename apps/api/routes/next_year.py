@@ -48,6 +48,11 @@ class Prepare(StrictBody):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class PreparePreview(StrictBody):
+    forecast_id: str = Field(min_length=1, max_length=128)
+    parent_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class Revise(StrictBody):
     parent_id: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=1, max_length=1000)
@@ -137,6 +142,24 @@ async def _forecasts(actor: Actor) -> list[Json]:
     # Unlike /current, this selects confirmed versions even when a newer draft
     # exists. Reading this ledger never refreshes sources or appends an event.
     return list(reversed(await forecast_routes._store_call("versions", actor.department_id)))
+
+
+async def _prepare_source(
+    actor: Actor, forecast_id: str, baseline: Json, fiscal_year: str
+) -> tuple[list[Json], Json, Json, Json]:
+    """Use the same frozen-source preparation for preview and explicit creation."""
+    versions = await _forecasts(actor)
+    version = next((item for item in versions if item["id"] == forecast_id), None)
+    if version is None:
+        raise HTTPException(404, "指定的 FY27 已确认预测不存在")
+    _validate_forecast(version, baseline)
+    if _year(fiscal_year) != baseline["fiscal_year"] + 1:
+        raise HTTPException(409, "该财年尚无可用的上一财年已确认预测，不会使用其他财年数据代替")
+    source = forecast_basis(version)
+    inputs = prepare_inputs(baseline, version)
+    if inputs["fiscal_year"] != _year(fiscal_year):
+        raise HTTPException(409, "预测来源生成的预算财年与所选财年不一致")
+    return versions, version, source, inputs
 
 
 def _latest_source(versions: list[Json], baseline: Json, fiscal_year: str = "fy28") -> Json | None:
@@ -269,17 +292,9 @@ async def prepare(
         selected_store = _store_for_year(fiscal_year)
         if replay := _replay(actor, request_id, digest, fiscal_year):
             return replay
-        versions = await _forecasts(actor)
-        version = next((item for item in versions if item["id"] == body.forecast_id), None)
-        if version is None:
-            raise HTTPException(404, "指定的 FY27 已确认预测不存在")
-        _validate_forecast(version, baseline)
-        if _year(fiscal_year) != baseline["fiscal_year"] + 1:
-            raise HTTPException(409, "该财年尚无可用的上一财年已确认预测，不会使用其他财年数据代替")
-        source = forecast_basis(version)
-        inputs = prepare_inputs(baseline, version)
-        if inputs["fiscal_year"] != _year(fiscal_year):
-            raise HTTPException(409, "预测来源生成的预算财年与所选财年不一致")
+        versions, version, source, inputs = await _prepare_source(
+            actor, body.forecast_id, baseline, fiscal_year
+        )
         result = selected_store.append_draft(
             department=actor.department_id,
             actor=actor.user_id,
@@ -295,6 +310,37 @@ async def prepare(
             observed_source=_latest_source(versions, baseline, fiscal_year),
         )
         return _safe_view(result)
+    except ForecastStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except NextYearError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/next-year-budgets/{fiscal_year}/prepare-preview")
+async def prepare_preview(
+    request: Request, body: PreparePreview, actor: ActorDep, fiscal_year: str = "fy28"
+) -> Json:
+    """Calculate a replacement basis without creating or changing a draft."""
+    baseline = await forecast_routes._access(request, actor)
+    _require_write(actor)
+    try:
+        selected_store = _store_for_year(fiscal_year)
+        parent = selected_store.current(actor.department_id)["draft"]
+        if (parent["id"] if parent else None) != body.parent_id:
+            raise HTTPException(409, "预算准备草稿已变化，请重新读取后操作")
+        if parent:
+            _check_year(parent, fiscal_year)
+            _validate_bound_source(parent, baseline)
+        _, _, source, inputs = await _prepare_source(actor, body.forecast_id, baseline, fiscal_year)
+        return {
+            "read_only": True,
+            "fiscal_year": _year(fiscal_year),
+            "parent_id": body.parent_id,
+            "source_id": source["id"],
+            "source": source,
+            "inputs": inputs,
+            "calculation": calculate_plan(inputs),
+        }
     except ForecastStoreError as exc:
         raise HTTPException(409, str(exc)) from exc
     except NextYearError as exc:

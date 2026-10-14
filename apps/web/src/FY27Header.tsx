@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
+import { observeBudgetChrome } from "./BudgetPageNavigation";
 import "./fy27Navigation.css";
 
 const modules = [
@@ -16,7 +17,7 @@ export function FY27Header({ active, children, fiscalYear = active === "next-yea
   onBeforeLeave?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const brand = <><span aria-hidden="true">智</span><strong>预算智解</strong></>;
-  return <header className="decision-topbar fy27-topbar">
+  return <header className="decision-topbar fy27-topbar" ref={node => observeBudgetChrome(node, "--budget-header-height")}>
     {onHome ? <button className="decision-brand" onClick={onHome}>{brand}</button>
       : <a className="decision-brand" href={modules[0].href} onClick={onBeforeLeave}>{brand}</a>}
     <nav className="fy27-module-switch" aria-label="预算模块">

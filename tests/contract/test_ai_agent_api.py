@@ -457,3 +457,14 @@ async def test_budget_reader_only_gets_existing_product_resources_with_server_ow
     assert observed[0]["headers"]["x-user-id"] == "local-budget-owner"
     assert observed[0]["headers"]["x-department-id"] == "fixture-department"
     assert observed[0]["headers"]["x-budget-client-address"] == "127.0.0.1"
+
+
+async def test_budget_help_uses_product_revenue_terminology() -> None:
+    result = await route.AiService(FastAPI()).read_budget("help")
+    rules = result["rules"]
+    assert any("将预算业务范围统一称为 SKU；内部字段、工具和数据键保持原样" in rule for rule in rules)
+    assert any(
+        "季度和全年预算、预测中的对应收入指标统一称为“结转收入”，保留原单位" in rule
+        and "不要与业务收入（含税）、原价收入或结转比例混称" in rule
+        for rule in rules
+    )

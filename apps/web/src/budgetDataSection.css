@@ -1,0 +1,81 @@
+@import "./budgetTokens.css";
+
+/* Scoped M1 sample: do not change the remaining history/next-year sections. */
+.budget-data-section {
+  min-width: 0;
+  margin: var(--budget-space-6) 0;
+  padding: var(--budget-space-6);
+  border: 1px solid var(--budget-divider);
+  border-radius: var(--budget-radius-section);
+  background: var(--budget-surface);
+  color: var(--budget-text);
+  font-family: var(--budget-font-family);
+  font-size: var(--budget-body-size);
+  line-height: 1.57143;
+  scroll-margin-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 16px);
+}
+.budget-data-section__heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--budget-space-3) var(--budget-space-4); margin-bottom: var(--budget-space-4); }
+.budget-data-section__identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--budget-space-2) var(--budget-space-3); min-width: 0; }
+.budget-data-section .budget-data-section__title { margin: 0; color: var(--budget-text); font-size: var(--budget-section-title-size); font-weight: 600; line-height: 1.44445; }
+.budget-data-section__count { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; font-variant-numeric: tabular-nums; }
+.budget-data-section__actions { display: flex; flex-wrap: wrap; gap: var(--budget-space-2); }
+.budget-data-section button, .budget-data-section .budget-data-section__actions button,
+.budget-data-section .budget-data-section__pagination button, .budget-data-section .table-transfer > button {
+  min-height: 2.25rem;
+  margin: 0;
+  padding: var(--budget-space-2) var(--budget-space-3);
+  border: 1px solid var(--budget-control-border);
+  border-radius: var(--budget-radius-control);
+  background: var(--budget-control-surface);
+  color: var(--budget-accent);
+  font: inherit;
+  font-size: var(--budget-body-size);
+  line-height: 1.42858;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.budget-data-section .budget-data-section__actions button { min-height: 2.5rem; }
+.budget-data-section button:hover:not(:disabled) { background: #eaf2eb; }
+.budget-data-section button:disabled { opacity: .5; cursor: default; }
+.budget-data-section :focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
+.budget-data-section > .table-transfer { align-items: flex-end; gap: var(--budget-space-2); padding: 0 0 var(--budget-space-3); border: 0; background: transparent; }
+.budget-data-section .table-transfer-start { min-width: 0; margin-right: auto; width: min(100%, 18rem); }
+.budget-data-section .table-transfer-start label { display: grid; gap: var(--budget-space-1); font-size: var(--budget-caption-size); line-height: 1.5; color: var(--budget-text-secondary); }
+.budget-data-section .table-transfer .table-transfer-start input {
+  width: 100%; min-width: 0; min-height: 2.5rem; margin: 0; padding: var(--budget-space-2) var(--budget-space-3);
+  border: 1px solid var(--budget-control-border); border-radius: var(--budget-radius-control);
+  background: var(--budget-control-surface); color: var(--budget-text); font: inherit; font-size: var(--budget-body-size); line-height: 1.42858;
+}
+.budget-data-section .table-transfer-start input::placeholder { color: var(--budget-text-secondary); }
+.budget-data-section .table-transfer > span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; }
+.budget-data-section .table-transfer > span:empty { display: none; }
+.budget-data-section .table-keyboard-help { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.budget-data-section .table-keyboard-help > summary { min-height: 2.25rem; padding: var(--budget-space-2); cursor: pointer; }
+.budget-data-section .table-keyboard-help > p { z-index: 50; color: var(--budget-text); }
+.budget-data-section__scroll { max-height: 32.5rem; max-width: 100%; overflow: auto; isolation: isolate; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-control); scroll-margin-bottom: calc(var(--ny-action-bar-height, 0px) + 16px); }
+.budget-data-section__scroll table { width: 100%; border-collapse: collapse; font: inherit; font-size: var(--budget-body-size); line-height: 1.42858; font-variant-numeric: tabular-nums; text-align: left; }
+.budget-data-section__scroll th, .budget-data-section__scroll td { padding: var(--budget-space-3); border-bottom: 1px solid var(--budget-divider); text-align: left; vertical-align: middle; scroll-margin-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 16px); scroll-margin-bottom: calc(var(--ny-action-bar-height, 0px) + 16px); }
+.budget-data-section__scroll thead th { position: sticky; top: 0; z-index: 1; background: #edf2ee; color: var(--budget-text-secondary); font-size: var(--budget-body-size); font-weight: 600; white-space: nowrap; }
+.budget-data-section__scroll tbody tr { height: 3rem; }
+.budget-data-section__scroll tbody th { min-width: 15rem; font-weight: 500; overflow-wrap: anywhere; }
+.budget-data-section__scroll tbody th strong { font-weight: 600; }
+.budget-data-section__scroll tbody tr:hover { background: #f0f5f1; }
+.budget-data-section__scroll small { display: block; margin-top: var(--budget-space-1); color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-weight: 400; line-height: 1.5; }
+.budget-data-section__scroll .budget-cell-number { text-align: right; white-space: nowrap; }
+.budget-data-section__scroll td { min-width: 5rem; }
+.budget-data-section__pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: var(--budget-space-3); margin-top: var(--budget-space-4); color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) {
+  .budget-data-section { padding: var(--budget-space-4); }
+  .budget-data-section .table-transfer-start { flex-basis: 100%; width: 100%; }
+  .budget-data-section__scroll { max-height: none; }
+  .budget-data-section__scroll tbody th { min-width: 12rem; }
+}
+@media (max-height: 600px) { .budget-data-section__scroll { max-height: none; } }
+@media (pointer: coarse) {
+  .budget-data-section button,
+  .budget-data-section .budget-data-section__actions button,
+  .budget-data-section .budget-data-section__pagination button,
+  .budget-data-section .table-transfer > button,
+  .budget-data-section .table-transfer .table-transfer-start input,
+  .budget-data-section .table-keyboard-help > summary { min-height: 2.75rem; min-width: 2.75rem; }
+}

@@ -2,7 +2,6 @@
 // checked separately; these tests do not claim to measure computed alignment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -29,7 +28,7 @@ const fact = (overrides = {}) => ({
 const props = facts => ({ facts, onSelect() {}, onFilterCampus() {}, onPivot() {} });
 const render = facts => renderToStaticMarkup(createElement(BudgetPeopleBoard, props(facts)));
 const text = html => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-const renewalTable = html => html.match(/<table class="ba-table ba-renewal-table">([\s\S]*?)<\/table>/)?.[1] ?? "";
+const renewalTable = html => html.match(/<table\b[^>]*class="ba-table ba-renewal-table"[^>]*>([\s\S]*?)<\/table>/)?.[1] ?? "";
 const findElements = (node, predicate) => {
   if (Array.isArray(node)) return node.flatMap(child => findElements(child, predicate));
   if (!node || typeof node !== "object") return [];
@@ -91,13 +90,13 @@ test("unknown renewal stays unpainted and zero is displayed and plotted as real 
   assert.doesNotMatch(html, /NaN|Infinity|undefined/);
 });
 
-test("metric header and all row-spanned metric labels share an explicit centered style, retaining the sticky footer group", () => {
+test("the merged campus budget gives old/new/total equal column treatment instead of row-spanned metric labels", () => {
   const html = render([fact()]);
-  assert.match(html, /<th scope="col" class="ba-people-metric">人次<\/th>/);
-  for (const label of ["老生", "新生", "合计"]) assert.match(html, new RegExp(`<th scope="row" class="ba-people-metric">${label}</th>`));
-  const css = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-  assert.match(css, /\.ba-student-table tr > \.ba-people-metric\s*\{[^}]*text-align: center/);
-  assert.match(css, /\.ba-student-table :is\(tbody, tfoot\) tr > \.ba-people-metric\s*\{[^}]*position: static[^}]*text-align: center/);
-  assert.match(css, /\.ba-student-table tfoot\s*\{[^}]*position: sticky; bottom: 0/);
-  assert.match(css, /\.ba-student-table tfoot :is\(th, td\)\s*\{[^}]*position: static/);
+  const campus = html.match(/<table\b[^>]*class="ba-table ba-campus-budget-table"[^>]*>([\s\S]*?)<\/table>/)?.[1] ?? "";
+  assert.ok(campus);
+  assert.match(campus, /<th scope="col">总人次<\/th><th scope="col">新生人次<\/th><th scope="col">老生人次<\/th>/);
+  assert.equal((campus.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g) ?? []).length, 1);
+  assert.equal((campus.match(/<tfoot>[\s\S]*?<\/tfoot>/)?.[0].match(/<tr\b/g) ?? []).length, 1);
+  assert.doesNotMatch(campus, /scope="rowgroup"|row[Ss]pan="3"|ba-people-metric/);
+  assert.doesNotMatch(html, /校区招生人次|校区季度老生新生人次表/);
 });

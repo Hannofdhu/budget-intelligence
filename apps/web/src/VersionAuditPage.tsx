@@ -45,8 +45,8 @@ const COMMAND_LABELS: Record<string, string> = {
   FINALIZE_FORMAL_PLAN_CONFIRMATION: "正式方案确认",
   CALCULATE_HEADCOUNT_RESULT: "计算预算人数",
   CALCULATE_CLASS_SIZE_RESULT: "核对班均",
-  CALCULATE_REVENUE_RESULT: "计算预算收入",
-  VALIDATE_TARGET_CLOSURE: "核对收入目标",
+  CALCULATE_REVENUE_RESULT: "计算预算结转收入",
+  VALIDATE_TARGET_CLOSURE: "核对结转收入目标",
   VALIDATE_CLASS_SIZE_RESULT: "核对班均",
 };
 
@@ -99,7 +99,7 @@ const COMPONENT_LABELS: Record<string, string> = {
   discount_parameter_version_id: "折扣参数",
   headcount_result_version_id: "整数人次结果",
   class_size_result_version_id: "班均校验结果",
-  revenue_result_version_id: "收入结果",
+  revenue_result_version_id: "结转收入结果",
   target_closure_result_version_id: "目标闭合结果",
   formal_confirmation_id: "正式方案确认",
 };

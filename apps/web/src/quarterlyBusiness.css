@@ -1,0 +1,30 @@
+.quarterly-business { --qbt-line: #dce3dd; min-width: 0; color: #173f37; }
+.quarterly-business .qbt-scroll { max-width: 100%; max-height: var(--qbt-max-height, calc(100dvh - var(--budget-header-height, 72px) - var(--budget-page-nav-height, 62px) - var(--ny-action-bar-height, 0px) - 24px)); overflow: auto; scroll-padding-top: calc(var(--qbt-header-offset, 0px) + var(--qbt-header-height, 36px) + 8px); border: 1px solid var(--qbt-line); border-radius: 10px; background: #fff; }
+.quarterly-business .table-transfer { position: sticky; left: 0; width: 100%; min-width: 0; box-sizing: border-box; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--qbt-line); }
+.quarterly-business table { width: 100%; min-width: 680px; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.quarterly-business :is(th,td) { padding: 9px 12px; text-align: right; border-bottom: 1px solid #edf0eb; white-space: nowrap; }
+.quarterly-business thead th { position: sticky; top: var(--qbt-header-offset, 0px); z-index: 2; background: #edf2ee; color: #536f60; font-size: 12px; }
+.quarterly-business thead th:nth-child(2), .quarterly-business .qbt-metric { text-align: left; }
+.quarterly-business .qbt-business-heading, .quarterly-business .qbt-business-cell { position: sticky; left: 0; min-width: 190px; max-width: 270px; text-align: left; white-space: normal; }
+.quarterly-business .qbt-business-heading { z-index: 3; }
+.quarterly-business .qbt-business-cell { z-index: 1; vertical-align: top; background: #fff; border-right: 1px solid var(--qbt-line); padding-top: 12px; font-weight: 600; border-bottom: 1px solid var(--qbt-line); }
+.quarterly-business .qbt-business-cell > span { display: block; margin-bottom: 4px; }
+.quarterly-business .qbt-business-cell > span:not(:first-child), .quarterly-business .qbt-business-cell small { font-size: 12px; font-weight: 400; color: #647b70; }
+.quarterly-business .qbt-metric { min-width: 105px; font-weight: 500; color: #536f60; background: #fafbf9; }
+.quarterly-business .qbt-group-start > :is(th,td) { border-top: 1px solid var(--qbt-line); }
+.quarterly-business tbody tr:first-child > :is(th,td) { border-top: 0; }
+.quarterly-business tbody tr:hover > td { background: #f3f7f3; }
+.quarterly-business .qbt-missing { color: #a2aea5; }
+.quarterly-business button.qbt-value-action { width: 100%; min-height: 30px; padding: 3px 0; border: 0; border-radius: 4px; color: #173f37; background: transparent; text-align: right; font: inherit; }
+.quarterly-business button.qbt-value-action:hover { text-decoration: underline; background: #edf2ee; }
+.quarterly-business .qbt-duplicate { margin: 0 0 12px; color: #8e6636; font-size: 13px; }
+.quarterly-business .qbt-empty { padding: 16px; color: #647b70; }
+.quarterly-business .qbt-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 0 0; font-size: 12px; color: #647b70; }
+.quarterly-business .qbt-pagination > div { display: flex; align-items: center; gap: 14px; }
+.quarterly-business .qbt-pagination button { padding: 7px 11px; border: 1px solid var(--qbt-line); border-radius: 7px; background: #fff; color: #173f37; font: inherit; }
+.quarterly-business :is(button,.qbt-scroll):focus-visible { outline: 2px solid #4c8363; outline-offset: 3px; }
+.history-section .history-quarter-layout { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #dce3dd; border-radius: 9px; background: #edf2ee; }
+.history-section .history-quarter-layout button { padding: 7px 12px; border: 0; border-radius: 6px; font-size: 13px; background: transparent; }
+.history-section .history-quarter-layout button[aria-pressed="true"] { background: #173f37; color: #fff; }
+@media (max-width: 600px) { .quarterly-business .qbt-business-heading, .quarterly-business .qbt-business-cell { min-width: 160px; max-width: 180px; } .quarterly-business .qbt-pagination { padding-inline: 0; } }
+@media (prefers-reduced-motion: reduce) { .quarterly-business * { scroll-behavior: auto; transition: none; } }
