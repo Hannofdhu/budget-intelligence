@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     auth_mode: Literal["dev_headers", "oidc"] = "dev_headers"
     local_trial_enabled: bool = False
     local_trial_department_id: str = ""
+    ai_agent_enabled: bool = False
+    ai_agent_proxy_secret: str = Field(default="", repr=False)
+    ai_agent_model_config: str = "~/.openclaw/openclaw.json"
+    ai_agent_runtime_root: str = "output/ai-agent"
+    ai_agent_image: str = "budget-pi-agent:1.2.0"
+    ai_agent_browser_origin: str = "http://127.0.0.1:5188"
     database_url: str = "postgresql+asyncpg://budget:budget@127.0.0.1:54329/budget"
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)

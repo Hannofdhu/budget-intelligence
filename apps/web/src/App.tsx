@@ -4,6 +4,7 @@ import { WorkspacePage } from "./WorkspacePage";
 import { HistoricalBudgetPage } from "./HistoricalBudgetPage";
 import { ForecastPage } from "./ForecastPage";
 import { NextYearBudgetPage } from "./NextYearBudgetPage";
+import { AiAgentPage } from "./AiAgentPage";
 
 import {
   ApiError,
@@ -221,6 +222,7 @@ function BudgetOverviewRedirect() {
 
 export function App() {
   const path = window.location.pathname;
+  if (path === "/budget/ai") return <AiAgentPage />;
   if (path === "/budget/forecast") return <ForecastPage />;
   if (path === "/budget/next-year") return <NextYearBudgetPage />;
   if (path === "/budget/workspace" && new URLSearchParams(location.search).get("archive") === "fy27") return <HistoricalBudgetPage />;

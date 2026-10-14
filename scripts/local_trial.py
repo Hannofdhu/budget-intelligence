@@ -5,6 +5,7 @@ import asyncio
 import ipaddress
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -26,6 +27,25 @@ API = "http://127.0.0.1:8018"
 OPENER = build_opener(ProxyHandler({}))
 
 
+def ai_proxy_secret() -> str:
+    """Keep API-only restarts compatible with the already running web proxy."""
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    target = RUNTIME / "ai-proxy.secret"
+    if target.is_symlink():
+        raise RuntimeError("AI 代理配置不能是符号链接")
+    if target.exists():
+        value = target.read_text().strip()
+        if len(value) < 48:
+            raise RuntimeError("AI 代理配置无效")
+        target.chmod(0o600)
+        return value
+    value = secrets.token_urlsafe(48)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(value)
+    return value
+
+
 def environment() -> dict[str, str]:
     return {
         **os.environ,
@@ -34,6 +54,10 @@ def environment() -> dict[str, str]:
         "BUDGET_AUTH_MODE": "dev_headers",
         "BUDGET_LOCAL_TRIAL_ENABLED": "true",
         "BUDGET_LOCAL_API_URL": API,
+        # Shared only by the local API and Vite proxy; never exposed through VITE_*.
+        "BUDGET_AI_AGENT_ENABLED": "true",
+        "BUDGET_AI_AGENT_PROXY_SECRET": ai_proxy_secret(),
+        "BUDGET_AI_AGENT_BROWSER_ORIGIN": WEB,
         "PYTHONPATH": str(ROOT),
     }
 
@@ -308,6 +332,49 @@ def restart_api() -> None:
     print("API 已重启；未执行数据初始化或迁移")
 
 
+def restart_web() -> None:
+    """Refresh proxy configuration without touching worker, budgets or database."""
+    state = json.loads(STATE.read_text())
+    if state.get("database") != DATABASE:
+        raise RuntimeError("运行记录不匹配")
+    process = next(p for p in state["processes"] if p["name"] == "web")
+    if not process_matches(process):
+        raise RuntimeError("网页进程身份不匹配，拒绝重启")
+    env = environment()
+    env["BUDGET_LOCAL_TRIAL_DEPARTMENT_ID"] = json.loads(FIXTURE.read_text())["department_id"]
+    os.kill(int(process["pid"]), signal.SIGTERM)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not free_port(5188):
+        time.sleep(0.1)
+    if not free_port(5188):
+        raise RuntimeError("网页尚未退出，未启动新进程")
+    host = "0.0.0.0" if state.get("mode") == "lan" else "127.0.0.1"
+    command = [
+        "node",
+        str(ROOT / "apps/web/node_modules/vite/bin/vite.js"),
+        str(ROOT / "apps/web"),
+        "--host",
+        host,
+        "--port",
+        "5188",
+        "--strictPort",
+    ]
+    with (RUNTIME / "web.log").open("a") as log:
+        child = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    process.update(pid=child.pid, started=run("ps", "-p", str(child.pid), "-o", "lstart="))
+    STATE.write_text(json.dumps(state, indent=2))
+    wait_url(WEB)
+    print("网页已重启；未修改预算数据")
+
+
 def stop() -> None:
     if not STATE.exists():
         return
@@ -326,7 +393,7 @@ def stop() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["start", "stop", "seed", "restart-api"])
+    parser.add_argument("command", choices=["start", "stop", "seed", "restart-api", "restart-web"])
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--lan", action="store_true", help="只将网页端口开放给当前局域网")
     args = parser.parse_args()
@@ -337,6 +404,8 @@ if __name__ == "__main__":
             stop()
         elif args.command == "restart-api":
             restart_api()
+        elif args.command == "restart-web":
+            restart_web()
         else:
             start(not args.no_open, lan=args.lan)
     except Exception as error:

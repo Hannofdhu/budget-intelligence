@@ -15,8 +15,8 @@
 
 .fy27-module-switch {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 396px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 504px;
   max-width: 100%;
   padding: 4px;
   border: 1px solid #e0e5df;
@@ -75,9 +75,11 @@
   .fy27-topbar .decision-brand strong { font-size: 13px; }
   .fy27-year-label { font-size: 11px; }
   .fy27-topbar .decision-version { font-size: 10px; gap: 4px; }
-  .fy27-module-switch { width: 348px; }
+  .fy27-module-switch { width: min(100%, 420px); }
+  .fy27-module-switch a { padding: 8px 10px; font-size: 12px; }
 }
 @media (max-width: 380px) {
+  .fy27-module-switch a { padding: 8px 6px; font-size: 11px; }
   .fy27-topbar .decision-brand { gap: 6px; }
   .fy27-topbar .decision-brand strong { font-size: 12px; }
   .fy27-header-context { gap: 4px; }

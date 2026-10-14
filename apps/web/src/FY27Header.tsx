@@ -5,10 +5,11 @@ const modules = [
   { key: "budget", label: "查看预算", href: "/budget/workspace?archive=fy27&step=5" },
   { key: "forecast", label: "达成预测", href: "/budget/forecast?archive=fy27" },
   { key: "next-year", label: "下一年预算", href: "/budget/next-year" },
+  { key: "ai", label: "AI智解", href: "/budget/ai" },
 ] as const;
 
 export function FY27Header({ active, children, fiscalYear = active === "next-year" ? 2028 : 2027, onHome, onBeforeLeave }: {
-  active: "budget" | "forecast" | "next-year";
+  active: "budget" | "forecast" | "next-year" | "ai";
   children: ReactNode;
   fiscalYear?: number;
   onHome?: () => void;
@@ -25,6 +26,6 @@ export function FY27Header({ active, children, fiscalYear = active === "next-yea
         {module.label}
       </a>)}
     </nav>
-    <div className="fy27-header-context"><span className="fy27-year-label">FY{String(fiscalYear).slice(-2)} 学校版</span>{children}</div>
+    <div className="fy27-header-context"><span className="fy27-year-label">{active === "ai" ? "产品助手" : `FY${String(fiscalYear).slice(-2)} 学校版`}</span>{children}</div>
   </header>;
 }

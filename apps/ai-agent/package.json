@@ -1,0 +1,10 @@
+{
+  "name": "budget-intelligence-pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated native Pi terminal runtime for AI智解",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0"
+  }
+}

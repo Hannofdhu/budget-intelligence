@@ -22,8 +22,9 @@ const urls = {
   budget: "/budget/workspace?archive=fy27&step=5",
   forecast: "/budget/forecast?archive=fy27",
   "next-year": "/budget/next-year",
+  ai: "/budget/ai",
 };
-const labels = { budget: "查看预算", forecast: "达成预测", "next-year": "下一年预算" };
+const labels = { budget: "查看预算", forecast: "达成预测", "next-year": "下一年预算", ai: "AI智解" };
 const nodes = tree => {
   if (Array.isArray(tree)) return tree.flatMap(nodes);
   if (!tree || typeof tree !== "object") return [];
@@ -42,7 +43,7 @@ test("FY27 modules render the same single switch with exact routes and one curre
     assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
     const tree = FY27Header({ active, children: "状态" });
     const actual = links(tree);
-    assert.equal(actual.length, 3);
+    assert.equal(actual.length, 4);
     for (const key of Object.keys(labels)) {
       const link = actual.find(node => node.props.children === labels[key]);
       assert.equal(link.props.href, urls[key]);
@@ -66,8 +67,18 @@ test("the shared header shows a read-only fiscal-year label for each module", ()
     assert.equal(label.props.tabIndex, undefined);
     assert.equal(nodes(context).some(node => node.type === "select" || node.type === "button" || node.type === "a"), false);
     assert.doesNotMatch(renderToStaticMarkup(context), /aria-haspopup|<svg|<select|chevron|dropdown/);
-    assert.equal(links(tree).length, 3, "the module switch remains available beside the static year");
+    assert.equal(links(tree).length, 4, "the module switch remains available beside the static year");
   }
+});
+
+test("AI is a cross-year product assistant, not a mislabeled FY27 or FY28 budget", () => {
+  const html = renderToStaticMarkup(createElement(FY27Header, { active: "ai", children: "已配置模型" }));
+  assert.match(html, /产品助手/);
+  assert.match(html, /已配置模型/);
+  assert.doesNotMatch(html, /FY27|FY28|学校版|<select|aria-haspopup/);
+  assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
+  assert.match(html, /href="\/budget\/ai" aria-current="page"/);
+  assert.match(source("App.tsx"), /if \(path === "\/budget\/ai"\) return <AiAgentPage \/>/);
 });
 
 test("an explicit budget fiscal year is displayed truthfully without introducing a selector", () => {
@@ -102,7 +113,7 @@ test("the other module delegates leave permission without saving or refreshing d
 });
 
 test("budget, forecast and next-year budget share the header without separate module navigation", () => {
-  for (const name of ["HistoricalBudgetPage.tsx", "ForecastPage.tsx", "NextYearBudgetPage.tsx"]) {
+  for (const name of ["HistoricalBudgetPage.tsx", "ForecastPage.tsx", "NextYearBudgetPage.tsx", "AiAgentPage.tsx"]) {
     const page = source(name);
     assert.match(page, /<FY27Header\b/, name);
     assert.doesNotMatch(page, /className="(?:history-product-nav|forecast-navigation)"/, name);
@@ -118,6 +129,7 @@ test("the common header remains sticky and centered with one shared narrow-scree
   const shared = source("fy27Navigation.css"), global = source("styles.css");
   assert.match(global, /\.decision-topbar\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/);
   assert.match(shared, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+minmax\(0,\s*1fr\)/);
+  assert.match(shared, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(shared, /@media\s*\(max-width:\s*1000px\)/);
   assert.match(shared, /grid-template-rows:\s*35px\s+48px/,
     "different budget selectors and forecast labels cannot change the switch's vertical position");

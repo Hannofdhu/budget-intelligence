@@ -71,6 +71,24 @@ jobs:
       - name: Typecheck Python including tests
         if: ${{ !cancelled() && steps.python-dependencies.outcome == 'success' }}
         run: uv run mypy apps packages tests
+      - name: Install isolated Pi runtime dependencies
+        id: pi-dependencies
+        if: ${{ !cancelled() && steps.node-setup.outcome == 'success' }}
+        working-directory: apps/ai-agent
+        run: npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Verify and audit isolated Pi runtime
+        if: ${{ !cancelled() && steps.pi-dependencies.outcome == 'success' }}
+        working-directory: apps/ai-agent
+        run: |
+          node --check launch.mjs
+          node --check relay.mjs
+          node --check budget-api.mjs
+          npm audit --audit-level=high --registry=https://registry.npmjs.org
+      - name: Build and verify isolated Pi image
+        if: ${{ !cancelled() && steps.pi-dependencies.outcome == 'success' }}
+        run: |
+          docker build -t budget-pi-agent:ci apps/ai-agent
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --user node --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 --entrypoint pi budget-pi-agent:ci --version
       - name: Run Python and PostgreSQL tests
         id: python-tests
         if: ${{ !cancelled() && steps.migrations.outcome == 'success' }}
