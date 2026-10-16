@@ -15,10 +15,13 @@ from apps.api.routes.historical_review import fy27_review
 from packages.config.settings import get_settings
 from packages.domain.identity.models import Actor, Role
 from packages.forecast.calculation import calculate_forecast
+from packages.forecast.daily import schedule_status
 from packages.forecast.database_store import PostgreSQLForecastStore
+from packages.forecast.refresh_lock import refresh_slot as database_refresh_slot
 from packages.forecast.rules import FIXED_RULES_VERSION, build_fixed_assumptions
 from packages.forecast.source import extract_forecast_source
 from packages.forecast.store import ForecastStoreError, fingerprint
+from packages.forecast.trend import TrendDays, TrendVersionNotFound
 from packages.forecast.trial import build_trial_assumptions
 from packages.source_snapshot.adapter import SourceAdapterError
 
@@ -375,6 +378,29 @@ async def saved_snapshot(request: Request, version_id: str, actor: ActorDep) -> 
     }
 
 
+@router.get("/forecasts/fy27/trend")
+async def revenue_trend(
+    request: Request, actor: ActorDep, days: TrendDays = "30", through_version: str | None = None
+) -> Json:
+    """Project existing immutable snapshots; never fetch BI or run calculations."""
+    baseline = await _access(request, actor)
+    try:
+        return cast(
+            Json,
+            await _store_call(
+                "trend",
+                actor.department_id,
+                baseline_hash=baseline["sha256"],
+                days=days,
+                through_version=through_version,
+            ),
+        )
+    except TrendVersionNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ForecastStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/forecasts/fy27/refresh")
 async def refresh(request: Request, body: Refresh, actor: ActorDep, request_id: RequestId) -> Json:
     baseline = await _access(request, actor)
@@ -388,28 +414,62 @@ async def refresh(request: Request, body: Refresh, actor: ActorDep, request_id: 
         # was awaiting I/O. Recheck after taking the slot, before any live query.
         if replay := await _replay(actor, request_id, digest):
             return replay
+        if isinstance(store, PostgreSQLForecastStore):
+            try:
+                async with database_refresh_slot(actor.department_id):
+                    if replay := await _replay(actor, request_id, digest):
+                        return replay
+                    return await _refresh_from_source(baseline, body, actor, request_id, digest)
+            except SourceAdapterError as exc:
+                raise HTTPException(
+                    409,
+                    {"code": exc.code, "message": exc.safe_message, "retryable": exc.retryable},
+                    headers={"Retry-After": "3"},
+                ) from exc
+            except SQLAlchemyError as exc:
+                raise HTTPException(
+                    503,
+                    {
+                        "code": "FORECAST_STORAGE_UNAVAILABLE",
+                        "message": "预测存储暂时无法连接；已保存版本不会被覆盖",
+                        "retryable": True,
+                    },
+                ) from exc
         return await _refresh_from_source(baseline, body, actor, request_id, digest)
 
 
 async def _refresh_from_source(
-    baseline: Json, body: Refresh, actor: Actor, request_id: str, digest: str
+    baseline: Json, body: Refresh, actor: Actor, request_id: str, digest: str, *, automatic: bool = False
 ) -> Json:
     view = await _current(actor)
     parent = view["version"]
+    # The background job may have waited while a maintainer revised the parent.
+    # Inherit states from THIS read, never replay a stale job's state decisions.
+    states = parent["assumptions"]["states"] if automatic and parent else body.states
     assumptions = Assumptions.model_validate(
-        {**(parent["assumptions"] if parent else {}), "states": body.states}
+        {**(parent["assumptions"] if parent else {}), "states": states}
     ).model_dump()
     assumptions = _retire_finalized_adjustments(parent, assumptions)
     _guard_change(parent, assumptions, actor)
     try:
         snapshot = await extract_forecast_source(get_settings())
         snapshot.setdefault("provenance", {})["verified_by"] = actor.user_id
-        snapshot["provenance"]["verification_mode"] = "SIGNED_MAINTAINER_APPROVED_FORMULA_CHECK"
+        snapshot["provenance"]["verification_mode"] = (
+            "AUTOMATED_SOURCE_VALIDATION_NO_HUMAN_CONFIRMATION"
+            if automatic
+            else "SIGNED_MAINTAINER_APPROVED_FORMULA_CHECK"
+        )
+        snapshot["provenance"]["refresh_mode"] = "AUTOMATIC" if automatic else "MANUAL"
         assumptions = Assumptions.model_validate(
             build_fixed_assumptions(baseline, snapshot, assumptions)
         ).model_dump(mode="json")
         _guard_change(parent, assumptions, actor)
         calculation = calculate_forecast(baseline, snapshot, assumptions)
+        if automatic and calculation.get("ready") is not True:
+            raise SourceAdapterError(
+                "FORECAST_DAILY_DATA_INCOMPLETE",
+                "本次来源数据检查未通过，自动更新未保存新版本；请人工查看数据问题，上次结果已保留",
+            )
         result = await _store_call(
             "append_version",
             department=actor.department_id,
@@ -586,3 +646,18 @@ async def confirm(
         )
     except ForecastStoreError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/forecasts/fy27/schedule")
+async def daily_schedule(request: Request, actor: ActorDep) -> Json:
+    await _access(request, actor)
+    try:
+        return await schedule_status(get_settings(), actor.department_id)
+    except (SQLAlchemyError, OSError) as exc:
+        raise HTTPException(
+            503,
+            {
+                "code": "FORECAST_SCHEDULE_UNAVAILABLE",
+                "message": "自动更新状态暂时无法读取；已保存预测不受影响",
+            },
+        ) from exc

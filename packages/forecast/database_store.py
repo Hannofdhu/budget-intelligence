@@ -7,6 +7,7 @@ event. Browsing history never queries BI, opens Excel or recalculates a version.
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.forecast.store import ROOT, ForecastStore, ForecastStoreError, canonical, fingerprint
+from packages.forecast.trend import TrendDays, project_forecast_versions, select_forecast_trend
 from packages.persistence.database import get_session_factory
 from packages.persistence.models import ForecastLedgerEvent
 
@@ -154,6 +156,7 @@ class PostgreSQLForecastStore:
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession] | None = None) -> None:
         self.session_factory = session_factory
+        self._trend_cache: dict[tuple[str, int], tuple[tuple[int, str] | None, str, list[Json]]] = {}
 
     def _sessions(self) -> async_sessionmaker[AsyncSession]:
         return self.session_factory or get_session_factory()
@@ -165,6 +168,45 @@ class PostgreSQLForecastStore:
     async def versions(self, department: str) -> list[Json]:
         async with self._sessions()() as session:
             return list(reversed(self._versions(await read_events(session, department))))
+
+    async def trend(
+        self,
+        department: str,
+        *,
+        baseline_hash: str,
+        days: TrendDays = "30",
+        through_version: str | None = None,
+    ) -> Json:
+        """Cache only validated compact projections, keyed to the immutable chain head.
+
+        Every request checks the database head (including confirmation events).
+        Raw BI rows never remain in this bounded cache. A changed chain is fully
+        verified before replacing the entry; a failed cold read never serves old
+        data under a new token. The database rejects ledger UPDATE and DELETE.
+        """
+        factory = self._sessions()
+        key = department, id(factory)
+        async with factory() as session:
+            head = (
+                await session.execute(
+                    select(ForecastLedgerEvent.event_no, ForecastLedgerEvent.content_hash)
+                    .where(ForecastLedgerEvent.department_id == department)
+                    .order_by(ForecastLedgerEvent.event_no.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
+            token = (head.event_no, head.content_hash) if head else None
+            cached = self._trend_cache.get(key)
+            if cached is not None and cached[0] == token and cached[1] == baseline_hash:
+                projected = cached[2]
+            else:
+                events = await read_events(session, department)
+                projected = project_forecast_versions(self._versions(events), baseline_hash=baseline_hash)
+                verified_token = (events[-1]["event_no"], fingerprint(events[-1])) if events else None
+                if key not in self._trend_cache and len(self._trend_cache) >= 8:
+                    self._trend_cache.pop(next(iter(self._trend_cache)))
+                self._trend_cache[key] = verified_token, baseline_hash, projected
+        return deepcopy(select_forecast_trend(projected, days=days, through_version=through_version))
 
     async def version(self, department: str, version_id: str) -> Json | None:
         async with self._sessions()() as session:

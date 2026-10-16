@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     guancli_max_concurrent_queries: int = Field(default=2, ge=1, le=8)
     guancli_proxy_url: str | None = Field(default=None, repr=False)
     forecast_refresh_timeout_seconds: float = Field(default=180, gt=0, le=1800)
+    # Daily refresh is explicitly enabled only for the authorized desktop department.
+    # Never silently grant a service identity access to a production budget.
+    forecast_daily_enabled: bool = False
+    forecast_daily_max_attempts: int = Field(default=3, ge=1, le=5)
+    forecast_daily_retry_seconds: int = Field(default=60, ge=1, le=900)
     source_preview_max_rows: int = Field(default=500_000, ge=1_000, le=1_000_000)
     source_preview_chunk_max_rows: int = Field(default=60_000, ge=1_000, le=60_000)
     source_preview_target_rows: int = Field(default=10_000, ge=1_000, le=60_000)
@@ -50,6 +56,18 @@ class Settings(BaseSettings):
     def reject_development_auth_in_production(self) -> "Settings":
         if self.environment == "production" and self.auth_mode == "dev_headers":
             raise ValueError("production cannot use dev_headers authentication")
+        return self
+
+    @model_validator(mode="after")
+    def validate_daily_forecast_boundary(self) -> "Settings":
+        if self.forecast_daily_enabled and (
+            self.environment != "local"
+            or self.auth_mode != "dev_headers"
+            or not self.local_trial_enabled
+            or not self.local_trial_department_id.startswith("opening-api-")
+            or not (make_url(self.database_url).database or "").startswith("budget_acceptance_")
+        ):
+            raise ValueError("daily forecast requires the explicitly enabled local trial department")
         return self
 
     @model_validator(mode="after")

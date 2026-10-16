@@ -22,6 +22,7 @@ DATABASE_URL = f"postgresql+asyncpg://budget:budget@127.0.0.1:54329/{DATABASE}"
 RUNTIME = ROOT / "output/local-trial"
 STATE = RUNTIME / "processes.json"
 FIXTURE = RUNTIME / "fixture.json"
+DAILY_CONFIG = RUNTIME / "forecast-daily.json"
 WEB = "http://127.0.0.1:5188"
 API = "http://127.0.0.1:8018"
 OPENER = build_opener(ProxyHandler({}))
@@ -47,7 +48,7 @@ def ai_proxy_secret() -> str:
 
 
 def environment() -> dict[str, str]:
-    return {
+    env = {
         **os.environ,
         "BUDGET_DATABASE_URL": DATABASE_URL,
         "BUDGET_ENVIRONMENT": "local",
@@ -60,6 +61,38 @@ def environment() -> dict[str, str]:
         "BUDGET_AI_AGENT_BROWSER_ORIGIN": WEB,
         "PYTHONPATH": str(ROOT),
     }
+    if FIXTURE.exists():
+        env["BUDGET_LOCAL_TRIAL_DEPARTMENT_ID"] = json.loads(FIXTURE.read_text())["department_id"]
+    explicit = os.environ.get("BUDGET_FORECAST_DAILY_ENABLED")
+    enabled = local_daily_forecast_setting()
+    department = env.get("BUDGET_LOCAL_TRIAL_DEPARTMENT_ID", "")
+    env["BUDGET_FORECAST_DAILY_ENABLED"] = (
+        explicit if explicit is not None else str(enabled and department.startswith("opening-api-")).lower()
+    )
+    return env
+
+
+def local_daily_forecast_setting() -> bool:
+    """Read only the small, ignored desktop opt-in; never use a symlink target."""
+    if "BUDGET_FORECAST_DAILY_ENABLED" in os.environ:
+        # The explicit environment value is passed through to Settings unchanged.
+        return False
+    if DAILY_CONFIG.is_symlink():
+        raise RuntimeError("本机自动更新配置不能是符号链接")
+    if not DAILY_CONFIG.exists():
+        return False
+    try:
+        descriptor = os.open(DAILY_CONFIG, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            content = stream.read(1025)
+        if len(content.encode("utf-8")) > 1024:
+            raise ValueError
+        value = json.loads(content)
+        if not isinstance(value, dict) or set(value) != {"enabled"} or type(value["enabled"]) is not bool:
+            raise ValueError
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise RuntimeError("本机自动更新配置无效；应为仅含enabled布尔值的小型JSON文件") from exc
+    return bool(value["enabled"])
 
 
 def run(*command: str, env: dict[str, str] | None = None) -> str:
@@ -225,7 +258,12 @@ def start(open_browser: bool, lan: bool = False) -> None:
     env = environment()
     print("检查本机试用数据库迁移…", flush=True)
     run(str(ROOT / ".venv/bin/alembic"), "upgrade", "head", env=env)
-    run(str(ROOT / ".venv/bin/python"), str(Path(__file__)), "seed", env=env)
+    run(
+        str(ROOT / ".venv/bin/python"),
+        str(Path(__file__)),
+        "seed",
+        env={**env, "BUDGET_FORECAST_DAILY_ENABLED": "false"},
+    )
     fixture = json.loads(FIXTURE.read_text())
     env["BUDGET_LOCAL_TRIAL_DEPARTMENT_ID"] = fixture["department_id"]
     commands = [
@@ -298,6 +336,19 @@ def process_matches(process: dict[str, object]) -> bool:
         return str(process["signature"]) in command and started == process["started"]
     except subprocess.CalledProcessError:
         return False
+
+
+def process_exists(pid: int) -> bool:
+    """A reused or inaccessible PID is alive, never permission to terminate it."""
+    if pid <= 0:
+        raise RuntimeError("运行记录中的进程编号无效")
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def restart_api() -> None:
@@ -375,6 +426,43 @@ def restart_web() -> None:
     print("网页已重启；未修改预算数据")
 
 
+def restart_worker() -> None:
+    """Recover/reload without reseeding or migration; an enabled schedule may catch up."""
+    state = json.loads(STATE.read_text())
+    if state.get("database") != DATABASE:
+        raise RuntimeError("运行记录不匹配")
+    process = next(p for p in state["processes"] if p["name"] == "worker")
+    pid = int(process["pid"])
+    if pid <= 0:
+        raise RuntimeError("运行记录中的进程编号无效")
+    if process_matches(process):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # The verified worker exited between inspection and termination.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and process_matches(process):
+            time.sleep(0.1)
+        if process_matches(process):
+            raise RuntimeError("Worker 尚未退出，未启动新进程")
+    elif process_exists(pid):
+        raise RuntimeError("Worker 记录的进程仍存在但身份不匹配，拒绝停止或覆盖")
+    # A missing old worker is recoverable. Never send SIGTERM to an unmatched PID.
+    with (RUNTIME / "worker.log").open("a") as log:
+        child = subprocess.Popen(
+            [str(ROOT / ".venv/bin/python"), "-m", "apps.worker.main"],
+            cwd=ROOT,
+            env=environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    process.update(pid=child.pid, started=run("ps", "-p", str(child.pid), "-o", "lstart="))
+    STATE.write_text(json.dumps(state, indent=2))
+    print("Worker 已重启；未执行初始化或迁移；若自动更新已启用，将只补跑今天到期的一次")
+
+
 def stop() -> None:
     if not STATE.exists():
         return
@@ -393,7 +481,9 @@ def stop() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["start", "stop", "seed", "restart-api", "restart-web"])
+    parser.add_argument(
+        "command", choices=["start", "stop", "seed", "restart-api", "restart-web", "restart-worker"]
+    )
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--lan", action="store_true", help="只将网页端口开放给当前局域网")
     args = parser.parse_args()
@@ -406,6 +496,8 @@ if __name__ == "__main__":
             restart_api()
         elif args.command == "restart-web":
             restart_web()
+        elif args.command == "restart-worker":
+            restart_worker()
         else:
             start(not args.no_open, lan=args.lan)
     except Exception as error:

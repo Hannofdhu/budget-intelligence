@@ -14,12 +14,22 @@ class JobRepository:
         self.worker_id = worker_id
         self.session_factory = get_session_factory()
 
-    async def claim_next(self, *, job_id: uuid.UUID | None = None) -> AsyncJob | None:
+    async def claim_next(
+        self,
+        *,
+        job_id: uuid.UUID | None = None,
+        job_type: str | None = None,
+        exclude_job_type: str | None = None,
+    ) -> AsyncJob | None:
         now = datetime.now(UTC)
         async with self.session_factory() as session, session.begin():
             statement = select(AsyncJob).where(AsyncJob.status == "QUEUED", AsyncJob.available_at <= now)
             if job_id is not None:
                 statement = statement.where(AsyncJob.job_id == job_id)
+            if job_type is not None:
+                statement = statement.where(AsyncJob.job_type == job_type)
+            if exclude_job_type is not None:
+                statement = statement.where(AsyncJob.job_type != exclude_job_type)
             result = await session.execute(
                 statement.order_by(AsyncJob.priority, AsyncJob.created_at, AsyncJob.job_id)
                 .with_for_update(skip_locked=True)

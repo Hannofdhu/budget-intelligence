@@ -710,6 +710,7 @@ test("history selection reads the exact saved version, is readonly for all mutat
   h.state.data = envelope;
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify({ ...envelope, version: url.endsWith(`/versions/${old.id}`) ? old : current }), { status: 200 }); };
   try {
+    browser.navigate("/budget/forecast?archive=fy27&bf_scope=1&bf_season=秋季&bf_season=寒假&bf_campus=校区甲");
     const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"] === "查看预测 P3")[0];
     selector.props.onClick();
     await settlePage(() => !h.state.busy && h.state.selectedVersionId === old.id);
@@ -726,13 +727,58 @@ test("history selection reads the exact saved version, is readonly for all mutat
     assert.equal(component(drawer.props.children, "ForecastDataReview").props.onUpdate, undefined);
     assert.equal(component(drawer.props.children, "ForecastTrialScopeEditor").props.disabled, true);
     assert.match(browser.urls[0], /forecast_version=saved-p3/);
-    buttons(readonly, "返回当前版本")[0].props.onClick();
+    const banner = find(readonly, node => node.type === "section" && node.props.className === "forecast-readonly")[0];
+    assert.equal(component(readonly, "BudgetUtilityPanel").props.open, false);
+    const inlineReturn = buttons(banner, "返回当前版本");
+    assert.equal(inlineReturn.length, 1); assert.equal(inlineReturn[0].props.className, "forecast-primary");
+    assert.equal(buttons(component(readonly, "BudgetUtilityPanel"), "返回当前版本").length, 1, "menu shortcut is retained");
+    inlineReturn[0].props.onClick();
     await settlePage(() => !h.state.busy && h.state.selectedVersionId === "");
     assert.equal(calls[1].url, "/api/v1/forecasts/fy27/current");
     assert.equal(h.state.data.version.id, current.id);
     assert.equal(buttons(h.page(), "更新预测").length, 1);
+    assert.equal(buttons(h.page(), "返回当前版本").length, 0, "return entry disappears on current version");
     assert.doesNotMatch(browser.urls[1], /forecast_version/);
+    const scope = new URLSearchParams(window.location.search);
+    assert.deepEqual(scope.getAll("bf_season"), ["秋季", "寒假"]); assert.equal(scope.get("bf_campus"), "校区甲"); assert.equal(scope.get("bf_scope"), "1");
     assert.ok(calls.every(call => call.options.method !== "POST"));
+  } finally { globalThis.fetch = previous; browser.restore(); }
+});
+
+test("visible historical return preserves identity, busy and unsaved guards without mutating a saved forecast", async () => {
+  const h = pageHarness({ selectedVersionId: "saved-p3" }), before = JSON.stringify(h.state.data), previous = globalThis.fetch;
+  const inlineReturn = () => buttons(find(h.page(), node => node.type === "section" && node.props.className === "forecast-readonly")[0], "返回当前版本")[0];
+  const calls = []; globalThis.fetch = async (...args) => { calls.push(args); throw new Error("must not request while blocked"); };
+  try {
+    assert.equal(inlineReturn().props.disabled, false);
+    h.state.busy = "读取当前版本"; assert.equal(inlineReturn().props.disabled, true);
+    h.state.busy = ""; h.state.reason = "未保存";
+    assert.equal(inlineReturn().props.disabled, true); inlineReturn().props.onClick();
+    h.state.reason = ""; h.state.identity = null;
+    assert.equal(inlineReturn().props.disabled, true); inlineReturn().props.onClick();
+    assert.equal(calls.length, 0); assert.equal(JSON.stringify(h.state.data), before); assert.equal(h.state.selectedVersionId, "saved-p3");
+  } finally { globalThis.fetch = previous; }
+});
+
+test("failed inline return retains the historical snapshot and scoped URL, and can retry with GET only", async () => {
+  const h = pageHarness({ selectedVersionId: "saved-p3" }), browser = forecastBrowser(), previous = globalThis.fetch, calls = [];
+  h.state.data.version = { ...h.current, id: "saved-p3", sequence: 3 };
+  const before = JSON.stringify(h.state.data);
+  const inlineReturn = () => buttons(find(h.page(), node => node.type === "section" && node.props.className === "forecast-readonly")[0], "返回当前版本")[0];
+  browser.navigate("/budget/forecast?archive=fy27&forecast_version=saved-p3&bf_scope=1&bf_season=秋季&bf_campus=校区甲");
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ detail: "暂时无法读取当前版本" }, { status: 503 }); };
+  try {
+    inlineReturn().props.onClick(); assert.equal(inlineReturn().props.disabled, true);
+    await settlePage(() => !h.state.busy && Boolean(h.state.error));
+    assert.equal(JSON.stringify(h.state.data), before); assert.equal(h.state.selectedVersionId, "saved-p3");
+    let scope = new URLSearchParams(window.location.search); assert.equal(scope.get("forecast_version"), "saved-p3"); assert.equal(scope.get("bf_season"), "秋季");
+    assert.equal(inlineReturn().props.disabled, false);
+    globalThis.fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ ...h.state.data, version: h.current }); };
+    inlineReturn().props.onClick(); await settlePage(() => !h.state.busy && h.state.selectedVersionId === "");
+    scope = new URLSearchParams(window.location.search); assert.equal(scope.has("forecast_version"), false); assert.equal(scope.get("bf_campus"), "校区甲");
+    assert.equal(h.state.data.version.id, h.current.id); assert.equal(buttons(h.page(), "返回当前版本").length, 0);
+    assert.deepEqual(calls.map(call => call.url), ["/api/v1/forecasts/fy27/current", "/api/v1/forecasts/fy27/current"]);
+    assert.ok(calls.every(call => !call.options.method || call.options.method === "GET"));
   } finally { globalThis.fetch = previous; browser.restore(); }
 });
 

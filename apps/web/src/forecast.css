@@ -29,7 +29,9 @@
 .forecast-version-tools { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--forecast-line); }
 .forecast-version-tools > label { width: min(400px, 100%); }
 .forecast-version-tools > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
-.forecast-readonly { display: grid; gap: 7px; margin: 0 0 22px; padding: 16px 20px; border-left: 3px solid #829d8a; background: #f0f5ef; color: var(--forecast-green); border-radius: 0 8px 8px 0; }
+.forecast-readonly { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 22px; padding: 16px 20px; border-left: 3px solid #829d8a; background: #f0f5ef; color: var(--forecast-green); border-radius: 0 8px 8px 0; }
+.forecast-readonly-copy { display: grid; flex: 1 1 320px; min-width: 0; gap: 7px; }
+.forecast-readonly > button { flex: 0 0 auto; }
 .forecast-readonly strong { font-size: var(--budget-body-size); font-weight: 600; }
 .forecast-readonly span, .forecast-readonly p { color: var(--forecast-muted); font-size: var(--budget-caption-size); line-height: 1.7; }
 .forecast-readonly p { margin: 0; }

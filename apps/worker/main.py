@@ -1,14 +1,19 @@
 import argparse
 import asyncio
 import signal
+import time
 import uuid
 
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
 
 from packages.calculation_pipeline import run_full_calculation_job
-from packages.config.settings import get_settings
+from packages.config.settings import Settings, get_settings
 from packages.domain.identity.models import Actor, Role
 from packages.domain.versioning.errors import DomainError
+from packages.forecast.daily import JOB_TYPE as FORECAST_DAILY_JOB_TYPE
+from packages.forecast.daily import enqueue_due
+from packages.forecast.daily import execute_job as execute_daily_forecast_job
 from packages.observability.logging import configure_logging
 from packages.persistence.audit_archive import AUDIT_ARCHIVE_JOB_TYPE, build_audit_archive
 from packages.persistence.database import dispose_engine, get_session_factory
@@ -19,13 +24,23 @@ from packages.source_snapshot.service import build_source_snapshot
 logger = structlog.get_logger(__name__)
 
 
-async def handle_one(repository: JobRepository, *, job_id: uuid.UUID | None = None) -> bool:
-    job = await repository.claim_next(job_id=job_id)
+async def handle_one(
+    repository: JobRepository,
+    *,
+    job_id: uuid.UUID | None = None,
+    job_type: str | None = None,
+    exclude_job_type: str | None = None,
+) -> bool:
+    job = await repository.claim_next(job_id=job_id, job_type=job_type, exclude_job_type=exclude_job_type)
     if job is None:
         return False
     structlog.contextvars.bind_contextvars(job_id=str(job.job_id), job_type=job.job_type)
     try:
-        if job.job_type == "NOOP":
+        if job.job_type == FORECAST_DAILY_JOB_TYPE:
+            await execute_daily_forecast_job(job, repository, get_settings())
+            logger.info("forecast_daily_attempt_finished")
+            return True
+        elif job.job_type == "NOOP":
             result: dict[str, object] = {"status": "ok"}
         elif job.job_type == "BUILD_SOURCE_SNAPSHOT":
             result = await _build_source_snapshot_job(job.job_id, job.payload)
@@ -100,6 +115,29 @@ async def _build_audit_archive_job(job_id: uuid.UUID, payload: dict[str, object]
         )
 
 
+async def _daily_loop(settings: Settings, repository: JobRepository, stop: asyncio.Event) -> None:
+    """Dedicated consumer within this same process, not blocked by other job I/O."""
+    last_tick = float("-inf")
+    while not stop.is_set():
+        if time.monotonic() - last_tick >= 30:
+            last_tick = time.monotonic()
+            try:
+                await enqueue_due(settings)
+            except Exception:
+                logger.warning("forecast_daily_scheduler_unavailable")
+        delay = settings.worker_poll_seconds
+        try:
+            handled = await handle_one(repository, job_type=FORECAST_DAILY_JOB_TYPE)
+        except (SQLAlchemyError, OSError):
+            logger.warning("forecast_daily_storage_unavailable")
+            delay, handled = 30, False
+        if not handled:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+
+
 async def worker_loop(*, once: bool) -> None:
     settings = get_settings()
     configure_logging(settings)
@@ -109,9 +147,28 @@ async def worker_loop(*, once: bool) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
+    daily_task = None
+    if not once and settings.forecast_daily_enabled:
+        daily_task = asyncio.create_task(
+            _daily_loop(settings, JobRepository(worker_id=f"{settings.worker_id}:daily"), stop)
+        )
     try:
+        if once:
+            await enqueue_due(settings)
         while not stop.is_set():
-            handled = await handle_one(repository)
+            try:
+                handled = await handle_one(
+                    repository, exclude_job_type=None if once else FORECAST_DAILY_JOB_TYPE
+                )
+            except (SQLAlchemyError, OSError):
+                if once:
+                    raise
+                logger.warning("worker_storage_unavailable")
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=30)
+                except TimeoutError:
+                    pass
+                continue
             if once:
                 return
             if not handled:
@@ -120,6 +177,9 @@ async def worker_loop(*, once: bool) -> None:
                 except TimeoutError:
                     pass
     finally:
+        if daily_task is not None:
+            daily_task.cancel()
+            await asyncio.gather(daily_task, return_exceptions=True)
         await dispose_engine()
 
 

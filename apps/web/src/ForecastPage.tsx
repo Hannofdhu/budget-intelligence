@@ -9,6 +9,7 @@ import { BudgetDataSection } from "./BudgetDataSection";
 import { skuIdentityCells, skuIdentityHeaders } from "./SkuIdentity";
 import { FilterSelect } from "./FilterSelect";
 import { ForecastGroupSelector } from "./ForecastGroupSelector";
+import { ForecastRevenueTrend } from "./ForecastRevenueTrend";
 import { filterValues, matchesFilter, type FilterValue } from "./filterSelection";
 import { hasForecastFilterState, readForecastViewFilters, writeForecastViewFilters, readForecastGroupDimensions, writeForecastGroupDimensions, type ForecastViewFilters } from "./forecastViewState";
 import { BudgetUtilityPanel } from "./BudgetUtilityPanel";
@@ -252,7 +253,7 @@ export function ForecastIssueGroups({ issues }: { issues: ForecastIssue[] }) {
 }
 
 /** Presentation only: the server owns the forecasting rules and official readiness. */
-export function ForecastDashboard({ calculation, busy = false, trialMode = false, onRecords }: { calculation: ForecastCalculation; busy?: boolean; trialMode?: boolean; onRecords?: () => void }) {
+export function ForecastDashboard({ calculation, busy = false, trialMode = false, onRecords, trend }: { calculation: ForecastCalculation; busy?: boolean; trialMode?: boolean; onRecords?: () => void; trend?: ReactNode }) {
   const [group, setGroup] = useState<ForecastGroupDimension[]>(() => readForecastGroupDimensions(forecastSearch()));
   const preferOpenSeason = trialMode || calculation.fixed_rules_version === fixedForecastRulesVersion;
   const defaultSeason = preferOpenSeason ? calculation.quarters.find(quarter => quarter.state === "OPEN")?.season ?? "" : "";
@@ -315,6 +316,7 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
     <nav className="forecast-content-tabs" aria-label="预测展示方式"><button type="button" aria-current={view === "board" ? "page" : undefined} onClick={() => setView("board")}>看板</button><button type="button" aria-current={view === "details" ? "page" : undefined} onClick={() => setView("details")}>明细</button><button type="button" aria-haspopup="dialog" disabled={!onRecords || busy} onClick={onRecords}>记录</button></nav>
     <div hidden={view !== "board"} className="forecast-board-overview">
     <div className="forecast-global-scope"><strong>全年总览</strong><span>全部业务 · 不受下方筛选影响</span></div>
+    {trend}
     <section className="forecast-metrics" aria-label="FY27 部门全年预测">
       <div><span>定版预算结转收入</span><strong>{money(calculation.annual.budget_revenue)}</strong></div>
       <div className={complete ? "forecast-key-metric" : ""}><span>预计全年结转收入</span><strong>{money(calculation.annual.forecast_revenue)}</strong></div>
@@ -565,14 +567,15 @@ export function ForecastPage() {
         {unsaved && <p className="forecast-version-pending" role="status">先保存或放弃当前修改，再切换版本。</p>}
         <section className="forecast-history" aria-label="预测记录"><h3>预测记录 {data?.history.length ?? 0}</h3><ol>{data?.history.map(item => <li key={item.id}><button disabled={!identity || Boolean(busy) || unsaved} aria-current={item.id === version?.id ? "true" : undefined} aria-label={`查看预测 P${item.sequence}`} onClick={() => void loadSavedVersion(item.id)}><strong>P{item.sequence}</strong><span>{item.status === "CONFIRMED" ? "已确认" : "草稿"}</span><time>{item.as_of}</time><small>保存于 {savedAt(item.created_at)}</small>{item.id === version?.id && <span>{readonly ? "正在查看" : "当前"}</span>}</button></li>)}</ol>{!data?.history.length && <p>暂无保存记录</p>}</section>
       </BudgetUtilityPanel>
-      {readonly && <section className="forecast-readonly" role="status"><strong>{version ? `P${version.sequence} 保存结果 · 只读查看` : "历史版本 · 只读查看"}</strong><span>{version ? `保存于 ${savedAt(version.created_at) || version.as_of}，数据截至 ${version.as_of}` : busy ? "正在读取指定版本" : "未能读取指定版本"}</span><p>查看本版保存的结果和快照。返回当前版本后可更新或调整预测。</p></section>}
+      {readonly && <section className="forecast-readonly" role="status"><div className="forecast-readonly-copy"><strong>{version ? `P${version.sequence} 保存结果 · 只读查看` : "历史版本 · 只读查看"}</strong><span>{version ? `保存于 ${savedAt(version.created_at) || version.as_of}，数据截至 ${version.as_of}` : busy ? "正在读取指定版本" : "未能读取指定版本"}</span><p>查看本版保存的结果和快照。返回当前版本后可更新或调整预测。</p></div><button type="button" className="forecast-primary" disabled={!identity || Boolean(busy) || unsaved} onClick={() => void loadSavedVersion("")}>返回当前版本</button></section>}
       {pendingPredictionChanges && !drawerOpen && <div className="forecast-pending" role="status"><span>修改未保存</span><button onClick={() => openDrawer(drawerTab)}>继续编辑</button></div>}
       {busy && <div className="forecast-working" role="status" aria-live="polite"><span/>{["更新预测", "重试更新"].includes(busy) ? "正在读取数据并生成预测，完成后保存新版本…" : `${busy}中…`}</div>}
       {error && <section className="forecast-error" role="alert"><strong>{updateFailed ? "更新未完成" : failure?.action === "download" ? "快照下载未完成" : "操作未完成"}</strong>{failure && <span className="forecast-error-category">{forecastFailureCategory(failure.error)}</span>}<p>{error}</p>{updateFailed && <p className="forecast-retained">{retained ? `上次保存 P${retained.sequence} · 数据截至 ${retained.as_of}${retained.created_at ? ` · 保存于 ${savedAt(retained.created_at)}` : ""}。` : "尚无已保存预测。"}{failure?.error.detail.retained_version !== undefined ? "该保存版本已保留。" : "本次更新是否完成尚未确认，重试将核对同一次更新。"}</p>}{loginRequired && <p>请先检查观远登录或数据权限，再更新预测。</p>}{failure?.error.detail.diagnostic_id && <small>核对编号：{failure.error.detail.diagnostic_id}</small>}<div className="forecast-error-actions">{updateFailed ? canEditBasis && !pendingPredictionChanges && failure?.error.detail.retryable !== false && <button disabled={Boolean(busy)} onClick={() => void updateForecast(true)}>重试更新</button> : failure?.action === "download" ? <button disabled={Boolean(busy)} onClick={() => void downloadSnapshot()}>重试下载</button> : <button disabled={Boolean(busy) || unsaved} onClick={() => identity ? void loadSavedVersion(selectedVersionId) : location.reload()}>{identity ? "重新读取保存结果" : "重新打开"}</button>}</div></section>}
       {notice && <p className="forecast-notice" role="status">{notice}</p>}
       {!data ? !error && <div className="forecast-skeleton" aria-label="正在读取预测" role="status"><div/><div/><div/></div> : !version ? <BudgetDataSection id="forecast-start" title="先生成 FY27 预测" className="forecast-start"><div className="forecast-start-states">{forecastSeasons.map(season => <div key={season}><strong>{season}</strong><span>{forecastStateLabels[defaultForecastStates[season]]}</span></div>)}</div></BudgetDataSection> : <>
         {trialMode && <ForecastTrialStatus ready={version.calculation.trial_ready === true} busy={Boolean(busy)}/>}
-        <ForecastDashboard calculation={version.calculation} trialMode={trialMode} busy={Boolean(busy)} onRecords={() => setVersionsOpen(true)}/>
+        <ForecastDashboard calculation={version.calculation} trialMode={trialMode} busy={Boolean(busy)} onRecords={() => setVersionsOpen(true)}
+          trend={identity && <ForecastRevenueTrend identity={identity} versionId={version.id} busy={Boolean(busy) || unsaved} onVersion={id => void loadSavedVersion(id)}/>}/>
         <ForecastSettingsDrawer open={drawerOpen} tab={drawerTab} onTabChange={setDrawerTab} onClose={() => { if (!busy) setDrawerOpen(false); }} canMaintain={canMaintain} busy={Boolean(busy)} footer={canMaintain && <>
           <label>本次修改原因<input disabled={Boolean(busy)} value={reason} onChange={event => setReason(event.target.value)}/></label>
           <div className="forecast-drawer-save"><span role="status">{busy ? `${busy}中…` : unfinishedInputs ? "先完成当前明细调整" : pendingPredictionChanges ? "修改未保存" : "没有未保存的修改"}</span><button type="button" className="forecast-primary" disabled={Boolean(busy) || !settingChanged || unfinishedInputs || !reason.trim() || !Number.isInteger(assumptions.minimum_sample) || assumptions.minimum_sample < 1} onClick={() => identity && void perform("保存预测", () => reviseForecast(identity, version.id, assumptions, reason.trim()))}>保存并重算</button></div>

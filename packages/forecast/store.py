@@ -111,6 +111,21 @@ class ForecastStore:
         with self._lock():
             return list(reversed(self._versions(self._events(department))))
 
+    def trend(
+        self,
+        department: str,
+        *,
+        baseline_hash: str,
+        days: Any = "30",
+        through_version: str | None = None,
+    ) -> Json:
+        # Isolated legacy contract tests only; production uses PostgreSQL above.
+        from packages.forecast.trend import build_forecast_trend
+
+        return build_forecast_trend(
+            self.versions(department), baseline_hash=baseline_hash, days=days, through_version=through_version
+        )
+
     def version(self, department: str, version_id: str) -> Json | None:
         with self._lock():
             events = self._events(department)

@@ -136,6 +136,25 @@ export interface ForecastEnvelope {
   latest_version_id?: string | null;
 }
 export type ForecastVersionSummary = Pick<ForecastVersion, "id" | "sequence" | "status" | "as_of" | "created_at">;
+export type ForecastTrendPeriod = "全年" | ForecastSeason;
+export type ForecastTrendDays = 30 | 90 | "all";
+export interface ForecastRevenueTrendValue {
+  forecast_revenue: string | null; actual_revenue: string | null;
+  actual_status: "AVAILABLE" | "UNAVAILABLE" | "ZERO_DEFAULTED";
+}
+export interface ForecastRevenueTrendPoint {
+  date: string; version_id: string; sequence: number; status: "DRAFT" | "CONFIRMED";
+  created_at: string; as_of: string; generation: "AUTOMATIC" | "MANUAL";
+  periods: Record<ForecastTrendPeriod, ForecastRevenueTrendValue>;
+}
+export interface ForecastRevenueTrendEnvelope {
+  baseline_year: number; timezone: string; points: ForecastRevenueTrendPoint[];
+}
+export interface ForecastSchedule {
+  enabled: boolean; time: string; timezone: string; next_run_at: string | null;
+  last_success_at: string | null; catch_up: boolean;
+  last_run: { state: string; finished_at?: string | null; error?: { message?: string; code?: string } | string | null; scheduled_for?: string } | null;
+}
 export interface ForecastSnapshotArchive extends Record<string, unknown> {
   version: ForecastVersionSummary;
   snapshot: Record<string, unknown>;
@@ -320,6 +339,14 @@ export async function getForecast(identity: ApiIdentity, signal?: AbortSignal): 
 }
 export async function getForecastVersion(identity: ApiIdentity, id: string, signal?: AbortSignal): Promise<ForecastEnvelope> {
   return forecastResponse(await fetch(`${base}/versions/${encodeURIComponent(id)}`, { headers: identityHeaders(identity), signal }));
+}
+/** Read existing immutable snapshots only; opening the trend never refreshes or confirms a forecast. */
+export async function getForecastRevenueTrend(identity: ApiIdentity, days: ForecastTrendDays, throughVersion: string, signal?: AbortSignal): Promise<ForecastRevenueTrendEnvelope> {
+  const query = new URLSearchParams({ days: String(days), through_version: throughVersion });
+  return forecastResponse(await fetch(`${base}/trend?${query}`, { headers: identityHeaders(identity), signal }));
+}
+export async function getForecastSchedule(identity: ApiIdentity, signal?: AbortSignal): Promise<ForecastSchedule> {
+  return forecastResponse(await fetch(`${base}/schedule`, { headers: identityHeaders(identity), signal }));
 }
 export async function getForecastSnapshot(identity: ApiIdentity, id: string): Promise<ForecastSnapshotArchive> {
   const archive = await forecastResponse<ForecastSnapshotArchive>(await fetch(`${base}/versions/${encodeURIComponent(id)}/snapshot`, { headers: identityHeaders(identity) }));
