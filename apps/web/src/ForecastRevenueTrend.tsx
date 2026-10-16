@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ApiIdentity } from "./api";
 import { ActionTable } from "./ActionTable";
 import { BudgetDataSection } from "./BudgetDataSection";
+import { BudgetVersionTrace } from "./BudgetVersionIdentity";
+import { versionLabel, versionTimestamp, versionStatusLabel, versionUpdateLabel } from "./budgetVersionDisplay";
 import type { ExportColumn } from "./budgetExport";
 import { forecastNumber, forecastSeasons, getForecastRevenueTrend, getForecastSchedule,
   type ForecastRevenueTrendEnvelope, type ForecastRevenueTrendPoint, type ForecastSchedule,
@@ -14,10 +16,7 @@ const amount = (value: string | null | undefined) => {
   const numeric = forecastNumber(value);
   return numeric === null ? "未提供" : `${(numeric / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 万元`;
 };
-const savedTime = (value: string) => {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-};
+const savedTime = versionTimestamp;
 const datePosition = (value: string) => Date.parse(`${value}T00:00:00+08:00`);
 const trendPlotHeight = 230;
 
@@ -28,7 +27,7 @@ export function forecastTrendTransfer(data: ForecastRevenueTrendEnvelope, period
     { key: "forecast_revenue", label: "预计结转收入（万元）", format: "money" },
     { key: "actual_revenue", label: "截至当日实际结转收入（万元）", format: "money" },
     { key: "actual_status", label: "实际数据说明" }, { key: "version", label: "预测版本" },
-    { key: "version_id", label: "版本编号" }, { key: "status", label: "确认状态" },
+    { key: "version_id", label: "精确版本标识" }, { key: "status", label: "确认状态" },
     { key: "as_of", label: "数据截至日期" }, { key: "created_at", label: "保存时间（北京时间）" },
     { key: "generation", label: "生成方式" },
   ];
@@ -37,10 +36,10 @@ export function forecastTrendTransfer(data: ForecastRevenueTrendEnvelope, period
     return { date: point.date, period, forecast_revenue: forecast === null ? null : forecast / 10000,
       actual_revenue: actual === null ? null : actual / 10000,
       actual_status: value?.actual_status === "ZERO_DEFAULTED" ? "含未知实际按0计" : value?.actual_status === "AVAILABLE" ? "已保存实际" : "历史快照未提供实际",
-      version: `P${point.sequence}`, version_id: point.version_id, status: point.status === "CONFIRMED" ? "已确认" : "草稿",
-      as_of: point.as_of, created_at: savedTime(point.created_at), generation: point.generation === "AUTOMATIC" ? "自动更新" : "手动更新" };
+      version: versionLabel(point.sequence), version_id: point.version_id, status: versionStatusLabel(point.status),
+      as_of: point.as_of, created_at: savedTime(point.created_at), generation: versionUpdateLabel(null, point.generation) };
   });
-  return { columns, rows, filename: `FY${String(data.baseline_year).slice(-2)}-${period}-结转收入趋势` };
+  return { columns, rows, filename: `FY${String(data.baseline_year).slice(-2)}-${period}-结转收入趋势-多版本-${data.points[0]?.date ?? "无保存日"}-${data.points.at(-1)?.date ?? "无保存日"}` };
 }
 
 /** Geometry uses chronological spacing and breaks at nulls; it never invents earlier observations. */
@@ -79,6 +78,7 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
   const selected = points[selectedIndex], value = selected?.periods[period];
   const geometry = useMemo(() => forecastTrendGeometry(points, period, chartWidth), [points, period, chartWidth]);
   const transfer = useMemo(() => data ? forecastTrendTransfer(data, period) : null, [data, period]);
+  const visibleColumns = transfer?.columns.filter(column => column.key !== "version_id") ?? [];
   const selectIndex = (index: number) => { if (points[index]) setSelectedId(points[index].version_id); };
   const hasNumbers = points.some(point => forecastNumber(point.periods[period]?.forecast_revenue) !== null || forecastNumber(point.periods[period]?.actual_revenue) !== null);
   useEffect(() => {
@@ -133,17 +133,18 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
       </div> : <p className="forecast-trend-message">这些历史快照未提供{period}结转收入，不补零或编造曲线。</p>}
       {points.length === 1 && <p className="forecast-trend-hint">目前只有一个保存日，先展示真实数据点；不补造历史趋势。</p>}
       <label className="forecast-trend-date-control" htmlFor={`${chartId}-date`}><span>选择保存日</span><input id={`${chartId}-date`} type="range" min={0} max={Math.max(0, points.length - 1)} step={1} value={selectedIndex} disabled={points.length < 2}
-        aria-valuetext={selected ? `${selected.date}，P${selected.sequence}，数据截至${selected.as_of}` : "无数据"} onChange={event => selectIndex(Number(event.target.value))}/><time>{selected?.date}</time></label>
+        aria-valuetext={selected ? `${selected.date}，${versionLabel(selected.sequence)}，数据截至${selected.as_of}` : "无数据"} onChange={event => selectIndex(Number(event.target.value))}/><time>{selected?.date}</time></label>
       {selected && <div className="forecast-trend-point" aria-live="polite" aria-atomic="true">
         <div className="forecast-trend-point-values"><span>预计结转收入<strong>{amount(value?.forecast_revenue)}</strong></span><span>截至当日实际结转收入<strong>{amount(value?.actual_revenue)}</strong></span></div>
-        <div className="forecast-trend-point-source"><span>P{selected.sequence} · {selected.status === "CONFIRMED" ? "已确认" : "草稿"} · {selected.generation === "AUTOMATIC" ? "自动更新" : "手动更新"}</span><span>数据截至 {selected.as_of} · 保存于 {savedTime(selected.created_at)}</span>{selected.version_id !== versionId && <button type="button" disabled={busy} onClick={() => onVersion(selected.version_id)}>查看当日完整预测</button>}</div>
+        <div className="forecast-trend-point-source"><span>{versionLabel(selected.sequence)} · {versionStatusLabel(selected.status)} · {versionUpdateLabel(null, selected.generation)}</span><span>数据截至 {selected.as_of} · 保存于 {savedTime(selected.created_at)}</span>{selected.version_id !== versionId && <button type="button" disabled={busy} onClick={() => onVersion(selected.version_id)}>查看当日完整预测</button>}</div>
+        <BudgetVersionTrace code={`P${selected.sequence}`} id={selected.version_id} createdAt={selected.created_at}/>
         {value?.actual_status === "ZERO_DEFAULTED" && <p className="forecast-trend-hint">本版含未知实际按 0 计，原始缺失可在版本快照中追溯。</p>}
         {value?.actual_status === "UNAVAILABLE" && <p className="forecast-trend-hint">本版历史快照未提供实际结转收入，不按 0 补齐。</p>}
       </div>}
       {transfer && <details className="forecast-trend-data"><summary>查看趋势数据 · {period} · {points.length} 个保存日</summary>
         <ActionTable keyboardNavigation aria-label={`${period}结转收入趋势数据`} tableLabel={`${period}结转收入趋势`} exportData={transfer} exportLabel="导出趋势数据" scrollClassName="forecast-trend-table-wrap">
-          <thead><tr>{transfer.columns.map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
-          <tbody>{transfer.rows.map(row => <tr key={row.version_id}>{transfer.columns.map(column => <td key={column.key}>{column.key === "version" ? <button type="button" disabled={busy} onClick={() => onVersion(row.version_id)}>{row.version}</button> : row[column.key as keyof typeof row] === null ? "未提供" : typeof row[column.key as keyof typeof row] === "number" ? (row[column.key as keyof typeof row] as number).toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : row[column.key as keyof typeof row]}</td>)}</tr>)}</tbody>
+          <thead><tr>{visibleColumns.map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
+          <tbody>{transfer.rows.map(row => <tr key={row.version_id}>{visibleColumns.map(column => <td key={column.key}>{column.key === "version" ? <button type="button" disabled={busy} onClick={() => onVersion(row.version_id)}>{row.version}</button> : row[column.key as keyof typeof row] === null ? "未提供" : typeof row[column.key as keyof typeof row] === "number" ? (row[column.key as keyof typeof row] as number).toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : row[column.key as keyof typeof row]}</td>)}</tr>)}</tbody>
         </ActionTable>
       </details>}
     </>}

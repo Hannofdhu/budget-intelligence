@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode
 import { downloadBudgetWorkbook, type ExportColumn } from "./budgetExport";
 import { copyTableText, readRenderedTable, tableClipboardText, tableCopyRows, tableExportData } from "./tableTransfer";
 import { moveTableSelection, renderedCellGrid, scrollTableViewportToEdge, selectedTableRows, tableMoveKeys, tableSelectionBounds, type TableMove, type TableSelection } from "./tableKeyboard";
+import { readVersionExportContext, withVersionCopyContext, withVersionExportContext } from "./budgetVersionExport";
 
 type TransferData = { columns: ExportColumn[]; rows: object[]; filename: string };
 type Props = ComponentProps<"table"> & { tableLabel?: string; exportData?: TransferData; copyRows?: string[][]; keyboardNavigation?: boolean;
@@ -61,9 +62,10 @@ export function ActionTable({ tableLabel, exportData, exportLabel, copyRows, key
     setBusy(kind); setNotice("");
     try {
       const values = readRenderedTable(table.current);
-      if (kind === "copy") { await copyTableText(copyRows ?? (exportData ? tableCopyRows(exportData.columns, exportData.rows) : values.grid)); setNotice("已复制"); }
+      const context = readVersionExportContext(table.current);
+      const data = withVersionExportContext(exportData ?? { ...tableExportData(values.headings, values.body), filename: label() }, context);
+      if (kind === "copy") { await copyTableText(copyRows ? withVersionCopyContext(copyRows, context) : exportData || context ? tableCopyRows(data.columns, data.rows) : values.grid); setNotice("已复制"); }
       else {
-        const data = exportData ?? { ...tableExportData(values.headings, values.body), filename: label() };
         await downloadBudgetWorkbook(data.columns, data.rows, data.filename);
         setNotice(`已导出${data.rows.length}条`);
       }

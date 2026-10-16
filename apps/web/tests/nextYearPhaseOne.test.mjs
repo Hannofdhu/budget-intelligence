@@ -35,7 +35,7 @@ test("compact summary preserves signed comparisons and zero rather than silently
     status: "待重算 · 原结果 N12", previous: { sequence: 11, calculation: { annual: { ...annual, revenue_yuan: "125000", target_revenue_yuan: "150000", gap_yuan: "25000" } } } };
   const compact = render({ ...props, compact: true }), full = render(props);
   assert.equal(compact.replace(" ny-summary-compact", ""), full);
-  assert.match(compact, /相对 N11 -12\.5 万元/);
+  assert.match(compact, /相对第11版 -12\.5 万元/);
   assert.match(compact, /缺口增加 12\.5 万元/);
   assert.match(compact, /<strong>0<\/strong>/);
 });

@@ -38,7 +38,7 @@ test("audit uses the shared multi-select and selected roles continue through ver
   assert.match(source, /actingRole: FilterValue/);
   assert.match(source, /<FilterSelect aria-label="审计角色"/);
   assert.match(source, /actingRole: filterValues\(state\.actingRole\)\.length \? state\.actingRole : undefined/);
-  assert.match(source, /\{ \.\.\.auditApiFilters\(nextFilters\), revisionId \}/);
+  assert.match(source, /loadAudits\(budget\.annual_budget_id, nextFilters, false, undefined, revisionId, compareId\)/);
   assert.match(source, /loadAudits\(budget\.annual_budget_id, appliedFilters, true, auditCursor\)/);
   assert.doesNotMatch(source, /auditEvents\.filter\(/, "filtering only a loaded page would be incomplete");
   assert.match(source, /条已加载/);
@@ -65,17 +65,17 @@ function auditHarness() {
     [2, { annual_budget_id: "budget-a", fiscal_year: 2027, current_draft_revision_id: "revision-b", current_published_revision_id: null }],
     [3, [revision("revision-b", 2), revision("revision-a", 1)]], [4, "revision-b"], [5, "revision-a"],
   ]);
-  const states = [], writes = [];
-  let index = 0;
+  const states = [], writes = [], refs = [];
+  let index = 0, refIndex = 0;
   const react = { ...require("react"), useState(value) {
     const key = index++;
     if (!(key in states)) states[key] = initial.has(key) ? initial.get(key) : typeof value === "function" ? value() : value;
     return [states[key], next => { states[key] = typeof next === "function" ? next(states[key]) : next; writes.push(key); }];
-  }, useMemo: callback => callback(), useCallback: callback => callback, useEffect() {} };
+  }, useRef(value) { const index = refIndex++; return refs[index] ??= { current: value }; }, useMemo: callback => callback(), useCallback: callback => callback, useEffect() {} };
   const loaded = { exports: {} };
   new Function("require", "module", "exports", compiled.outputFiles[0].text)(name => name === "react" ? react : require(name), loaded, loaded.exports);
   return {
-    render() { index = 0; return loaded.exports.VersionAuditPage(); }, states, writes,
+    render() { index = 0; refIndex = 0; return loaded.exports.VersionAuditPage(); }, states, writes,
     restore() { globalThis.window = originalWindow; },
   };
 }

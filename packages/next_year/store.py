@@ -28,6 +28,44 @@ def _source_changed(source: Json | None, draft: Json | None) -> bool:
     return source is None or any(bound.get(key) != source.get(key) for key in ("id", "calculation_hash"))
 
 
+def source_fiscal_year(draft: Json) -> int | None:
+    """Read a bound source year without changing its historical basis object.
+
+    Legacy bases omit the year. Their own frozen baseline is acceptable evidence
+    only when the saved forecast identity, baseline and calculation agree with
+    that basis. A planning year or a newly observed source is never evidence.
+    The enclosing store has already verified the immutable snapshot hash.
+    """
+    source = draft.get("source")
+    if not isinstance(source, dict):
+        return None
+    year = source.get("fiscal_year")
+    if year is not None:
+        return year if type(year) is int and 2000 <= year <= 2100 else None
+    frozen = draft.get("source_snapshot")
+    if not isinstance(frozen, dict):
+        return None
+    forecast, baseline = frozen.get("forecast"), frozen.get("baseline")
+    if not isinstance(forecast, dict) or not isinstance(baseline, dict):
+        return None
+    if any(
+        source.get(key) is None or source.get(key) != forecast.get(key)
+        for key in ("id", "sequence", "status", "as_of", "baseline_hash", "snapshot_hash")
+    ):
+        return None
+    baseline_hash, calculation = source.get("baseline_hash"), forecast.get("calculation")
+    if (
+        not isinstance(baseline_hash, str)
+        or not baseline_hash
+        or baseline_hash != baseline.get("sha256")
+        or not isinstance(calculation, dict)
+        or fingerprint(calculation) != source.get("calculation_hash")
+    ):
+        return None
+    year = baseline.get("fiscal_year")
+    return year if type(year) is int and 2000 <= year <= 2100 else None
+
+
 class NextYearStore(ForecastStore):
     def __init__(self, root: Path = ROOT) -> None:
         super().__init__(root)
@@ -111,6 +149,7 @@ class NextYearStore(ForecastStore):
                     "fiscal_year": draft["inputs"].get("fiscal_year"),
                     "source_id": draft["source"]["id"],
                     "source_sequence": draft["source"].get("sequence"),
+                    "source_fiscal_year": source_fiscal_year(draft),
                     "annual": deepcopy(draft["calculation"].get("annual", {})),
                 }
                 for draft in reversed(drafts)

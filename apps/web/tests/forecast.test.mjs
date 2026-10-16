@@ -366,7 +366,7 @@ test("forecast details own one copy/export group and transfer every filtered row
   findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[2].props.onChange("西直门");
   tree = page();
   assert.equal(transfer(tree).props.exportData.rows.length, 61);
-  assert.equal(transfer(tree).props.exportData.filename, "FY27-达成预测明细");
+  assert.equal(transfer(tree).props.exportData.filename, "全年预测明细");
   assert.ok(transfer(tree).props.exportData.rows.every(row => row.campus === "西直门" && row.season === "暑假"));
   assert.equal(transfer(tree).props.exportData.rows[0].forecast_revenue, "-0.01");
   for (const key of ["budget_revenue", "forecast_revenue"]) assert.equal(transfer(tree).props.exportData.columns.find(column => column.key === key).format, "money");
@@ -384,7 +384,7 @@ test("forecast detail transfer retains trial filenames and honest empty filter r
   const page = dashboardHarness(calculation({ rows: [row({ season: "秋季" })] }), true);
   let tree = page();
   const table = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.tableLabel === "预测明细")[0];
-  assert.equal(table(tree).props.exportData.filename, "FY27-试用预测明细");
+  assert.equal(table(tree).props.exportData.filename, "试用预测明细");
   findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[0].props.onChange("寒假");
   tree = page();
   assert.deepEqual(table(tree).props.exportData.rows, []);

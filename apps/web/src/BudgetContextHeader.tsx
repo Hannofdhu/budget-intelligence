@@ -1,3 +1,5 @@
+import { versionLabel } from "./budgetVersionDisplay";
+
 interface BudgetContextHeaderProps {
   fiscalYear: number;
   revisionNo: number;
@@ -12,7 +14,7 @@ export function BudgetContextHeader({ fiscalYear, revisionNo, revisionId, status
         <span aria-hidden="true">智</span><strong>预算智解</strong>
       </a>
       <div className="publication-topbar-title">FY{String(fiscalYear).slice(-2)} 学校版</div>
-      <div className="decision-version"><span className={`status-dot ${status === "已定版" ? "is-published" : ""}`} /><span>{status}</span><small>R{revisionNo}</small></div>
+      <div className="decision-version"><span className={`status-dot ${status === "已定版" ? "is-published" : ""}`} /><span>{status}</span><small>{versionLabel(revisionNo)}</small></div>
     </header>
   );
 }

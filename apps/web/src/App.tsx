@@ -28,6 +28,9 @@ import {
 import { VersionAuditPage } from "./VersionAuditPage";
 import { RebalancingPage } from "./RebalancingPage";
 import { BudgetContextHeader } from "./BudgetContextHeader";
+import { BudgetVersionIdentity, BudgetVersionTrace } from "./BudgetVersionIdentity";
+import { versionLabel } from "./budgetVersionDisplay";
+import { revisionCommandLabel } from "./budgetRevisionDisplay";
 import "./publicationDesign.css";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -443,8 +446,12 @@ function PublicationPage() {
         </header>
         <div className="publication-heading">
           <div><p>任务 5 / 5</p><h1 className="budget-page-title" ref={pageTitleRef} tabIndex={-1}>确认并定版</h1></div>
-          <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>查看变化记录</a>
+          <a href={`/budget/audit?revision=${encodeURIComponent(activeRevisionId)}`}>版本记录</a>
         </div>
+
+        <BudgetVersionIdentity sequence={revision.revision_no} createdAt={revision.created_at} reason={revisionCommandLabel(revision.command_type)} viewing readonly={isPublished || annualBudget.current_draft_revision_id !== activeRevisionId} />
+        <BudgetVersionTrace code={`R${revision.revision_no}`} id={revision.budget_revision_id} createdAt={revision.created_at} createdBy={revision.created_by} />
+        {annualBudget.current_draft_revision_id && annualBudget.current_draft_revision_id !== activeRevisionId && <p className="budget-status">正在查看{isPublished ? "已定版预算，只读" : "历史版本，只读"} · {versionLabel(revision.revision_no)}。<a href={`/budget/publication?revision=${encodeURIComponent(annualBudget.current_draft_revision_id)}`}>返回最新草稿</a></p>}
 
         <section className={`declaration declaration--${declarationTone}`} aria-live="polite">
           <div className="declaration__signal" aria-hidden="true">
@@ -456,7 +463,7 @@ function PublicationPage() {
           </div>
           <dl className="declaration__facts">
             <div><dt>通过</dt><dd>{passedCount}<small> / {readiness.checks.length}</small></dd></div>
-            <div><dt>修订</dt><dd>R{revision.revision_no}</dd></div>
+            <div><dt>版本</dt><dd>{versionLabel(revision.revision_no)}</dd></div>
             <div><dt>财年</dt><dd>FY{String(annualBudget.fiscal_year).slice(-2)}</dd></div>
           </dl>
         </section>
@@ -519,7 +526,7 @@ function PublicationPage() {
               <summary>查看修订与规则依据</summary>
               <div>
                 <span>当前修订</span>
-                <strong>R{revision.revision_no}</strong>
+                <strong>{versionLabel(revision.revision_no)}</strong>
               </div>
               <dl>
                 <div><dt>修订 ID</dt><dd title={revision.budget_revision_id}>{shortId(revision.budget_revision_id)}</dd></div>

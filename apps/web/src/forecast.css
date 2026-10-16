@@ -90,7 +90,7 @@
 @keyframes forecast-drawer-in { from { transform: translateX(28px); opacity: .7; } to { transform: translateX(0); opacity: 1; } }
 @media (max-width: 760px) { .forecast-drawer { width: 100vw; border-radius: 0; } .forecast-heading > div { display: grid; grid-template-columns: repeat(2, auto); gap: 9px; } .forecast-heading > div > span { grid-column: 1 / -1; text-align: right; } }
 @media (max-width: 500px) { .forecast-drawer-heading { padding: 20px 18px 14px; } .forecast-drawer-tabs { padding: 0 18px; gap: 24px; } .forecast-drawer-body { padding: 22px 18px; } .forecast-drawer-footer { padding: 16px 18px 20px; } .forecast-drawer-save { gap: 12px; } .forecast-how-quarters li { grid-template-columns: 80px 1fr; gap: 12px; } .forecast-drawer-panel .forecast-trial-scope-filters { grid-template-columns: 100px 1fr; gap: 12px; } }
-@media (max-width: 760px) { .forecast-version-tools { align-items: stretch; flex-direction: column; gap: 14px; } .forecast-version-tools > label { width: 100%; } .forecast-version-tools > div { justify-content: flex-start; } .forecast-shell .forecast-history li > button { grid-template-columns: 40px 52px 1fr; gap: 8px; } .forecast-history li > button small { grid-column: 2 / -1; } }
+@media (max-width: 760px) { .forecast-version-tools { align-items: stretch; flex-direction: column; gap: 14px; } .forecast-version-tools > label { width: 100%; } .forecast-version-tools > div { justify-content: flex-start; } }
 .forecast-metrics { display: grid; grid-template-columns: 1.1fr 1.3fr 1.1fr .9fr; margin: 0 0 34px; padding: 26px 0; border-block: 1px solid var(--forecast-line); }
 .forecast-metrics > div { display: flex; flex-direction: column; gap: 13px; padding: 0 26px; border-left: 1px solid var(--forecast-line); }
 .forecast-metrics > div:first-child { padding-left: 0; border-left: 0; }
@@ -251,9 +251,11 @@
 .forecast-history ol { list-style: none; padding: 0; margin-top: 15px; }
 .forecast-history li { display: flex; gap: 20px; padding: 11px 0; font-size: var(--budget-caption-size); border-top: 1px solid #e4e9e1; }
 .forecast-history li:has(> button) { display: block; padding: 0; }
-.forecast-shell .forecast-history li > button { display: grid; grid-template-columns: 44px 56px 92px 1fr auto; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; border: 0; background: transparent; text-align: left; }
+.forecast-shell .forecast-history li > button { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, auto) auto; align-items: center; gap: 12px; width: 100%; padding: 12px 8px; border: 0; background: transparent; text-align: left; }
 .forecast-history li > button[aria-current="true"] { color: #214f43; background: #edf3ed; }
-.forecast-history li > button small { color: var(--forecast-muted); font-size: var(--budget-caption-size); }
+.forecast-history-asof { display: grid; gap: 4px; font-size: var(--budget-caption-size); color: var(--forecast-muted); }
+.forecast-history-open { white-space: nowrap; min-width: 2em; font-size: var(--budget-body-size); }
+.forecast-version-context { font-size: var(--budget-body-size); line-height: 1.7; }
 .forecast-working { display: flex; align-items: center; gap: 12px; padding: 15px 18px; margin: 0 0 24px; color: var(--budget-accent); background: #eaf1e8; border-radius: 8px; font-size: var(--budget-body-size); }
 .forecast-working > span { width: 55px; height: 5px; overflow: hidden; border-radius: 5px; background: #c1d3bf; }
 .forecast-working > span::after { display: block; content: ""; width: 30px; height: 5px; background: #568b69; animation: forecast-working 1.5s ease-in-out infinite; }
@@ -343,8 +345,9 @@
   .forecast-confirm { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); gap: 12px; }
   .forecast-confirm .forecast-confirm-actions { margin-left: auto; }
   .forecast-confirm form { gap: 10px; }
-  .forecast-shell .forecast-history li > button { grid-template-columns: 40px 52px 1fr; }
-  .forecast-history li > button small { grid-column: 2 / -1; }
+  .forecast-shell .forecast-history li > button { grid-template-columns: minmax(0, 1fr) auto; }
+  .forecast-history-asof { grid-column: 1; }
+  .forecast-history-open { grid-column: 2; grid-row: 1 / 3; }
 }
 
 /* Dense tables retain their existing semantics; only the transfer row is outside scrolling. */

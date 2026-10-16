@@ -8,6 +8,7 @@ import {
   confirmDiscountUnlock,
   createOptimizationRun,
   fetchAnnualBudget,
+  fetchAuditEvents,
   fetchCurrentDiscountUnlock,
   fetchLatestOptimizationRun,
   fetchRevision,
@@ -28,6 +29,10 @@ import {
   type TargetClosureVersion,
 } from "./api";
 import { BudgetContextHeader } from "./BudgetContextHeader";
+import { BudgetVersionIdentity, BudgetVersionTrace } from "./BudgetVersionIdentity";
+import { versionLabel } from "./budgetVersionDisplay";
+import { revisionCommandLabel, revisionRelations } from "./budgetRevisionDisplay";
+import { budgetVersionExportAttributes } from "./budgetVersionExport";
 
 type PageState = "idle" | "loading" | "ready" | "working" | "error";
 
@@ -299,6 +304,7 @@ export function RebalancingPage() {
   const [canRevertApplication, setCanRevertApplication] = useState(false);
   const [applicationRevert, setApplicationRevert] = useState<ScenarioApplicationRevert | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [publicationFacts, setPublicationFacts] = useState<{ publishedIds: Set<string>; known: boolean }>({ publishedIds: new Set(), known: false });
 
   const load = useCallback(async (revisionId: string, nextIdentity = identity) => {
     if (!revisionId) return;
@@ -311,18 +317,24 @@ export function RebalancingPage() {
       const nextRevision = await fetchRevision(revisionId, nextIdentity);
       const nextBudget = await fetchAnnualBudget(nextRevision.annual_budget_id, nextIdentity);
       const closureId = nextRevision.component_manifest.target_closure_result_version_id;
-      const [nextRun, nextClosure, applicationStatus] = await Promise.all([
+      const [nextRun, nextClosure, applicationStatus, publications] = await Promise.all([
         fetchLatestOptimizationRun(revisionId, nextIdentity),
         typeof closureId === "string" ? fetchTargetClosureVersion(closureId, nextIdentity) : Promise.resolve(null),
         typeof nextRevision.component_manifest.scenario_application_id === "string"
           ? fetchScenarioApplicationStatus(revisionId, nextIdentity)
           : Promise.resolve(null),
+        nextBudget.current_published_revision_id === revisionId
+          ? Promise.resolve({ publishedIds: new Set([revisionId]), known: true })
+          : fetchAuditEvents(nextBudget.annual_budget_id, { revisionId, eventType: "PUBLISHED" }, nextIdentity)
+            .then(page => ({ publishedIds: new Set(page.items.filter(event => event.budget_revision_id === revisionId && event.event_type === "PUBLISHED").map(event => event.budget_revision_id!)), known: true }))
+            .catch(() => ({ publishedIds: new Set<string>(), known: false })),
       ]);
       const nextUnlock = nextRun
         ? await fetchCurrentDiscountUnlock(revisionId, nextRun.input_fingerprint, nextIdentity)
         : null;
       setRevision(nextRevision);
       setBudget(nextBudget);
+      setPublicationFacts(publications);
       setApplication(applicationStatus?.application ?? null);
       setCanRevertApplication(applicationStatus?.can_revert ?? false);
       setClosure(nextClosure);
@@ -456,22 +468,28 @@ export function RebalancingPage() {
     );
   }
 
-  const isPublished = budget.current_published_revision_id === revision.budget_revision_id;
-  const isCurrentDraft = !isPublished && budget.current_draft_revision_id === revision.budget_revision_id;
+  const isCurrentPublished = budget.current_published_revision_id === revision.budget_revision_id;
+  const isPublished = isCurrentPublished || publicationFacts.publishedIds.has(revision.budget_revision_id);
+  // The existing pointer-based editing gate is unchanged; audit facts describe history only.
+  const isCurrentDraft = !isCurrentPublished && budget.current_draft_revision_id === revision.budget_revision_id;
   const tolerance = departmentClosure ? Number(departmentClosure.tolerance_yuan) : 0;
   const needsBalancing = gap !== null && Math.abs(gap) > tolerance;
   const canGenerate = isCurrentDraft && needsBalancing && Boolean(closure);
   const resultHref = `/budget/results?revision=${encodeURIComponent(revision.budget_revision_id)}`;
   const workspaceHref = `/budget/workspace?revision=${encodeURIComponent(revision.budget_revision_id)}&section=results`;
   const title = isPublished ? "这版预算已定版" : !isCurrentDraft ? "这是历史修订" : !closure ? "先完成预算计算" : needsBalancing ? gap !== null && gap < 0 ? "预算还有缺口" : "预算超出目标" : "无需调平";
+  const versionExportContext = { fiscalYear: budget.fiscal_year, object: "年度预算", sequence: revision.revision_no, createdAt: revision.created_at, id: revision.budget_revision_id };
 
   return (
     <div className="app-frame rebalance-app decision-shell budget-auxiliary">
       <a className="skip-link" href="#rebalance-main">跳到缺口处理</a>
-      <BudgetContextHeader fiscalYear={budget.fiscal_year} revisionNo={revision.revision_no} revisionId={revision.budget_revision_id} status={isPublished ? "已定版" : "草稿"} />
+      <BudgetContextHeader fiscalYear={budget.fiscal_year} revisionNo={revision.revision_no} revisionId={revision.budget_revision_id} status={isPublished ? "已定版" : publicationFacts.known || isCurrentDraft ? "草稿" : "定版状态待核对"} />
 
-      <main className="rebalance-workspace" id="rebalance-main">
+      <main className="rebalance-workspace" id="rebalance-main" {...budgetVersionExportAttributes(versionExportContext)}>
         <div className="context-return"><a href={isPublished ? resultHref : workspaceHref}>返回{isPublished ? "预算结果" : "计算结果"}</a><span>缺口处理</span></div>
+        <BudgetVersionIdentity sequence={revision.revision_no} createdAt={revision.created_at} reason={revisionCommandLabel(revision.command_type)} viewing readonly={!isCurrentDraft} />
+        <p className="budget-status">{revisionRelations(revision, budget, publicationFacts.publishedIds, publicationFacts.known).map(item => item.label).join(" · ")}{!isCurrentDraft ? " · 只读查看" : ""}{budget.current_draft_revision_id && budget.current_draft_revision_id !== revision.budget_revision_id && <> · <a href={`/budget/rebalancing?revision=${encodeURIComponent(budget.current_draft_revision_id)}`}>返回最新草稿</a></>}</p>
+        <BudgetVersionTrace code={`R${revision.revision_no}`} id={revision.budget_revision_id} createdAt={revision.created_at} createdBy={revision.created_by} />
         <section className="rebalance-hero">
           <div>
             <h1 className="budget-page-title">{title}</h1>
@@ -479,7 +497,7 @@ export function RebalancingPage() {
           </div>
           <div className={`gap-ledger ${gap !== null && !needsBalancing ? "gap-ledger--closed" : ""}`}>
             <span>{gap === null ? "当前修订" : gap < 0 ? "部门预算缺口" : gap > 0 ? "部门预算超额" : "与目标差异"}</span>
-            <strong>{gap === null ? `R${revision.revision_no}` : formatCompactMoney(Math.abs(gap))}</strong>
+            <strong>{gap === null ? versionLabel(revision.revision_no) : formatCompactMoney(Math.abs(gap))}</strong>
             <small>{gap !== null && !needsBalancing ? "在确认容差内" : `目标容差 ±${formatCompactMoney(tolerance)}`}</small>
           </div>
         </section>
@@ -535,7 +553,8 @@ export function RebalancingPage() {
         </section>}
 
         {isCurrentDraft && selected && showDetails && (
-          <section className="scenario-detail budget-surface">
+          <section className="scenario-detail budget-surface" {...budgetVersionExportAttributes({ ...versionExportContext, object: "年度预算调平建议", preview: true,
+            sourceId: selected.rebalancing_scenario_id, sourceLabel: `候选方案（基于FY${String(budget.fiscal_year).slice(-2)}年度预算${versionLabel(revision.revision_no)}）` })}>
             <header><div><h2 className="budget-section-title">{scenarioName(selected.scenario_types, run?.scenarios.indexOf(selected) ?? 0)}差异明细</h2></div><button onClick={() => setShowDetails(false)} aria-label="关闭明细">×</button></header>
             <div className="scenario-detail__summary">
               <dl>

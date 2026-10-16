@@ -7,6 +7,7 @@ import {
 import { PublishedBudgetRecord } from "./PublishedBudgetRecord";
 import { BudgetAnalysisView } from "./BudgetAnalysisView";
 import { normalizePublishedFacts, type PublishedRenewalContext } from "./budgetAnalysis";
+import type { VersionExportContext } from "./budgetVersionDisplay";
 import "./auxiliaryDesign.css";
 
 // This page reads existing published results; no calculation or budget write is performed.
@@ -20,11 +21,12 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [countNotice, setCountNotice] = useState("");
+  const [versionExportContext, setVersionExportContext] = useState<VersionExportContext | undefined>(undefined);
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
-      setLoading(true); setError(""); setCountNotice(""); setHeadcounts([]); setRenewalContext(undefined); setClosure(null); setResult(null);
+      setLoading(true); setError(""); setCountNotice(""); setHeadcounts([]); setRenewalContext(undefined); setClosure(null); setResult(null); setVersionExportContext(undefined);
       try {
         const who = await parseResponse<ApiIdentity>(await fetch("/api/v1/local-trial/session", { signal: controller.signal }));
         if (!revisionId) throw new Error("没有找到要查看的预算版本。");
@@ -70,6 +72,7 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
         const nextClosure = typeof closureId === "string" ? await fetchTargetClosureVersion(closureId, who, controller.signal) : null;
         if (!controller.signal.aborted) {
           setIdentity(who); setAnnualBudgetId(budget.annual_budget_id); setResult(nextResult);
+          setVersionExportContext({ fiscalYear: budget.fiscal_year, object: "年度预算", sequence: revision.revision_no, createdAt: revision.created_at, id: revision.budget_revision_id });
           setHeadcounts(countItems); setRenewalContext(nextRenewalContext); setClosure(nextClosure); setCountNotice(nextNotice);
         }
       } catch (reason) {
@@ -88,10 +91,11 @@ export function BudgetResultsPage({ revisionId, active }: { revisionId: string; 
   return <section className="budget-overview budget-overview--embedded budget-auxiliary" aria-label="第五步：预算概览">
     {loading && <section className="result-state" role="status"><span className="result-loader" /><h1 className="budget-page-title">正在读取预算</h1></section>}
     {error && <section className="result-state result-state--error" role="alert"><h1 className="budget-page-title">预算暂时无法读取</h1><p className="budget-status" role="alert">{error}</p><a href={`/budget/workspace?revision=${encodeURIComponent(revisionId)}&section=home`}>返回年度预算</a></section>}
-    {result && !loading && !error && <>
-      <header className="ba-page-heading"><div><h1 className="budget-page-title" ref={pageTitleRef} tabIndex={-1}>预算概览</h1></div><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>变化记录</a></header>
+    {result && versionExportContext?.id === revisionId && !loading && !error && <>
+      <header className="ba-page-heading"><div><h1 className="budget-page-title" ref={pageTitleRef} tabIndex={-1}>预算概览</h1></div><a href={`/budget/audit?revision=${encodeURIComponent(revisionId)}`}>版本记录</a></header>
       {countNotice && <p className="ba-notice" role="status">{countNotice}</p>}
       <BudgetAnalysisView facts={facts} contextKey={`budget:${annualBudgetId}:${revisionId}`} fiscalYear={result.fiscal_year}
+        versionExportContext={versionExportContext}
         annualTarget={target === undefined ? null : Number(target)}
         recordContent={identity ? <PublishedBudgetRecord revisionId={revisionId} annualBudgetId={annualBudgetId} identity={identity} /> : undefined} />
     </>}

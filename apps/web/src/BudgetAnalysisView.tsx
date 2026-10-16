@@ -15,11 +15,14 @@ import { BudgetScopeBar } from "./BudgetScopeBar";
 import { filterLabel, hasFilter, normalizeFilter, type FilterValue } from "./filterSelection";
 import { skuIdentityCells, skuIdentityHeaders } from "./SkuIdentity";
 import { observeBudgetTableHeader } from "./budgetTableLayout";
+import { versionFileStem, type VersionExportContext } from "./budgetVersionDisplay";
+import { budgetVersionExportAttributes, withVersionExportContext } from "./budgetVersionExport";
 
 type Props = {
   facts: BudgetFact[]; contextKey: string; fiscalYear: number; annualTarget?: number | null;
   initialFilters?: BudgetFilters; onFiltersChange?: (filters: BudgetFilters) => void; recordContent?: ReactNode; hideSummary?: boolean;
   controlledFilters?: BudgetFilters; hideFilters?: boolean; hideScopeSummary?: boolean;
+  versionExportContext?: VersionExportContext;
 };
 type SavedView = { id: string; name: string; contextKey: string; fiscalYear: number; state: BudgetAnalysisState; includesFilters?: boolean };
 type CellPosition = { row: string; column: string; metric: BudgetMetric };
@@ -67,7 +70,7 @@ const stateFromLocation = (facts: BudgetFact[], initialFilters?: BudgetFilters, 
 };
 
 /** Read-only analysis. View state is the only state this component writes. */
-export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget, initialFilters, onFiltersChange, recordContent, hideSummary = false, controlledFilters, hideFilters = false, hideScopeSummary = false }: Props) {
+export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget, initialFilters, onFiltersChange, recordContent, hideSummary = false, controlledFilters, hideFilters = false, hideScopeSummary = false, versionExportContext }: Props) {
   const [internalState, setState] = useState<BudgetAnalysisState>(() => stateFromLocation(facts, initialFilters, controlledFilters));
   const controlled = controlledFilters !== undefined;
   // The parent owns filters in controlled mode; stale URL or local view state never wins a render.
@@ -261,7 +264,8 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   const safePage = selectionScope === filterKey ? Math.min(detailPage, pageCount - 1) : 0;
   const pagedFacts = detailFacts.slice(safePage * 25, (safePage + 1) * 25);
   const exportColumns = detailColumns;
-  const detailTransfer = { columns: exportColumns, rows: detailFacts, filename: `FY${String(fiscalYear).slice(-2)}-${detailSelection ? "所选" : "预算"}明细` };
+  const exportStem = versionExportContext ? versionFileStem(versionExportContext) : `FY${String(fiscalYear).slice(-2)}`;
+  const detailTransfer = { columns: exportColumns, rows: detailFacts, filename: `${exportStem}-${detailSelection ? "所选" : "预算"}明细` };
 
   function selectCell(row: BudgetPivotRow, columnKey: string, metric: BudgetMetric, extend = false) {
     const next = { row: row.key, column: columnKey, metric };
@@ -296,15 +300,15 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   async function doExport() {
     setExporting(true); setNotice("");
     try {
-      const exported = pivotExport(pivot, state.config);
-      await downloadBudgetWorkbook(exported.columns, exported.rows, `FY${String(fiscalYear).slice(-2)}预算透视`, "预算透视");
+      const exported = withVersionExportContext({ ...pivotExport(pivot, state.config), filename: `${exportStem}-预算透视` }, versionExportContext ?? null);
+      await downloadBudgetWorkbook(exported.columns, exported.rows, exported.filename, "预算透视");
       setNotice("已导出。数值可直接计算。");
     } catch (error) { setNotice(error instanceof Error ? error.message : "导出失败，请重试。"); }
     finally { setExporting(false); }
   }
   async function copyPivot() {
     try {
-      const exported = pivotExport(pivot, state.config);
+      const exported = withVersionExportContext({ ...pivotExport(pivot, state.config), filename: `${exportStem}-预算透视` }, versionExportContext ?? null);
       const text = [exported.columns.map(column => column.label), ...exported.rows.map(row => exported.columns.map(column => {
         const value = (row as Record<string, unknown>)[column.key];
         return value === null || value === undefined ? "" : String(value).replace(/[\t\r\n]/g, " ");
@@ -423,7 +427,7 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
     document.getElementById(`ba-tab-${next}`)?.focus();
   };
 
-  return <section className="ba-root" aria-label="预算看板与透视">
+  return <section className="ba-root" aria-label="预算看板与透视" {...budgetVersionExportAttributes(versionExportContext)}>
     <div className="ba-view-tabs" role="tablist" aria-label="预算视图">
       <button role="tab" id="ba-tab-board" tabIndex={activeTab === "board" ? 0 : -1} onKeyDown={onTabKeyDown} aria-selected={!recordView && state.view === "board"} aria-controls="ba-view-panel" onClick={() => changeView("board")}>看板</button>
       <button role="tab" id="ba-tab-pivot" tabIndex={activeTab === "pivot" ? 0 : -1} onKeyDown={onTabKeyDown} aria-selected={!recordView && state.view === "pivot"} aria-controls="ba-view-panel" onClick={() => changeView("pivot")}>透视</button>

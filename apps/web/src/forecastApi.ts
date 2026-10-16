@@ -1,5 +1,6 @@
 import { identityHeaders, newRequestId, parseResponse, type ApiIdentity } from "./api.ts";
 import { compareBudgetGrades } from "./budgetDisplay.ts";
+import { versionFileStem } from "./budgetVersionDisplay.ts";
 
 export const forecastSeasons = ["暑假", "秋季", "寒假", "春季"] as const;
 export type ForecastSeason = typeof forecastSeasons[number];
@@ -127,15 +128,17 @@ export interface ForecastConfirmationCheck {
 }
 export interface ForecastVersion {
   id: string; sequence: number; status: "DRAFT" | "CONFIRMED"; as_of: string; created_at: string;
+  created_by?: string | null; reason?: string | null; generation?: "AUTOMATIC" | "MANUAL" | null;
+  confirmation?: { actor: string | null; at: string | null; reason: string | null } | null;
   states: Record<ForecastSeason, ForecastState>; assumptions: ForecastAssumptions; calculation: ForecastCalculation;
 }
 export interface ForecastEnvelope {
   baseline_year: number; baseline_hash: string; version: ForecastVersion | null;
-  history: Pick<ForecastVersion, "id" | "sequence" | "status" | "as_of" | "created_at">[];
+  history: ForecastVersionSummary[];
   syncing?: boolean;
   latest_version_id?: string | null;
 }
-export type ForecastVersionSummary = Pick<ForecastVersion, "id" | "sequence" | "status" | "as_of" | "created_at">;
+export type ForecastVersionSummary = Pick<ForecastVersion, "id" | "sequence" | "status" | "as_of" | "created_at" | "created_by" | "reason" | "generation" | "confirmation">;
 export type ForecastTrendPeriod = "全年" | ForecastSeason;
 export type ForecastTrendDays = 30 | 90 | "all";
 export interface ForecastRevenueTrendValue {
@@ -144,7 +147,7 @@ export interface ForecastRevenueTrendValue {
 }
 export interface ForecastRevenueTrendPoint {
   date: string; version_id: string; sequence: number; status: "DRAFT" | "CONFIRMED";
-  created_at: string; as_of: string; generation: "AUTOMATIC" | "MANUAL";
+  created_at: string; as_of: string; generation: "AUTOMATIC" | "MANUAL" | null;
   periods: Record<ForecastTrendPeriod, ForecastRevenueTrendValue>;
 }
 export interface ForecastRevenueTrendEnvelope {
@@ -353,13 +356,12 @@ export async function getForecastSnapshot(identity: ApiIdentity, id: string): Pr
   if (archive.version?.id !== id || !archive.snapshot) throw new ForecastRequestError("本次快照与所选预测不一致，请重新读取。", 409, { code: "SNAPSHOT_VERSION_MISMATCH", retryable: false });
   return archive;
 }
-export async function downloadForecastSnapshot(identity: ApiIdentity, version: ForecastVersionSummary): Promise<void> {
+export async function downloadForecastSnapshot(identity: ApiIdentity, version: ForecastVersionSummary, fiscalYear: number): Promise<void> {
   const archive = await getForecastSnapshot(identity, version.id);
   const blob = new Blob([`${JSON.stringify(archive, null, 2)}\n`], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob), anchor = document.createElement("a");
-  const date = version.as_of.replace(/[^0-9]/g, "").slice(0, 8) || "未标日期";
   try {
-    anchor.href = url; anchor.download = `FY27-预测P${version.sequence}-快照-${date}.json`;
+    anchor.href = url; anchor.download = `${versionFileStem({ fiscalYear, object: "全年预测", sequence: archive.version.sequence, createdAt: archive.version.created_at })}-快照.json`;
     document.body.append(anchor); anchor.click();
   } finally { anchor.remove(); URL.revokeObjectURL(url); }
 }

@@ -372,7 +372,10 @@ test("AI shows the source version and multi-value scope, prepares the same conte
   let started = 0, copied = 0;
   const props = workspaceProps({ sourceContext: context, preparedTaskId: "next-year", onStart() { started++; }, onCopyPrepared() { copied++; } });
   const tree = AiAgentWorkspace(props), html = render(props);
-  assert.match(text(html), /来源 FY29预算编制/); assert.match(text(html), /N7 · saved-N7-id/);
+  assert.match(text(html), /来源 FY29预算编制/); assert.match(text(html), /版本 第7版/);
+  const primaryHtml = html.replace(/<details\b[\s\S]*?<\/details>/g, "");
+  assert.doesNotMatch(text(primaryHtml), /saved-N7-id|N7/);
+  assert.match(html, /<summary>追溯信息<\/summary>/); assert.match(html, /saved-N7-id/);
   assert.match(text(html), /FY29预算编制 离经营目标还差多少/);
   assert.match(text(html), /季度：秋季、寒假；校区：西直门、中关村/);
   assert.match(html, /返回来源页面/); assert.match(html, /nyTask=4/);
@@ -380,7 +383,9 @@ test("AI shows the source version and multi-value scope, prepares the same conte
   assert.match(prompt, /saved-N7-id/); assert.match(prompt, /季度：秋季、寒假/); assert.match(prompt, /不要修改、刷新、确认或保存预算/);
   assert.doesNotMatch(prompt, /请先读取最新已保存/);
   const prepared = nodes(tree).find(node => node.props?.className === "ai-agent-prepared");
-  assert.equal(nodes(prepared).find(node => node.type === "p").props.children, prompt);
+  const completePrompt = nodes(prepared).find(node => node.type === "details");
+  assert.equal(nodes(completePrompt).find(node => node.type === "p").props.children, prompt);
+  assert.doesNotMatch(nodes(prepared).find(node => node.type === "p").props.children, /saved-N7-id|N7/);
   assert.equal(started, 0); assert.equal(copied, 0);
   nodes(tree).find(node => node.type === "button" && node.props.children === "复制问题").props.onClick();
   assert.equal(copied, 1); assert.equal(started, 0);

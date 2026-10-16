@@ -3,6 +3,7 @@ import type { Terminal } from "@xterm/xterm";
 import { FY27Header } from "./FY27Header";
 import { budgetModuleName, budgetModuleYears } from "./budgetModules";
 import { aiBudgetContextPrompt, readAiBudgetContext, type AiBudgetContext } from "./aiBudgetContext";
+import { BudgetVersionTrace } from "./BudgetVersionIdentity";
 import {
   AiAgentTerminalConnection, aiAgentSessionActive, createAiAgentSession, getAiAgentStatus, stopAiAgentSession,
   type AiAgentSession, type AiAgentStatus,
@@ -88,6 +89,7 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
         <div><h2 className="budget-subsection-title" id="ai-agent-source-title">当前阅读上下文</h2>{sourceContext && <a href={sourceContext.sourceHref}>返回来源页面</a>}</div>
         {sourceContext ? <dl><div><dt>来源</dt><dd>{sourceContext.moduleLabel}</dd></div><div><dt>版本</dt><dd>{sourceContext.versionLabel}</dd></div><div><dt>范围</dt><dd>{sourceContext.scopeLabel}</dd></div></dl>
           : <p>未绑定来源页面。分析前先读取并核对财年、精确版本和范围。</p>}
+        {sourceContext?.version && <BudgetVersionTrace code={/^[NP]\d{1,10}$/.test(sourceContext.version.label) ? sourceContext.version.label : undefined} id={sourceContext.version.id} />}
         <p>此处仅准备问题；复制并在 Pi 中发送后才会分析。未保存改动不会传入，链接中的版本和范围仍须通过授权只读接口核对，返回来源页面后也请核对版本。</p>
       </section>
       <details className="ai-agent-task-entry" open={!sessionId}>
@@ -99,7 +101,9 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
           </button>)}
         </div>
         {preparedPrompt && <div className="ai-agent-prepared" role="region" aria-label="准备的问题">
-          <p>{preparedPrompt}</p>
+          <p>{aiAgentBudgetTasks.find(task => task.id === preparedTaskId)?.question}</p>
+          <p>{sourceContext ? `${sourceContext.moduleLabel} · ${sourceContext.versionLabel} · ${sourceContext.scopeLabel}` : "未绑定来源页面，分析前须核对实际版本与范围。"}</p>
+          <details><summary>查看完整问题与追溯信息</summary><p>{preparedPrompt}</p></details>
           <div><span>仅准备问题，发送在 Pi 中完成</span><button onClick={onCopyPrepared}>复制问题</button></div>
           {copyNotice && <p className="ai-agent-copy-notice" role="status">{copyNotice}</p>}
         </div>}

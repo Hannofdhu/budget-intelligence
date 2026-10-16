@@ -55,10 +55,12 @@ export interface NextYearDraft {
   id: string; sequence: number; parent_id: string | null; status: "DRAFT"; source: ForecastBasis;
   inputs: NextYearInputs; calculation: NextYearCalculation; created_at: string;
   created_by?: string; reason?: string; operation?: string; restored_from_id?: string | null;
+  /** Read-only projection from the validated frozen source; not a field to persist into source. */
+  source_fiscal_year?: number | null;
 }
 export interface NextYearEnvelope {
   source: ForecastBasis | null; draft: NextYearDraft | null; source_changed: boolean;
-  history: { id: string; sequence: number; created_at: string; [key: string]: unknown }[];
+  history: { id: string; sequence: number; created_at: string; source_fiscal_year?: number | null; source_sequence?: number | null; [key: string]: unknown }[];
   latest_draft_id?: string; read_only?: boolean;
 }
 export interface NextYearBasisPreview {

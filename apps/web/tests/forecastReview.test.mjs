@@ -305,10 +305,10 @@ test("one version panel owns the only history list and frozen snapshot entry, wi
   let tree = h.page();
   assert.equal(find(tree, node => node.type === "section" && node.props["aria-label"] === "预测记录").length, 1);
   assert.equal(find(tree, node => node.type === "select" && node.props["aria-label"] === "查看保存版本").length, 0);
-  assert.equal(buttons(tree, "下载本次快照").length, 1);
+  assert.equal(buttons(tree, "下载本版快照").length, 1);
   const panel = component(tree, "BudgetUtilityPanel");
-  assert.equal(panel.props.open, false); assert.equal(panel.props.title, "预测版本与快照");
-  buttons(tree, `版本记录 P${h.current.sequence}`)[0].props.onClick();
+  assert.equal(panel.props.open, false); assert.equal(panel.props.title, "版本记录");
+  buttons(tree, "版本记录")[0].props.onClick();
   tree = h.page(); assert.equal(component(tree, "BudgetUtilityPanel").props.open, true);
   component(tree, "BudgetUtilityPanel").props.onClose(); assert.equal(h.state.versionsOpen, false);
   component(h.page(), "ForecastDashboard").props.onRecords(); assert.equal(h.state.versionsOpen, true);
@@ -672,7 +672,7 @@ test("failed update preserves saved P16 and retry sends actual POST with the sam
     assert.equal(h.state.failure.error.detail.stage, "query");
     assert.equal(h.state.failure.error.detail.diagnostic_id, "trace-test-timeout");
     const failed = elementText(h.page());
-    assert.match(failed, /更新未完成.*读取数据超时.*上次保存 P16.*2026-10-06/);
+    assert.match(failed, /更新未完成.*读取数据超时.*上次保存第16版.*2026-10-06/);
     assert.doesNotMatch(failed, /已读取最新|新预测已保存/);
     buttons(h.page(), "重试更新")[0].props.onClick();
     await settlePage(() => !h.state.busy && h.state.data.version.sequence === 17);
@@ -711,14 +711,14 @@ test("history selection reads the exact saved version, is readonly for all mutat
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify({ ...envelope, version: url.endsWith(`/versions/${old.id}`) ? old : current }), { status: 200 }); };
   try {
     browser.navigate("/budget/forecast?archive=fy27&bf_scope=1&bf_season=秋季&bf_season=寒假&bf_campus=校区甲");
-    const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"] === "查看预测 P3")[0];
+    const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"]?.startsWith("查看预测第3版，"))[0];
     selector.props.onClick();
     await settlePage(() => !h.state.busy && h.state.selectedVersionId === old.id);
     assert.equal(calls[0].url, "/api/v1/forecasts/fy27/versions/saved-p3");
     assert.equal(calls[0].options.method, undefined);
     assert.deepEqual(h.state.data.version.calculation, old.calculation);
     const readonly = h.page();
-    assert.match(elementText(readonly), /P3 保存结果 · 只读查看/);
+    assert.match(elementText(readonly), /正在查看历史预测 · 第3版 · 草稿 · 只读查看/);
     assert.equal(buttons(readonly, "调整预测").length, 0);
     assert.equal(buttons(readonly, "更新预测").length, 0);
     assert.equal(buttons(readonly, "确认本版预测结果").length, 0);
@@ -784,7 +784,7 @@ test("failed inline return retains the historical snapshot and scoped URL, and c
 
 test("history selection remains blocked while there are pending current-version edits", () => {
   const h = pageHarness({ reason: "尚未保存的调整" });
-  const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"] === `查看预测 P${h.current.sequence}`)[0];
+  const selector = find(h.page(), node => node.type === "button" && node.props["aria-label"]?.startsWith(`查看预测第${h.current.sequence}版，`))[0];
   assert.equal(selector.props.disabled, true);
   selector.props.onClick();
   assert.equal(h.state.selectedVersionId, ""); assert.equal(h.state.reason, "尚未保存的调整");
@@ -793,7 +793,7 @@ test("history selection remains blocked while there are pending current-version 
 test("download selected-version snapshot uses the saved snapshot GET and preserves the complete archive without dumping JSON into the page", async () => {
   const h = pageHarness({ selectedVersionId: "saved-p3" }), previous = { fetch: globalThis.fetch, document: globalThis.document, create: URL.createObjectURL, revoke: URL.revokeObjectURL };
   h.state.data.version = { ...h.current, id: "saved-p3", sequence: 3, as_of: "2026-10-01", created_at: "2026-10-02T09:13:00+08:00" };
-  const archive = { version: { id: "saved-p3", sequence: 3, as_of: "2026-10-01", status: "DRAFT" }, snapshot: { rows: [{ actual_revenue: null, prior_carryout: "-0.01" }], provenance: { query_fingerprint: "frozen-source" } }, assumptions: { preserved: true }, calculation: { annual: { forecast_revenue: "87654.321234" } }, confirmation: null, baseline_hash: "immutable-budget", snapshot_hash: "immutable-snapshot", calculation_hash: "immutable-calculation" };
+  const archive = { version: { id: "saved-p3", sequence: 3, as_of: "2026-10-01", created_at: "2026-10-02T09:13:00+08:00", status: "DRAFT" }, snapshot: { rows: [{ actual_revenue: null, prior_carryout: "-0.01" }], provenance: { query_fingerprint: "frozen-source" } }, assumptions: { preserved: true }, calculation: { annual: { forecast_revenue: "87654.321234" } }, confirmation: null, baseline_hash: "immutable-budget", snapshot_hash: "immutable-snapshot", calculation_hash: "immutable-calculation" };
   const calls = []; let blob, clicked = 0, revoked = "";
   const anchor = { remove() {}, click() { clicked++; } };
   globalThis.document = { createElement() { return anchor; }, body: { append() {} } };
@@ -802,15 +802,15 @@ test("download selected-version snapshot uses the saved snapshot GET and preserv
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify(archive), { status: 200 }); };
   try {
     const before = JSON.stringify(h.state.data);
-    buttons(h.page(), "下载本次快照")[0].props.onClick();
+    buttons(h.page(), "下载本版快照")[0].props.onClick();
     await settlePage(() => !h.state.busy && clicked === 1);
     assert.deepEqual(calls.map(call => call.url), ["/api/v1/forecasts/fy27/versions/saved-p3/snapshot"]);
     assert.equal(calls[0].options.method, undefined);
     assert.deepEqual(JSON.parse(await blob.text()), archive);
-    assert.equal(anchor.download, "FY27-预测P3-快照-20261001.json");
+    assert.equal(anchor.download, "FY27-全年预测-第3版-2026-10-02_0913-快照.json");
     assert.equal(revoked, "blob:saved-snapshot");
     assert.equal(JSON.stringify(h.state.data), before);
-    assert.equal(h.state.notice, "P3 快照已下载");
+    assert.equal(h.state.notice, "第3版快照已下载");
     assert.doesNotMatch(elementText(h.page()), /query_fingerprint|immutable-snapshot|actual_revenue/);
   } finally { globalThis.fetch = previous.fetch; if (previous.document === undefined) delete globalThis.document; else globalThis.document = previous.document; URL.createObjectURL = previous.create; URL.revokeObjectURL = previous.revoke; }
 });
@@ -837,7 +837,7 @@ test("a snapshot belonging to another saved version is rejected before any downl
   const before = JSON.stringify(h.state.data);
   globalThis.fetch = async () => new Response(JSON.stringify({ version: { id: "p-other" }, snapshot: { rows: [] } }), { status: 200 });
   try {
-    buttons(h.page(), "下载本次快照")[0].props.onClick();
+    buttons(h.page(), "下载本版快照")[0].props.onClick();
     await settlePage(() => !h.state.busy && Boolean(h.state.error));
     assert.match(h.state.error, /本次快照与所选预测不一致/);
     assert.equal(h.state.failure.error.detail.code, "SNAPSHOT_VERSION_MISMATCH");

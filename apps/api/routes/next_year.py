@@ -19,7 +19,7 @@ from packages.next_year.calculation import (
     prepare_inputs,
     validate_plan_inputs,
 )
-from packages.next_year.store import NextYearStore
+from packages.next_year.store import NextYearStore, source_fiscal_year
 
 router = APIRouter()
 store = NextYearStore()
@@ -39,6 +39,7 @@ DRAFT_FIELDS = {
     "status",
     "operation",
     "restored_from_id",
+    "source_fiscal_year",
 }
 
 
@@ -100,14 +101,27 @@ def _check_year(draft: Json, fiscal_year: str) -> None:
 def _safe_draft(draft: Json | None) -> Json | None:
     if draft is None:
         return None
-    return {key: draft.get(key) for key in DRAFT_FIELDS}
+    return {**{key: draft.get(key) for key in DRAFT_FIELDS}, "source_fiscal_year": source_fiscal_year(draft)}
 
 
-def _safe_view(view: Json) -> Json:
+def _safe_view(view: Json, baseline: Json | None = None) -> Json:
     draft = view.get("draft")
+    source = view.get("source")
+    # Enrich read responses only. Keep the stored forecast basis (and write-path
+    # observed_source) unchanged so immutable source hashes retain their meaning.
+    if isinstance(source, dict) and source.get("fiscal_year") is None and isinstance(baseline, dict):
+        year, baseline_hash = baseline.get("fiscal_year"), source.get("baseline_hash")
+        if (
+            type(year) is int
+            and 2000 <= year <= 2100
+            and isinstance(baseline_hash, str)
+            and baseline_hash
+            and baseline_hash == baseline.get("sha256")
+        ):
+            source = {**source, "fiscal_year": year}
     return deepcopy(
         {
-            "source": view.get("source"),
+            "source": source,
             "draft": _safe_draft(draft),
             "source_changed": view.get("source_changed", False),
             "history": view.get("history", []),
@@ -276,7 +290,7 @@ async def current(request: Request, actor: ActorDep, fiscal_year: str = "fy28") 
                 or any(draft["source"].get(key) != source.get(key) for key in ("id", "calculation_hash"))
             )
         )
-        return _safe_view({**view, "source": source, "source_changed": changed})
+        return _safe_view({**view, "source": source, "source_changed": changed}, baseline)
     except (ForecastStoreError, NextYearError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -466,7 +480,7 @@ async def version(request: Request, version_id: str, actor: ActorDep, fiscal_yea
         changed = source is None or any(
             bound.get(key) != source.get(key) for key in ("id", "calculation_hash")
         )
-        return _safe_view({**view, "source": source, "source_changed": changed})
+        return _safe_view({**view, "source": source, "source_changed": changed}, baseline)
     except (ForecastStoreError, NextYearError) as exc:
         raise HTTPException(409, str(exc)) from exc
 

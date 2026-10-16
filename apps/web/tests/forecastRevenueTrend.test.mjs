@@ -46,13 +46,13 @@ test("trend reuses the current data section with explicit units, range, series d
   const html = render({});
   assert.match(html, /结转收入趋势/); assert.match(html, /FY27/); assert.match(html, /不受下方筛选影响/);
   assert.match(html, /预计为当时预测的最终结转收入/); assert.match(html, /实际为截至当时已结转的累计收入/);
-  assert.match(html, /每天 09:30 自动更新（北京时间）/); assert.match(html, /最近成功 2026\/10\/16 09:30:00/);
+  assert.match(html, /每天 09:30 自动更新（北京时间）/); assert.match(html, /最近成功 2026-10-16 09:30/);
   assert.match(html, /全年 · 单位：万元/); assert.match(html, /同日取最后成功一版/);
   assert.match(html, /<select aria-label="历史范围"/);
   for (const period of periods) assert.match(html, new RegExp(`aria-pressed="${period === "全年" ? "true" : "false"}">${period}`));
   assert.match(html, /class="forecast-trend-line is-forecast"/); assert.match(html, /class="forecast-trend-line is-actual"/);
-  assert.match(html, /type="range"/); assert.match(html, /aria-valuetext="2026-10-16，P3，数据截至2026-10-01"/);
-  assert.match(html, /数据截至 2026-10-01/); assert.match(html, /保存于 2026\/10\/16 09:30:00/);
+  assert.match(html, /type="range"/); assert.match(html, /aria-valuetext="2026-10-16，第3版，数据截至2026-10-01"/);
+  assert.match(html, /数据截至 2026-10-01/); assert.match(html, /保存于 2026-10-16 09:30/);
 });
 
 test("geometry preserves real date distances and signed values rather than evenly spacing absent days", () => {
@@ -129,7 +129,7 @@ test("full forecast entry is hidden for the displayed version and only appears f
   descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.onChange({ target: { value: "2" } });
   assert.equal(entry(app.render()).length, 0, "returning slider to current version hides entry again");
   const html = render({}); assert.doesNotMatch(html, /查看 P\d+ 版本/);
-  assert.match(html, />P1<\/button>/, "the existing detailed trend table retains its version links");
+  assert.match(html, />第1版<\/button>/, "the existing detailed trend table retains its version links");
 });
 
 test("empty, loading and failed reads never show invented zeros or claim data loss; retry is local", () => {
@@ -153,7 +153,7 @@ test("collapsed trend data has copy and typed export for exactly the same period
   const fixture = data(), original = JSON.stringify(fixture), transfer = forecastTrendTransfer(fixture, "秋季"), html = render({});
   assert.match(html, /<details class="forecast-trend-data"><summary>/); assert.match(html, /一键复制/); assert.match(html, /导出趋势数据/);
   assert.equal(transfer.rows.length, 3); assert.equal(transfer.rows[0].period, "秋季"); assert.equal(transfer.rows[0].forecast_revenue, 120.0001);
-  assert.equal(transfer.rows[0].version_id, "version-1"); assert.equal(transfer.rows[0].as_of, "2026-10-01"); assert.equal(transfer.rows[0].created_at, "2026/10/01 09:30:00");
+  assert.equal(transfer.rows[0].version_id, "version-1"); assert.equal(transfer.rows[0].as_of, "2026-10-01"); assert.equal(transfer.rows[0].created_at, "2026-10-01 09:30");
   const copied = tableCopyRows(transfer.columns, transfer.rows); assert.equal(copied.length, 4); assert.equal(copied[0].length, 11); assert.equal(copied[1][2], "120.0001");
   const workbook = await budgetWorkbook(transfer.columns, transfer.rows, "趋势数据");
   assert.equal(workbook.worksheets[0].rowCount, 4); assert.equal(workbook.worksheets[0].columnCount, 11);

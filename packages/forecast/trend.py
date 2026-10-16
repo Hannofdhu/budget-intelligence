@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from packages.forecast.store import ForecastStoreError, fingerprint
+from packages.forecast.store import ForecastStoreError, fingerprint, forecast_generation
 
 Json = dict[str, Any]
 TrendDays = Literal["30", "90", "all"]
@@ -116,14 +116,6 @@ def project_forecast_versions(versions: list[Json], *, baseline_hash: str) -> li
             raise ForecastStoreError("预测来源快照完整性校验失败")
         calculation = version.get("calculation")
         complete = isinstance(calculation, dict) and calculation.get("ready") is True
-        provenance = version["snapshot"].get("provenance")
-        # Manual revisions may retain the parent's automatic source snapshot.
-        # The version author, not a reused input's label, owns this distinction.
-        automatic = (
-            version.get("created_by") == "forecast-daily-scheduler"
-            and isinstance(provenance, dict)
-            and provenance.get("refresh_mode") == "AUTOMATIC"
-        )
         projected.append(
             {
                 "date": _timestamp(version).date().isoformat(),
@@ -132,7 +124,7 @@ def project_forecast_versions(versions: list[Json], *, baseline_hash: str) -> li
                 "status": version["status"],
                 "created_at": version["created_at"],
                 "as_of": version["as_of"],
-                "generation": "AUTOMATIC" if automatic else "MANUAL",
+                "generation": forecast_generation(version),
                 "periods": _periods(version) if complete else None,
             }
         )

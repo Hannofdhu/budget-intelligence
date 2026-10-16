@@ -479,7 +479,10 @@
 .next-year-shell .ny-heading > .ny-heading-actions { flex-wrap: wrap; }
 .ny-version-dot { display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: #b27e35; vertical-align: middle; }
 .ny-version-context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 18px; padding: 14px 16px; border: 1px solid #dce3dd; border-radius: 9px; background: #fff; font-size: .875rem; color: #173f37; }
-.ny-version-context :is(span,small,p) { margin: 0; font-size: .75rem; color: var(--budget-text-secondary); }
+.ny-version-context > :is(small,p), .ny-version-context > span:not(.budget-version-identity) { margin: 0; font-size: .75rem; color: var(--budget-text-secondary); }
+.ny-version-context > .budget-version-identity { flex-basis: 100%; }
+.ny-versions td:last-child { width: 1%; white-space: nowrap; }
+.ny-versions button { white-space: nowrap; }
 .ny-basis-preview { min-width: 0; margin: 18px 0 0; padding-top: 18px; border-top: 1px solid #dce3dd; }
 .ny-basis-preview > .budget-subsection-title { margin: 0 0 12px; color: #173f37; font-size: 1rem; }
 .ny-basis-preview > p { margin: 8px 0 14px; color: var(--budget-text-secondary); font-size: .75rem; line-height: 1.6; }

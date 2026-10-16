@@ -2,6 +2,7 @@ import { filterLabel, readFilterParam, type FilterValue } from "./filterSelectio
 import { budgetModuleName, defaultBudgetModuleYears } from "./budgetModules.ts";
 import { forecastGroupDimensionLabels, forecastGroupDimensions, type ForecastGroupDimension } from "./forecastApi.ts";
 import { readForecastGroupDimensions } from "./forecastViewState.ts";
+import { versionCodeLabel } from "./budgetVersionDisplay.ts";
 
 export type AiBudgetVersion = { id: string; label: string };
 export type AiBudgetContext = {
@@ -67,7 +68,7 @@ export function readAiBudgetContext(search: string): AiBudgetContext | null {
   if (explicitId && (!versionId || version?.id !== versionId)) version = null;
   if (version && !explicitId && module !== "budget") source.searchParams.set(module === "next-year" ? "nyVersion" : "forecast_version", version.id);
   const finalized = module === "budget" && source.searchParams.get("archive") === "fy27";
-  const versionLabel = finalized ? "FY27 已定版（只读）" : version ? `${version.label} · ${version.id}` : versionId ? `精确版本 ${versionId}（序号待核对）` : "版本未指定，分析前须读取并核对";
+  const versionLabel = finalized ? `FY${String(fiscalYear).slice(-2)} 已定版（只读）` : version ? versionCodeLabel(version.label) : versionId ? "精确版本（序号待核对）" : "版本未指定，分析前须读取并核对";
   return { module, moduleLabel: budgetModuleName(module, fiscalYear), fiscalYear, sourceHref: `${source.pathname}${source.search}`, filters,
     scopeLabel: selected.length ? selected.map(item => `${item.label}：${filterLabel(item.value)}`).join("；") : "全部范围（按来源链接）",
     version: finalized ? { id: "fy27-finalized", label: "FY27 已定版" } : version ?? (versionId ? { id: versionId, label: "序号待核对" } : null), versionLabel,
@@ -80,6 +81,7 @@ export function aiBudgetContextPrompt(context: AiBudgetContext | null): string {
     forecastGroupDimensions.includes(group as ForecastGroupDimension)))];
   return [`来源模块：${context.moduleLabel}；财年：FY${String(context.fiscalYear).slice(-2)}。`,
     `来源页面：${context.sourceHref}。`, `用户查看范围：${context.scopeLabel}。`, `来源版本：${context.versionLabel}。`,
+    ...(context.version ? [`精确来源版本：${context.version.label}；标识：${context.version.id}。`] : []),
     ...(context.module === "forecast" ? [`表格分组维度（按顺序）：${(groups.length ? groups : ["track" as const]).map(group => forecastGroupDimensionLabels[group]).join("、")}。分组仅改变阅读归类，不是数据筛选，不改变上述范围或接口授权。`] : []),
     context.version ? "请使用授权只读接口读取该精确版本，核对版本、财年和数据时间，再按上述范围分析；读取不到时明确说明，不用其他版本替代。"
       : "来源链接未指定精确版本。请先读取可用的已保存版本并明确列出实际使用版本；不能把最新版本冒充用户原页面的版本或范围。",

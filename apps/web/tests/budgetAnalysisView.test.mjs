@@ -480,6 +480,39 @@ function analysisHarness(initialProps) {
 
 const activeTabText = tree => nodeText(elements(tree).find(node => node.props?.role === "tab" && node.props["aria-selected"]));
 const detailDataset = tree => elements(tree).find(node => node.props?.className === "ba-table ba-detail-table")?.props.exportData;
+
+test("a supplied saved-version export identity labels details and inherited board transfers without changing amounts or scope", () => {
+  const browser = hookBrowser("baView=detail");
+  try {
+    const context = { fiscalYear: 2028, object: "预算编制", sequence: 12, createdAt: "2026-10-13T11:34:42Z", id: "exact-N12", asOf: "2026-10-08", preview: false, sourceId: "exact-P17", sourceLabel: "FY27全年预测 · 第17版" };
+    const h = analysisHarness({ facts: fourQuarters, controlledFilters: { ...emptyFilters, season: "秋季" }, versionExportContext: context });
+    const tree = h.render(), data = detailDataset(tree);
+    assert.equal(data.filename, "FY28-预算编制-第12版-2026-10-13_1934-预算明细");
+    assert.deepEqual(data.rows.map(row => row.id), ["1"]); assert.equal(data.rows[0].revenue, 10000);
+    assert.deepEqual(JSON.parse(tree.props["data-budget-export-context"]), context);
+    const preview = h.render({ versionExportContext: { ...context, preview: true } });
+    assert.match(detailDataset(preview).filename, /第12版.*未保存预览/);
+    assert.equal(JSON.parse(preview.props["data-budget-export-context"]).id, "exact-N12");
+    assert.deepEqual(detailDataset(preview).rows, data.rows);
+    h.dispose();
+  } finally { browser.restore(); }
+});
+
+test("pivot copy adds the exact saved-version provenance while keeping its existing numeric yuan values", async () => {
+  const browser = hookBrowser("baView=pivot&baRows=campus&baColumn=season&baMetrics=revenue");
+  try {
+    const h = analysisHarness({ facts: fourQuarters, versionExportContext: { fiscalYear: 2028, object: "预算编制", sequence: 12, createdAt: "2026-10-13T11:34:42Z", id: "exact-N12", asOf: "2026-10-08", sourceId: "exact-P17", sourceLabel: "FY27全年预测 · 第17版" } });
+    await findButton(h.render(), "复制透视").props.onClick();
+    assert.equal(browser.clipboard.length, 1);
+    const copied = browser.clipboard[0];
+    assert.match(copied, /来源模块\t结果版本\t精确版本标识\t保存时间（北京时间）\t数据截至/);
+    assert.match(copied, /FY28预算编制\t第12版\texact-N12\t2026-10-13 19:34\t2026-10-08/);
+    assert.match(copied, /数据截至\t编制基准\t精确来源标识/);
+    assert.match(copied, /2026-10-08\tFY27全年预测 · 第17版\texact-P17/);
+    assert.match(copied, /10000/); assert.doesNotMatch(copied, /未保存预览/);
+    h.dispose();
+  } finally { browser.restore(); }
+});
 const pivotCell = (tree, row, column, metric = "revenue") => elements(tree).find(node => node.type === "button"
   && node.props["data-row"] === row && node.props["data-col"] === column && node.props["data-metric"] === metric);
 

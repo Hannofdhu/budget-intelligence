@@ -56,6 +56,22 @@ test("opening source and uncovered details reuse section and transfer roles whil
   assert.equal(JSON.stringify(h.data), before);
 });
 
+test("opening source transfers retain exact saved facts while unsaved zero confirmations are previews without invented sequence/time", () => {
+  const h = openingHarness();
+  const context = (tree, id) => JSON.parse(find(tree, node => node.props?.id === id)[0].props["data-budget-export-context"]);
+  let tree = h.render();
+  const source = context(tree, "opening-frozen-source");
+  assert.equal(source.id, "revision-1"); assert.equal(source.sourceId, "frozen-1");
+  assert.equal(source.object, "期初来源（已保存事实）"); assert.equal(source.asOf, "2027-03-01");
+  assert.equal(source.sequence, undefined); assert.equal(source.createdAt, undefined); assert.equal(source.preview, undefined);
+  assert.equal(context(tree, "opening-uncovered").preview, false);
+  find(tree, node => node.type === "input" && node.props.type === "checkbox")[0].props.onChange({ target: { checked: true } });
+  tree = h.render();
+  assert.equal(context(tree, "opening-uncovered").preview, true);
+  assert.equal(context(tree, "opening-uncovered").id, "revision-1");
+  assert.deepEqual(context(tree, "opening-frozen-source"), source, "unsaved maintenance never changes the frozen-source fact label");
+});
+
 test("opening query changes only the visible table and zero confirmation still uses original draft/read-only gates", () => {
   const h = openingHarness(), before = JSON.stringify(h.data);
   const [source] = find(h.render(), node => typeof node.type === "function" && node.type.name === "ActionTable");

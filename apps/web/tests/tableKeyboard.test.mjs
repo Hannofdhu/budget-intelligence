@@ -315,7 +315,8 @@ test("shared read-only tables use one keyboard entry while the existing pivot an
   assert.match(quarter, /<ActionTable keyboardNavigation className=\{`ba-table \$\{tableClassName\}`\} tableLabel=\{tableLabel\}/);
   const forecast = source("ForecastPage.tsx");
   for (const label of ["季度达成明细表", "维度达成表", "预测明细表", "校区预测人数"]) {
-    assert.ok(forecast.includes(`className="forecast-table-region" aria-label="${label}"><ActionTable keyboardNavigation`));
+    const context = label === "校区预测人数" ? "" : " {...budgetVersionExportAttributes(exportContext)}";
+    assert.ok(forecast.includes(`className="forecast-table-region" aria-label="${label}"${context}><ActionTable keyboardNavigation`));
     const region = forecast.slice(forecast.indexOf(`className="forecast-table-region" aria-label="${label}"`));
     assert.match(region.slice(0, region.indexOf("<thead>")), /scrollClassName="forecast-table-wrap"/);
     assert.match(region.slice(0, region.indexOf("<thead>")), new RegExp(`aria-label="${label}"`));

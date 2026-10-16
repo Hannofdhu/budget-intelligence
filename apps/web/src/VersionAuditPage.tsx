@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -24,38 +24,15 @@ import {
   type RevisionResponse,
 } from "./api";
 import { BudgetContextHeader } from "./BudgetContextHeader";
+import { BudgetVersionIdentity, BudgetVersionTrace } from "./BudgetVersionIdentity";
+import { versionFileStem, versionLabel, versionTimestamp } from "./budgetVersionDisplay";
+import { revisionCommandLabel as commandLabel, revisionRelations as revisionStatus } from "./budgetRevisionDisplay";
+import { createAuditReadGuard } from "./auditReadGuard";
 import { FilterSelect } from "./FilterSelect";
 import { filterValues, type FilterValue } from "./filterSelection";
 import "./auditDesign.css";
 
 const OWNER_ROLE = "DEPARTMENT_BUDGET_OWNER";
-
-const COMMAND_LABELS: Record<string, string> = {
-  CREATE_ANNUAL_BUDGET: "建立年度预算",
-  DERIVE_BUDGET_REVISION: "派生预算草稿",
-  REPLACE_TARGET_SET: "锁定学校版目标",
-  GENERATE_COMBINATION_DRAFT: "生成预算组合",
-  REPLACE_COMBINATION_DRAFT: "修改预算组合",
-  CONFIRM_COMBINATION_SET: "确认预算组合",
-  SAVE_AND_LOCK_ENTRY_TOTAL: "锁定入口总值",
-  REPLACE_CAMPUS_ENTRY_DRAFT: "修改校区入口",
-  CONFIRM_CAMPUS_ENTRY_SET: "确认校区入口",
-  REPLACE_ENTRY_SCOPE_DRAFT: "修改入口范围",
-  CONFIRM_ENTRY_SCOPE: "确认入口范围",
-  REPLACE_RATE_PARAMETER_DRAFT: "修改比例参数",
-  CHANGE_AND_LOCK_RATE_PARAMETERS: "修改并锁定比例",
-  APPLY_REBALANCING_SCENARIO: "应用调平方案",
-  FINALIZE_FORMAL_PLAN_CONFIRMATION: "正式方案确认",
-  CALCULATE_HEADCOUNT_RESULT: "计算预算人数",
-  CALCULATE_CLASS_SIZE_RESULT: "核对班均",
-  CALCULATE_REVENUE_RESULT: "计算预算结转收入",
-  VALIDATE_TARGET_CLOSURE: "核对结转收入目标",
-  VALIDATE_CLASS_SIZE_RESULT: "核对班均",
-};
-
-function commandLabel(command: string): string {
-  return COMMAND_LABELS[command] ?? (command.startsWith("CALCULATE_") || command.startsWith("VALIDATE_") ? "系统计算" : "预算内容更新");
-}
 
 function isMilestoneRevision(revision: RevisionResponse, selectedId: string, publishedIds: Set<string>): boolean {
   return revision.budget_revision_id === selectedId
@@ -190,28 +167,12 @@ function shortId(value: unknown, size = 7): string {
   return `${value.slice(0, size)}…${value.slice(-size)}`;
 }
 
-function fullDate(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
-}
-
 function dayLabel(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric" }).format(new Date(value));
+  return versionTimestamp(value).split(" ")[0];
 }
 
 function clockLabel(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  return versionTimestamp(value).split(" ")[1] ?? "未记录";
 }
 
 function fileSizeLabel(value: unknown): string {
@@ -252,26 +213,6 @@ function detailValueText(value: unknown, detailType: string): string {
 
 function businessKeyText(key: Record<string, unknown>): string {
   return Object.entries(key).map(([name, value]) => `${name} ${String(value)}`).join(" · ");
-}
-
-function revisionStatus(
-  revision: RevisionResponse,
-  budget: AnnualBudgetResponse,
-  publishedIds: Set<string>,
-): { label: string; tone: string }[] {
-  const statuses = [];
-  if (budget.current_draft_revision_id === revision.budget_revision_id && budget.current_published_revision_id !== revision.budget_revision_id) {
-    statuses.push({ label: "当前草稿", tone: "draft" });
-  }
-  if (budget.current_published_revision_id === revision.budget_revision_id) {
-    statuses.push({ label: "当前正式版", tone: "published" });
-  } else if (publishedIds.has(revision.budget_revision_id)) {
-    statuses.push({ label: "曾发布", tone: "historic" });
-  }
-  if (typeof revision.component_manifest.formal_confirmation_id === "string") {
-    statuses.push({ label: "已正式确认", tone: "confirmed" });
-  }
-  return statuses.length ? statuses : [{ label: "历史草稿", tone: "historic" }];
 }
 
 function ComponentDiffRow({
@@ -359,7 +300,7 @@ function AuditEventRow({ event, revisionNo }: { event: AuditEvent; revisionNo?: 
       <div className="audit-event__body">
         <div className="audit-event__heading">
           <h3 className="budget-subsection-title">{EVENT_LABELS[event.event_type] ?? "预算记录更新"}</h3>
-          {revisionNo && <span>R{revisionNo}</span>}
+          {revisionNo && <span>{versionLabel(revisionNo)}</span>}
         </div>
         <p className="audit-event__actor">{event.actor_id} · {ROLE_LABELS[event.acting_role] ?? event.acting_role}</p>
         {event.reason && <blockquote>{event.reason}</blockquote>}
@@ -405,9 +346,20 @@ export function VersionAuditPage() {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const [loading, setLoading] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [archiveJob, setArchiveJob] = useState<JobResponse | null>(null);
+  const [archiveJob, setArchiveJob] = useState<(JobResponse & { display_revision?: RevisionResponse; display_fiscal_year?: number }) | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const readGuardRef = useRef<ReturnType<typeof createAuditReadGuard> | null>(null);
+  if (!readGuardRef.current) readGuardRef.current = createAuditReadGuard(selectedId, againstId);
+  const readGuard = readGuardRef.current;
+
+  const beginPair = useCallback((revisionId: string, compareId: string) => {
+    const generation = readGuard.setPair(revisionId, compareId);
+    setDiff(null); setDetailDiff(null); setDetailComponent(""); setDetailLoading(false);
+    setAuditEvents([]); setAuditCursor(null); setAuditLoading(false);
+    return generation;
+  }, [readGuard]);
+  useEffect(() => () => readGuard.dispose(), [readGuard]);
 
   const revisionById = useMemo(
     () => new Map(revisions.map((revision) => [revision.budget_revision_id, revision])),
@@ -433,28 +385,47 @@ export function VersionAuditPage() {
     state: AuditFilterState,
     append = false,
     cursor?: string,
+    revisionId = selectedId,
+    compareId = againstId,
   ) => {
+    if (!readGuard.matches(revisionId, compareId)) return;
+    const request = readGuard.start("audit");
     setAuditLoading(true);
+    if (!append) { setAuditEvents([]); setAuditCursor(null); }
     try {
       const page = await fetchAuditEvents(
         annualBudgetId,
-        auditApiFilters(state, cursor),
+        { ...auditApiFilters(state, cursor), revisionId: state.selectedRevisionOnly ? revisionId : undefined },
         identity,
+        request.signal,
       );
+      if (!request.current()) return;
       setAuditEvents((current) => append ? [...current, ...page.items] : page.items);
       setAuditCursor(page.next_cursor);
+    } catch (nextError) {
+      if (request.current()) throw nextError;
     } finally {
-      setAuditLoading(false);
+      if (request.current()) setAuditLoading(false);
     }
-  }, [auditApiFilters, identity]);
+  }, [againstId, auditApiFilters, identity, readGuard, selectedId]);
 
   const loadDiff = useCallback(async (revisionId: string, compareId: string) => {
+    if (!readGuard.matches(revisionId, compareId)) return;
+    const request = readGuard.start("diff");
+    setDiff(null);
     if (!compareId || revisionId === compareId) {
       setDiff(null);
       return;
     }
-    setDiff(await fetchRevisionDiff(revisionId, compareId, identity));
-  }, [identity]);
+    try {
+      const result = await fetchRevisionDiff(revisionId, compareId, identity, request.signal);
+      if (!request.current()) return;
+      if (result.revision?.revision?.budget_revision_id !== revisionId || result.against?.revision?.budget_revision_id !== compareId) throw new Error("差异结果的版本对不匹配，未显示结果。请重新读取。");
+      setDiff(result);
+    } catch (nextError) {
+      if (request.current()) throw nextError;
+    }
+  }, [identity, readGuard]);
 
   const loadDetailDiff = useCallback(async (
     componentKey: string,
@@ -463,8 +434,11 @@ export function VersionAuditPage() {
     append = false,
     cursor?: string,
   ) => {
-    if (!selectedId || !againstId) return;
+    if (!selectedId || !againstId || !readGuard.matches(selectedId, againstId)) return;
+    const request = readGuard.start("detail");
     setDetailLoading(true);
+    setDetailComponent(componentKey);
+    if (!append) setDetailDiff(null);
     setError(null);
     try {
       const result = await fetchRevisionDetailDiff(
@@ -475,22 +449,24 @@ export function VersionAuditPage() {
         query,
         identity,
         cursor,
+        request.signal,
       );
-      setDetailComponent(componentKey);
+      if (!request.current()) return;
+      if (result.revision_id !== selectedId || result.against_revision_id !== againstId || result.component_key !== componentKey) throw new Error("明细结果的版本对不匹配，未显示结果。请重新读取。");
       setDetailDiff((current) => append && current
         ? { ...result, items: [...current.items, ...result.items] }
         : result);
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (request.current()) setError(errorText(nextError));
     } finally {
-      setDetailLoading(false);
+      if (request.current()) setDetailLoading(false);
     }
-  }, [againstId, detailChangedOnly, detailQuery, identity, selectedId]);
+  }, [againstId, detailChangedOnly, detailQuery, identity, readGuard, selectedId]);
 
-  const pollArchiveJob = useCallback(async (jobId: string): Promise<JobResponse> => {
+  const pollArchiveJob = useCallback(async (jobId: string, sourceRevision: RevisionResponse, fiscalYear?: number): Promise<JobResponse> => {
     for (;;) {
       const nextJob = await fetchJob(jobId, identity);
-      setArchiveJob(nextJob);
+      setArchiveJob({ ...nextJob, display_revision: sourceRevision, display_fiscal_year: fiscalYear });
       if (TERMINAL_JOB_STATUSES.has(nextJob.status)) return nextJob;
       await new Promise((resolve) => window.setTimeout(resolve, 1200));
     }
@@ -507,7 +483,7 @@ export function VersionAuditPage() {
         `R${selectedRevision.revision_no} 版本审计归档`,
         identity,
       );
-      const terminal = await pollArchiveJob(queued.job_id);
+      const terminal = await pollArchiveJob(queued.job_id, selectedRevision, budget?.fiscal_year);
       if (terminal.status !== "SUCCEEDED") {
         throw new ApiError(
           terminal.last_error_safe ?? "审计归档未生成",
@@ -533,7 +509,8 @@ export function VersionAuditPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = fileName;
+      const sourceRevision = archiveJob?.display_revision;
+      anchor.download = sourceRevision && archiveJob.display_fiscal_year ? `${versionFileStem({ fiscalYear: archiveJob.display_fiscal_year, object: "年度预算审计归档", sequence: sourceRevision.revision_no, createdAt: sourceRevision.created_at })}.zip` : fileName;
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
@@ -546,15 +523,20 @@ export function VersionAuditPage() {
   };
 
   const openWorkspace = useCallback(async (revisionId: string) => {
+    let generation = beginPair(revisionId, "");
+    const request = readGuard.start("workspace");
     setLoading(true);
     setError(null);
     try {
-      const currentRevision = await fetchRevision(revisionId, identity);
-      const currentBudget = await fetchAnnualBudget(currentRevision.annual_budget_id, identity);
+      const currentRevision = await fetchRevision(revisionId, identity, request.signal);
+      if (!request.current()) return;
+      const currentBudget = await fetchAnnualBudget(currentRevision.annual_budget_id, identity, request.signal);
+      if (!request.current()) return;
       const [history, publications] = await Promise.all([
-        fetchRevisions(currentBudget.annual_budget_id, identity),
-        fetchAuditEvents(currentBudget.annual_budget_id, { eventType: "PUBLISHED", limit: 500 }, identity),
+        fetchRevisions(currentBudget.annual_budget_id, identity, request.signal),
+        fetchAuditEvents(currentBudget.annual_budget_id, { eventType: "PUBLISHED", limit: 500 }, identity, request.signal),
       ]);
+      if (!request.current()) return;
       const ordered = [...history].sort((a, b) => b.revision_no - a.revision_no);
       const requestedAgainst = queryValue("against");
       const fallback = currentRevision.parent_revision_id
@@ -562,6 +544,7 @@ export function VersionAuditPage() {
         ?? "";
       const compareId = ordered.some((item) => item.budget_revision_id === requestedAgainst)
         && requestedAgainst !== revisionId ? requestedAgainst : fallback;
+      generation = beginPair(revisionId, compareId);
       setBudget(currentBudget);
       setRevisions(ordered);
       setSelectedId(revisionId);
@@ -579,21 +562,14 @@ export function VersionAuditPage() {
       window.history.replaceState({}, "", url);
       await Promise.all([
         loadDiff(revisionId, compareId),
-        fetchAuditEvents(
-          currentBudget.annual_budget_id,
-          { revisionId, limit: 50 },
-          identity,
-        ).then((page) => {
-          setAuditEvents(page.items);
-          setAuditCursor(page.next_cursor);
-        }),
+        loadAudits(currentBudget.annual_budget_id, EMPTY_FILTERS, false, undefined, revisionId, compareId),
       ]);
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (readGuard.generation === generation) setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (readGuard.generation === generation) setLoading(false);
     }
-  }, [identity, loadDiff]);
+  }, [beginPair, identity, loadAudits, loadDiff, readGuard]);
 
   useEffect(() => {
     const initial = queryValue("revision");
@@ -604,13 +580,14 @@ export function VersionAuditPage() {
 
   const selectRevision = async (revisionId: string) => {
     if (!budget || revisionId === selectedId) return;
+    const revision = revisionById.get(revisionId);
+    const compareId = revision?.parent_revision_id
+      ?? revisions.find((item) => item.budget_revision_id !== revisionId)?.budget_revision_id
+      ?? "";
+    const generation = beginPair(revisionId, compareId);
     setLoading(true);
     setError(null);
     try {
-      const revision = revisionById.get(revisionId);
-      const compareId = revision?.parent_revision_id
-        ?? revisions.find((item) => item.budget_revision_id !== revisionId)?.budget_revision_id
-        ?? "";
       setSelectedId(revisionId);
       setAgainstId(compareId);
       setDetailComponent("");
@@ -624,45 +601,50 @@ export function VersionAuditPage() {
       if (compareId) url.searchParams.set("against", compareId);
       else url.searchParams.delete("against");
       window.history.replaceState({}, "", url);
-      const [nextDiff, nextAudits] = await Promise.all([
-        compareId ? fetchRevisionDiff(revisionId, compareId, identity) : Promise.resolve(null),
-        fetchAuditEvents(budget.annual_budget_id, { ...auditApiFilters(nextFilters), revisionId }, identity),
+      await Promise.all([
+        loadDiff(revisionId, compareId),
+        loadAudits(budget.annual_budget_id, nextFilters, false, undefined, revisionId, compareId),
       ]);
-      setDiff(nextDiff);
-      setAuditEvents(nextAudits.items);
-      setAuditCursor(nextAudits.next_cursor);
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (readGuard.generation === generation) setError(errorText(nextError));
     } finally {
-      setLoading(false);
+      if (readGuard.generation === generation) setLoading(false);
     }
   };
 
   const changeAgainst = async (compareId: string) => {
     if (!selectedId) return;
+    const generation = beginPair(selectedId, compareId);
+    setLoading(true);
     setAgainstId(compareId);
     setDetailComponent("");
     setDetailDiff(null);
     setError(null);
+    const url = new URL(window.location.href);
+    if (compareId) url.searchParams.set("against", compareId);
+    else url.searchParams.delete("against");
+    window.history.replaceState({}, "", url);
     try {
-      await loadDiff(selectedId, compareId);
-      const url = new URL(window.location.href);
-      if (compareId) url.searchParams.set("against", compareId);
-      else url.searchParams.delete("against");
-      window.history.replaceState({}, "", url);
+      await Promise.all([
+        loadDiff(selectedId, compareId),
+        budget ? loadAudits(budget.annual_budget_id, appliedFilters, false, undefined, selectedId, compareId) : Promise.resolve(),
+      ]);
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (readGuard.generation === generation) setError(errorText(nextError));
+    } finally {
+      if (readGuard.generation === generation) setLoading(false);
     }
   };
 
   const applyFilters = async () => {
     if (!budget) return;
+    const generation = readGuard.generation;
     setError(null);
     setAppliedFilters(filters);
     try {
       await loadAudits(budget.annual_budget_id, filters);
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (readGuard.generation === generation) setError(errorText(nextError));
     }
   };
 
@@ -675,7 +657,7 @@ export function VersionAuditPage() {
 
   const visibleComponents = diff?.components.filter((item) => showUnchanged || item.change_type !== "UNCHANGED") ?? [];
   const relatedEvents = auditEvents;
-  const milestoneRevisions = [selectedRevision, ...revisions.filter((item) => item.budget_revision_id !== selectedId && isMilestoneRevision(item, selectedId, publishedIds))].slice(0, 8);
+  const milestoneRevisions = [...new Map([...revisions.filter(item => isMilestoneRevision(item, selectedId, publishedIds)).slice(0, 7), selectedRevision].map(item => [item.budget_revision_id, item])).values()].sort((a, b) => b.revision_no - a.revision_no);
   const hiddenCalculationCount = revisions.filter((item) => !isMilestoneRevision(item, selectedId, publishedIds)).length;
   const isPublished = budget.current_published_revision_id === selectedId || publishedIds.has(selectedId);
   const returnHref = isPublished ? `/budget/results?revision=${encodeURIComponent(selectedId)}` : `/budget/workspace?revision=${encodeURIComponent(selectedId)}&section=home`;
@@ -693,38 +675,41 @@ export function VersionAuditPage() {
           <div className="context-return"><a href={returnHref}>返回{isPublished ? "预算结果" : "年度预算"}</a><span>变化记录</span></div>
           <header className="audit-heading">
             <div>
-              <p>FY{String(budget.fiscal_year).slice(-2)} / 精确修订</p>
-              <h1 className="budget-page-title">R{selectedRevision.revision_no} 相比 {compareRevision ? `R${compareRevision.revision_no}` : "所选版本"}</h1>
+              <p>FY{String(budget.fiscal_year).slice(-2)}年度预算 / 版本记录</p>
+              <h1 className="budget-page-title">{versionLabel(selectedRevision.revision_no)} 相比 {compareRevision ? versionLabel(compareRevision.revision_no) : "所选版本"}</h1>
 
             </div>
             <a href="#audit-versions">选择其他版本</a>
           </header>
+          <BudgetVersionIdentity sequence={selectedRevision.revision_no} createdAt={selectedRevision.created_at} reason={commandLabel(selectedRevision.command_type)} viewing readonly />
+          <p className="budget-status">{revisionStatus(selectedRevision, budget, publishedIds).map(item => item.label).join(" · ")} · 只读查看{budget.current_draft_revision_id && budget.current_draft_revision_id !== selectedId && <> · <a href={`/budget/workspace?revision=${encodeURIComponent(budget.current_draft_revision_id)}`}>返回最新草稿</a></>}</p>
+          <BudgetVersionTrace code={`R${selectedRevision.revision_no}`} id={selectedId} createdAt={selectedRevision.created_at} createdBy={selectedRevision.created_by} />
 
           {error && <div className="inline-error" role="alert"><strong>读取未完成</strong><span>{error}</span><button aria-label="关闭错误提示" onClick={() => setError(null)}>×</button></div>}
 
           <section className="comparison-ribbon budget-surface" aria-labelledby="comparison-title">
             <div className="comparison-ribbon__revision">
-              <span>当前版本</span><strong>R{selectedRevision.revision_no}</strong><small>{commandLabel(selectedRevision.command_type)}</small>
+              <span>正在查看</span><strong>{versionLabel(selectedRevision.revision_no)}</strong><small>{commandLabel(selectedRevision.command_type)}</small>
             </div>
             <div className="comparison-ribbon__relation"><span>对比</span><i aria-hidden="true" /></div>
             <label>
               <span id="comparison-title">比较版本</span>
               <select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}>
                 <option value="">不比较</option>
-                {suggestedComparisons.map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>R{item.revision_no} · {commandLabel(item.command_type)}</option>)}
+                {suggestedComparisons.map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>{versionTimestamp(item.created_at)} · {commandLabel(item.command_type)} · {versionLabel(item.revision_no)}</option>)}
               </select>
             </label>
             <dl>
-              <div><dt>变化</dt><dd>{diff?.changed_count ?? 0}</dd></div>
+              <div><dt>变化</dt><dd>{diff?.changed_count ?? "—"}</dd></div>
               {diff && <div><dt>业务变化</dt><dd>{businessChangeCount}</dd></div>}
-              <div><dt>失效</dt><dd>{diff?.removed_count ?? 0}</dd></div>
-              <div><dt>沿用</dt><dd>{diff?.unchanged_count ?? 0}</dd></div>
+              <div><dt>失效</dt><dd>{diff?.removed_count ?? "—"}</dd></div>
+              <div><dt>沿用</dt><dd>{diff?.unchanged_count ?? "—"}</dd></div>
             </dl>
           </section>
 
           <details className="audit-evidence">
             <summary>技术依据与审计归档</summary>
-            <label className="audit-all-compare"><span>比较任意修订</span><select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}><option value="">不比较</option>{revisions.filter((item) => item.budget_revision_id !== selectedId).map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>R{item.revision_no} · {commandLabel(item.command_type)}</option>)}</select></label>
+            <label className="audit-all-compare"><span>比较任意版本</span><select value={againstId} onChange={(event) => void changeAgainst(event.target.value)}><option value="">不比较</option>{revisions.filter((item) => item.budget_revision_id !== selectedId).map((item) => <option key={item.budget_revision_id} value={item.budget_revision_id}>{versionTimestamp(item.created_at)} · {commandLabel(item.command_type)} · {versionLabel(item.revision_no)}</option>)}</select></label>
             <div className="audit-heading__side">
               <div className="audit-heading__hash">
                 <span>修订内容哈希</span>
@@ -735,7 +720,7 @@ export function VersionAuditPage() {
                 <div>
                   <strong>{archiveJob?.status === "SUCCEEDED" ? "归档已封存" : archiveBusy ? "正在汇集证据" : "签出审计归档"}</strong>
                   {archiveJob?.status === "SUCCEEDED" ? (
-                    <small>{fileSizeLabel(archiveJob.result?.size_bytes)} · SHA {shortId(archiveJob.result?.content_hash, 6)}</small>
+                    <small>归档来源：{versionLabel(archiveJob.display_revision?.revision_no)} · {fileSizeLabel(archiveJob.result?.size_bytes)} · SHA {shortId(archiveJob.result?.content_hash, 6)}</small>
                   ) : (
                     <small>ZIP</small>
                   )}
@@ -755,7 +740,7 @@ export function VersionAuditPage() {
               </header>
               <div className="change-ledger__columns"><span>状态</span><span>业务内容</span><span>查看变化</span></div>
               <div className="change-ledger__body">
-                {!diff ? <p className="audit-empty">请选择另一个修订作为比较基准。</p>
+                {!diff ? <p className="audit-empty">{!againstId ? "请选择另一个版本作为比较基准。" : loading ? "正在读取当前版本对的差异…" : "当前版本对的差异尚未读取成功，请重试或重新选择比较版本。"}</p>
                   : visibleComponents.length === 0 ? <p className="audit-empty">两个修订的组件清单完全一致。打开“显示沿用项”可核对完整链路。</p>
                     : visibleComponents.map((item) => (
                       <ComponentDiffRow
@@ -790,7 +775,7 @@ export function VersionAuditPage() {
               </details>
               <div className="audit-timeline__body" aria-busy={auditLoading}>
                 {auditLoading && <p className="audit-empty" role="status">正在读取审计事件…</p>}
-                {relatedEvents.length === 0 ? <p className="audit-empty">没有符合条件的审计事件。</p> : relatedEvents.map((event) => (
+                {relatedEvents.length === 0 ? !auditLoading && <p className="audit-empty">{error ? "当前版本的审计事件尚未读取成功，请重试。" : "没有符合条件的审计事件。"}</p> : relatedEvents.map((event) => (
                   <AuditEventRow key={event.event_id} event={event} revisionNo={event.budget_revision_id ? revisionById.get(event.budget_revision_id)?.revision_no : undefined} />
                 ))}
               </div>
@@ -805,7 +790,7 @@ export function VersionAuditPage() {
                   <h2 className="budget-section-title" id="detail-drawer-title">{detailDiff?.component_label ?? COMPONENT_LABELS[detailComponent] ?? "读取明细"}</h2>
 
                 </div>
-                <button className="detail-drawer__close" onClick={() => { setDetailComponent(""); setDetailDiff(null); }} aria-label="关闭逐行差异">×</button>
+                <button className="detail-drawer__close" onClick={() => { readGuard.cancel("detail"); setDetailLoading(false); setDetailComponent(""); setDetailDiff(null); }} aria-label="关闭逐行差异">×</button>
               </header>
               <div className="detail-drawer__toolbar">
                 <label>
@@ -835,7 +820,8 @@ export function VersionAuditPage() {
               </div>
               <div className="detail-drawer__body" aria-live="polite">
                 {detailLoading && !detailDiff ? <p className="audit-empty">正在按稳定键核对两个版本…</p>
-                  : detailDiff?.items.length === 0 ? <p className="audit-empty">当前筛选下没有业务明细变化。关闭“只看业务变化”可核对沿用行。</p>
+                  : !detailDiff ? <p className="audit-empty">当前版本对的明细尚未读取成功，请重试。</p>
+                  : detailDiff.items.length === 0 ? <p className="audit-empty">当前筛选下没有业务明细变化。关闭“只看业务变化”可核对沿用行。</p>
                     : detailDiff?.items.map((item) => <DetailDiffRow key={item.stable_key} item={item} />)}
               </div>
               {detailDiff?.next_cursor && (
@@ -852,14 +838,14 @@ export function VersionAuditPage() {
           )}
         </section>
         <aside className="revision-spine budget-surface" id="audit-versions" aria-label="选择预算版本">
-          <div className="revision-spine__title"><h2 className="budget-section-title">重要记录</h2><span>当前查看 R{selectedRevision.revision_no}</span></div>
+          <div className="revision-spine__title"><h2 className="budget-section-title">版本记录</h2><span>正在查看 {versionLabel(selectedRevision.revision_no)}</span></div>
           <div className="revision-spine__list">
             {milestoneRevisions.map((item) => {
               const statuses = revisionStatus(item, budget, publishedIds);
-              return <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} aria-current={item.budget_revision_id === selectedId ? "true" : undefined} onClick={() => void selectRevision(item.budget_revision_id)}><span className="revision-spine__number">R{item.revision_no}</span><span className="revision-spine__meta"><strong>{commandLabel(item.command_type)}</strong><small>{fullDate(item.created_at)}</small><i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i></span></button>;
+              return <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} aria-current={item.budget_revision_id === selectedId ? "true" : undefined} onClick={() => void selectRevision(item.budget_revision_id)}><BudgetVersionIdentity sequence={item.revision_no} createdAt={item.created_at} reason={commandLabel(item.command_type)} viewing={item.budget_revision_id === selectedId} readonly /><span className="revision-spine__meta"><i>{statuses.map((status) => <em className={`status-tag status-tag--${status.tone}`} key={status.label}>{status.label}</em>)}</i></span></button>;
             })}
           </div>
-          <details className="audit-history-all"><summary>查看全部 {revisions.length} 次修订{hiddenCalculationCount ? `（含 ${hiddenCalculationCount} 次系统计算）` : ""}</summary><div>{revisions.map((item) => <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}>R{item.revision_no} · {commandLabel(item.command_type)} <small>{fullDate(item.created_at)}</small></button>)}</div></details>
+          <details className="audit-history-all"><summary>查看全部 {revisions.length} 个保存版本{hiddenCalculationCount ? `（含 ${hiddenCalculationCount} 次系统计算）` : ""}</summary><div>{revisions.map((item) => <button key={item.budget_revision_id} className={item.budget_revision_id === selectedId ? "is-selected" : ""} onClick={() => void selectRevision(item.budget_revision_id)}><BudgetVersionIdentity sequence={item.revision_no} createdAt={item.created_at} reason={commandLabel(item.command_type)} viewing={item.budget_revision_id === selectedId} readonly /><span className="revision-spine__meta">{revisionStatus(item, budget, publishedIds).map(status => status.label).join(" · ")}</span></button>)}</div></details>
         </aside>
       </main>
     </div>

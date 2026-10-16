@@ -34,9 +34,10 @@ test("loaded forecast and next-year versions are attached explicitly instead of 
     const href = aiBudgetHref(source, version), context = readAiBudgetContext(new URL(href, "https://budget.local").search);
     assert.deepEqual(context.version, version); assert.equal(context.fiscalYear, year); assert.equal(context.moduleLabel, module);
     assert.equal(new URL(context.sourceHref, "https://budget.local").searchParams.get(context.module === "next-year" ? "nyVersion" : "forecast_version"), version.id, "the return URL itself must restore the exact saved snapshot");
-    assert.match(context.versionLabel, new RegExp(version.id)); assert.match(context.versionLabel, new RegExp(version.label));
+    assert.equal(context.versionLabel, `第${Number(version.label.slice(1))}版`);
+    assert.doesNotMatch(context.versionLabel, new RegExp(version.id));
     const prompt = aiBudgetContextPrompt(context);
-    assert.match(prompt, new RegExp(version.id)); assert.match(prompt, /精确版本/); assert.match(prompt, /授权只读接口/);
+    assert.match(prompt, new RegExp(version.id)); assert.match(prompt, new RegExp(version.label)); assert.match(prompt, /精确版本/); assert.match(prompt, /授权只读接口/);
     assert.match(prompt, /读取不到时明确说明，不用其他版本替代/);
     assert.match(prompt, /未保存的改动不在上下文中/);
   }

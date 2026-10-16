@@ -46,6 +46,44 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
+def _recorded_text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def forecast_generation(version: Json) -> str | None:
+    """Classify a saved version's author, never its possibly reused source alone.
+
+    Older records without a trustworthy author or scheduler provenance remain
+    unknown. This is a read projection and does not change ledger contents.
+    """
+    actor = version.get("created_by")
+    if not isinstance(actor, str) or not actor.strip():
+        return None
+    if actor != "forecast-daily-scheduler":
+        return "MANUAL"
+    snapshot = version.get("snapshot")
+    provenance = snapshot.get("provenance") if isinstance(snapshot, dict) else None
+    if isinstance(provenance, dict) and provenance.get("refresh_mode") == "AUTOMATIC":
+        return "AUTOMATIC"
+    return None
+
+
+def forecast_version_summary(version: Json) -> Json:
+    """Expose only saved presentation metadata, not source rows or calculations."""
+    confirmation = version.get("confirmation")
+    return {
+        **{key: version[key] for key in ("id", "sequence", "status", "as_of", "created_at")},
+        "reason": _recorded_text(version.get("reason")),
+        "created_by": _recorded_text(version.get("created_by")),
+        "confirmation": (
+            {key: _recorded_text(confirmation.get(key)) for key in ("actor", "at", "reason")}
+            if isinstance(confirmation, dict)
+            else None
+        ),
+        "generation": forecast_generation(version),
+    }
+
+
 class ForecastStore:
     def __init__(self, root: Path = ROOT) -> None:
         self.root = root
@@ -145,10 +183,8 @@ class ForecastStore:
             "baseline_year": 2027,
             "baseline_hash": versions[-1]["baseline_hash"] if versions else None,
             "version": versions[-1] if versions else None,
-            "history": [
-                {k: version[k] for k in ("id", "sequence", "status", "as_of", "created_at")}
-                for version in reversed(versions)
-            ],
+            "latest_version_id": versions[-1]["id"] if versions else None,
+            "history": [forecast_version_summary(version) for version in reversed(versions)],
         }
 
     def request_result(self, department: str, request_id: str, request_hash: str) -> Json | None:
