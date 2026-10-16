@@ -110,6 +110,8 @@ test("keyboard navigation is explicit opt-in and native table/copy/export semant
   new Function("require", "module", "exports", built.outputFiles[0].text)(require, module, module.exports);
   const ordinary = renderToStaticMarkup(createElement(module.exports.ActionTable, { tableLabel: "普通表" }, createElement("tbody", null)));
   assert.doesNotMatch(ordinary, /tabindex|data-table-keyboard|快捷键/); assert.match(ordinary, /一键复制/); assert.match(ordinary, /导出当前表格/);
+  const typedScope = renderToStaticMarkup(createElement(module.exports.ActionTable, { tableLabel: "当前范围达成", exportLabel: "导出当前表格", exportData: { columns: [], rows: [], filename: "当前范围达成" } }, createElement("tbody", null)));
+  assert.match(typedScope, />导出当前表格<\/button>/); assert.doesNotMatch(typedScope, /exportLabel|exportlabel|>导出明细<\/button>/);
   const enabled = renderToStaticMarkup(createElement(module.exports.ActionTable, { keyboardNavigation: true, tableLabel: "季度招生", "aria-describedby": "scope" }, createElement("tbody", null)));
   assert.match(enabled, /tabindex="0"/); assert.match(enabled, /aria-label="季度招生"/); assert.match(enabled, /aria-describedby="scope /);
   assert.match(enabled, /快捷键/); assert.doesNotMatch(enabled, /role="grid"|<button[^>]*>复制所选<\/button>/);

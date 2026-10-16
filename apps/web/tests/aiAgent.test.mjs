@@ -215,7 +215,10 @@ test("attach failure never creates a fake terminal connection or retries automat
 
 test("the initial page reads status but requires a click before creating a Pi process", () => {
   const html = renderToStaticMarkup(createElement(AiAgentPage));
-  assert.match(html, /AI智解|产品助手/); assert.doesNotMatch(html, /FY27|FY28|学校版/);
+  assert.match(html, /AI智解|产品助手/);
+  const context = html.match(/<div class="fy27-header-context">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(context); assert.match(context, /产品助手/); assert.doesNotMatch(context, /FY27|FY28|学校版/);
+  assert.match(html, /FY27定版预算/); assert.match(html, /FY27全年预测/); assert.match(html, /FY28预算编制/);
   assert.match(html, /正在读取 AI 状态/);
   const effect = source.slice(source.indexOf("mounted.current = true"), source.indexOf("const start = async"));
   assert.match(effect, /void load\(\)/); assert.doesNotMatch(effect, /createAiAgentSession|DELETE|stopAiAgentSession/);
@@ -281,9 +284,9 @@ test("business entry has one process-start control and no competing chat or budg
   assert.equal(initial.some(node => ["textarea", "form"].includes(node.type)), false);
   assert.equal(initial.filter(node => node.type === "button" && typeof node.props["aria-pressed"] === "boolean").length, 3);
   const html = render({});
-  assert.match(text(html), /查看预算 结转收入和招生人次主要分布在哪里/);
-  assert.match(text(html), /达成预测 预计缺口主要来自哪些业务/);
-  assert.match(text(html), /下一年预算 离经营目标还差多少/);
+  assert.match(text(html), /FY27定版预算 结转收入和招生人次主要分布在哪里/);
+  assert.match(text(html), /FY27全年预测 预计缺口主要来自哪些业务/);
+  assert.match(text(html), /FY28预算编制 离经营目标还差多少/);
   assert.match(text(html), /点击上方“开始对话”，进入 Pi 后提问/);
   assert.doesNotMatch(html, /<iframe|contenteditable|发送问题|立即调平|保存预算/);
 });
@@ -369,7 +372,8 @@ test("AI shows the source version and multi-value scope, prepares the same conte
   let started = 0, copied = 0;
   const props = workspaceProps({ sourceContext: context, preparedTaskId: "next-year", onStart() { started++; }, onCopyPrepared() { copied++; } });
   const tree = AiAgentWorkspace(props), html = render(props);
-  assert.match(text(html), /来源 下一年预算 · FY29/); assert.match(text(html), /N7 · saved-N7-id/);
+  assert.match(text(html), /来源 FY29预算编制/); assert.match(text(html), /N7 · saved-N7-id/);
+  assert.match(text(html), /FY29预算编制 离经营目标还差多少/);
   assert.match(text(html), /季度：秋季、寒假；校区：西直门、中关村/);
   assert.match(html, /返回来源页面/); assert.match(html, /nyTask=4/);
   const prompt = aiAgentPreparedPrompt("next-year", context);

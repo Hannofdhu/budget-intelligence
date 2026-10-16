@@ -8,9 +8,10 @@ import { build } from "esbuild";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { budgetWorkbook } from "../src/budgetExport.ts";
+import { readRenderedTable, tableExportData, tableCopyRows } from "../src/tableTransfer.ts";
 import { aiBudgetHref, readAiBudgetContext } from "../src/aiBudgetContext.ts";
 import {
-  forecastNumber, sumForecastRows, groupForecastRows, defaultForecastStates, forecastStateLabels,
+  forecastNumber, sumForecastRows, groupForecastRows, summarizeForecastRows, forecastQuarterHeadcounts, defaultForecastStates, forecastStateLabels,
   getForecast, refreshForecast, reviseForecast, confirmForecast, groupForecastIssues, forecastMappingIssues, prepareForecastMapping, forecastPresentationRow, forecastActualRevenueDefaultsToZero, forecastActualHeadcountDefaultsToZero,
   prepareTrialForecast, trialFinancialDraft, applyTrialFinancialDraft, canConfirmForecast,
   fixedForecastRulesVersion, usesFixedForecastRules, forecastCalculationComplete,
@@ -22,7 +23,7 @@ const compiled = await build({ entryPoints: [fileURLToPath(new URL("../src/Forec
   loader: { ".css": "empty" }, logLevel: "silent" });
 const module = { exports: {} };
 new Function("require", "module", "exports", compiled.outputFiles[0].text)(require, module, module.exports);
-const { ForecastDashboard, ForecastIssueGroups, forecastGapLabel, ForecastLogic, ForecastTrialStatus, ForecastTrialScopeEditor, TrialAssumptionNotes, forecastRowLabel, ForecastFixedRules, ForecastParameterStatus } = module.exports;
+const { ForecastDashboard, ForecastIssueGroups, forecastScopeTransfer, forecastGapLabel, ForecastLogic, ForecastTrialStatus, ForecastTrialScopeEditor, TrialAssumptionNotes, forecastRowLabel, ForecastFixedRules, ForecastParameterStatus } = module.exports;
 const text = html => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 const row = (overrides = {}) => ({ season: "暑假", track: "智慧空间", campus: "西直门", product: "常规班", grade: "七年级", subject: "数学",
   budget_revenue: "100000.000000", forecast_revenue: "98000.000000", budget_total: 100, forecast_total: 97, method: "FROZEN_ACTUAL", ...overrides });
@@ -32,6 +33,77 @@ const calculation = (overrides = {}) => ({ rule_version: "test-only", ready: tru
     budget_revenue: "100000", forecast_revenue: index ? "92666.67" : "98000", gap: index ? "7333.33" : "2000", budget_total: 100, forecast_total: 97 })),
   rows: [row()], issues: [], campuses: [], ...overrides });
 const render = data => renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, onReview() {} }));
+
+test("quarter student breakdown uses saved new and old counts, excluding financial-only and unbudgeted baseline contributions without mutating facts", () => {
+  const rows = [
+    row({ budget_new: "40", budget_old: "60", forecast_new: 37, forecast_old: 60 }),
+    row({ budget_covered: false, budget_new: 900, budget_old: 900, forecast_new: 5, forecast_old: 6 }),
+    row({ method: "UNMAPPED_ACTUAL", budget_new: 900, budget_old: 900, forecast_new: 2, forecast_old: 3 }),
+    row({ unmapped: true, budget_new: 900, budget_old: 900, forecast_new: 1, forecast_old: 2 }),
+    row({ method: "UNMAPPED_FROZEN_CARRYIN", counts_not_applicable: true, budget_new: 900, budget_old: 900, forecast_new: null, forecast_old: null }),
+    row({ counts_not_applicable: true, budget_new: null, budget_old: null, forecast_new: null, forecast_old: null }),
+    row({ season: "秋季", budget_new: 999, budget_old: 999, forecast_new: 999, forecast_old: 999 }),
+  ];
+  const before = JSON.stringify(rows);
+  assert.deepEqual(forecastQuarterHeadcounts(rows, "暑假"), { budget_new: 40, budget_old: 60, forecast_new: 45, forecast_old: 71 });
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test("quarter new and old counts default only missing actuals to zero and never infer old snapshot splits from totals", () => {
+  const known = row({ budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 });
+  const missingActual = row({ data_status: "ACTUAL_UNAVAILABLE", budget_new: 0, budget_old: 0, forecast_new: null, forecast_old: null });
+  assert.deepEqual(forecastQuarterHeadcounts([known, missingActual], "暑假"), { budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 });
+  assert.deepEqual(forecastQuarterHeadcounts([row({ method: "ACTUAL_UNAVAILABLE", budget_new: 0, budget_old: 0 })], "暑假"),
+    { budget_new: 0, budget_old: 0, forecast_new: 0, forecast_old: 0 });
+  for (const method of ["FROZEN_ACTUAL", "TERMINAL_FORECAST", "PARENT_PARAMETER_PROJECTION", "UNMAPPED_ACTUAL"]) {
+    const result = forecastQuarterHeadcounts([known, row({ method, budget_new: 1, budget_old: 2, forecast_new: 3, forecast_old: null })], "暑假");
+    assert.equal(result.forecast_new, 40); assert.equal(result.forecast_old, null, method);
+  }
+  assert.deepEqual(forecastQuarterHeadcounts([row()], "暑假"), { budget_new: null, budget_old: null, forecast_new: null, forecast_old: null });
+  assert.deepEqual(forecastQuarterHeadcounts([], "暑假"), { budget_new: null, budget_old: null, forecast_new: null, forecast_old: null });
+  assert.equal(forecastQuarterHeadcounts([known, row({ budget_new: "invalid", budget_old: 0, forecast_new: Infinity, forecast_old: 0 })], "暑假").budget_new, null);
+  assert.equal(forecastQuarterHeadcounts([row({ forecast_new: Infinity })], "暑假").forecast_new, null);
+});
+
+test("quarter table groups total, new and old headcounts under budget and forecast headings while preserving authoritative totals and money", () => {
+  const data = calculation({ rows: [row({ budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 })] });
+  data.quarters[0].forecast_total = 123; // Saved department total is authoritative, not recalculated by the browser.
+  const before = JSON.stringify(data), html = render(data);
+  const table = html.match(/<table[^>]*aria-label="季度达成明细表"[\s\S]*?<\/table>/)?.[0] ?? "";
+  assert.match(table, /colSpan="3"[^>]*scope="colgroup">预算人次/);
+  assert.match(table, /colSpan="3"[^>]*scope="colgroup">预计 \/ 实际人次/);
+  assert.equal((table.match(/>总人次<\/th>/g) ?? []).length, 2);
+  assert.equal((table.match(/>新生人次<\/th>/g) ?? []).length, 2);
+  assert.equal((table.match(/>老生人次<\/th>/g) ?? []).length, 2);
+  const body = table.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+  assert.match(text(body), /暑假 已定版 10 9\.8 缺口 0\.2 100 40 60 123 37 60/);
+  assert.match(text(body), /秋季 招生中 10 9\.27 缺口 0\.73 100 — — 97 — —/);
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("quarter table copy and XLSX export include all four saved quarters and both student splits with distinct numeric columns", async () => {
+  const rows = ["暑假", "秋季", "寒假", "春季"].map(season => row({ season, budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 }));
+  const html = render(calculation({ rows })), table = html.match(/<table[^>]*aria-label="季度达成明细表"[\s\S]*?<\/table>/)?.[0] ?? "";
+  // Exercise ActionTable's real rendered-table adapter, including the two merged header rows.
+  const domRows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(([, body]) => ({ cells: [...body.matchAll(/<t[hd]([^>]*)>([\s\S]*?)<\/t[hd]>/g)].map(([, attrs, value]) => ({
+    innerText: text(value), rowSpan: Number(attrs.match(/rowSpan="(\d+)"/)?.[1] ?? 1), colSpan: Number(attrs.match(/colSpan="(\d+)"/)?.[1] ?? 1), querySelectorAll: () => [],
+  })) }));
+  const transfer = readRenderedTable({ rows: domRows, tHead: { rows: domRows.slice(0, 2) } });
+  assert.equal(transfer.grid.length, 6); assert.ok(transfer.grid.every(row => row.length === 11));
+  assert.deepEqual(transfer.headings.slice(5), ["预算人次 / 总人次", "预算人次 / 新生人次", "预算人次 / 老生人次", "预计 / 实际人次 / 总人次", "预计 / 实际人次 / 新生人次", "预计 / 实际人次 / 老生人次"]);
+  assert.deepEqual(transfer.grid[0].slice(5), ["预算人次", "预算人次", "预算人次", "预计 / 实际人次", "预计 / 实际人次", "预计 / 实际人次"]);
+  assert.deepEqual(transfer.body.map(row => row[0]), ["暑假", "秋季", "寒假", "春季"]);
+  const data = tableExportData(transfer.headings, transfer.body), workbook = await budgetWorkbook(data.columns, data.rows, "季度达成");
+  const { default: ExcelJS } = await import("exceljs"), reopened = new ExcelJS.Workbook();
+  await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
+  const sheet = reopened.worksheets[0];
+  assert.equal(sheet.rowCount, 5); assert.equal(sheet.columnCount, 11);
+  for (let col = 6; col <= 11; col++) {
+    assert.equal(sheet.getCell(1, col).value, transfer.headings[col - 1]);
+    assert.equal(sheet.getCell(2, col).type, ExcelJS.ValueType.Number);
+    assert.equal(sheet.getCell(2, col).value, [100, 40, 60, 97, 37, 60][col - 6]);
+  }
+});
 
 const findTree = (node, predicate) => Array.isArray(node) ? node.flatMap(child => findTree(child, predicate)) : !node || typeof node !== "object" ? []
   : [...(predicate(node) ? [node] : []), ...findTree(typeof node.type === "function" && ["BudgetScopeBar", "BudgetDataSection"].includes(node.type.name) ? node.type(node.props) : node.props?.children, predicate)];
@@ -121,6 +193,122 @@ test("forecast initial scope sync never replaces an existing repeated or unknown
   } finally { page.close(); browser.restore(); }
 });
 
+test("ordered grouping and scope survive refresh, navigation, clear, and a version result replacement without touching saved values", () => {
+  const browser = forecastHistoryBrowser("http://127.0.0.1:5188/budget/forecast?archive=fy27&forecast_version=p19&bf_scope=1&bf_season=秋季&fg_row=track&fg_row=grade#scope");
+  const data = calculation({ rows: [row(), row({ season: "秋季" }), row({ season: "秋季", grade: "八年级" })] });
+  const before = JSON.stringify(data), page = dashboardHistoryHarness(data);
+  const selector = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ForecastGroupSelector")[0];
+  const scope = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0];
+  let refreshed;
+  try {
+    let tree = page.render(); assert.deepEqual(selector(tree).props.value, ["track", "grade"]); assert.equal(scope(tree).props.count, 2);
+    selector(tree).props.onChange(["season", "track", "subject"]); tree = page.render();
+    assert.deepEqual(selector(tree).props.value, ["season", "track", "subject"]); assert.equal(scope(tree).props.count, 2);
+    assert.equal(new URLSearchParams(window.location.search).get("bf_season"), "秋季");
+    refreshed = dashboardHistoryHarness(data); assert.deepEqual(selector(refreshed.render()).props.value, ["season", "track", "subject"]); refreshed.close(); refreshed = null;
+    scope(tree).props.onClear(); tree = page.render(); assert.equal(scope(tree).props.count, 3);
+    assert.deepEqual(selector(tree).props.value, ["season", "track", "subject"]);
+    browser.move(-1); tree = page.render(); assert.equal(scope(tree).props.count, 2); assert.deepEqual(selector(tree).props.value, ["season", "track", "subject"]);
+    browser.move(-1); tree = page.render(); assert.deepEqual(selector(tree).props.value, ["track", "grade"]);
+    browser.move(1); tree = page.render(); assert.deepEqual(selector(tree).props.value, ["season", "track", "subject"]);
+    const params = new URLSearchParams(window.location.search); assert.equal(params.get("forecast_version"), "p19"); assert.equal(params.get("archive"), "fy27");
+    assert.equal(new URL(window.location.href).hash, "#scope");
+    assert.equal(JSON.stringify(data), before);
+    // The same mounted dashboard receives another saved result; reading choices do not become budget inputs.
+    const nextData = calculation({ rows: [row({ season: "秋季", subject: "英语" })] });
+    data.rows = nextData.rows; tree = page.render(); assert.deepEqual(selector(tree).props.value, ["season", "track", "subject"]);
+    assert.equal(scope(tree).props.filters.season, "秋季"); assert.equal(scope(tree).props.count, 1);
+  } finally { refreshed?.close(); page.close(); browser.restore(); }
+});
+
+test("scope achievement renders independent dimension columns, both student splits and a raw-scope total without changing department results", () => {
+  const browser = forecastHistoryBrowser("http://127.0.0.1:5188/budget/forecast?bf_scope=1&fg_row=track&fg_row=grade");
+  const data = calculation({ rows: [
+    row({ grade: "七年级", budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 }),
+    row({ grade: "八年级", budget_revenue: "200000", forecast_revenue: "150000", budget_total: 200, forecast_total: 150, budget_new: 50, budget_old: 150, forecast_new: 30, forecast_old: 120 }),
+  ] });
+  const before = JSON.stringify(data);
+  try {
+    const html = render(data), table = html.match(/<table[^>]*aria-label="维度达成表"[\s\S]*?<\/table>/)?.[0] ?? "";
+    const headings = table.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? "";
+    assert.match(headings, />赛道<\/th><th[^>]*>年级<\/th>/);
+    assert.equal((headings.match(/>总人次<\/th>/g) ?? []).length, 2);
+    assert.equal((headings.match(/>新生人次<\/th>/g) ?? []).length, 2);
+    assert.equal((headings.match(/>老生人次<\/th>/g) ?? []).length, 2);
+    const body = table.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
+    assert.match(text(body), /智慧空间 七年级 10 9\.8 缺口 0\.2 98% 100 40 60 97 37 60/);
+    assert.match(text(body), /智慧空间 八年级 20 15 缺口 5 75% 200 50 150 150 30 120/);
+    const footer = table.match(/<tfoot>([\s\S]*?)<\/tfoot>/)?.[1] ?? "";
+    assert.match(text(footer), /当前范围合计 30 24\.8 缺口 5\.2 82\.67% 300 90 210 247 67 180/);
+    assert.match(text(html), /预计全年结转收入 37\.6 万/);
+    assert.equal(JSON.stringify(data), before);
+    const incomeOnly = render(calculation({ rows: [row({ counts_not_applicable: true, budget_new: 999, budget_old: 999, forecast_new: 999, forecast_old: 999 })] }));
+    const incomeTable = incomeOnly.match(/<table[^>]*aria-label="维度达成表"[\s\S]*?<\/table>/)?.[0] ?? "";
+    assert.match(text(incomeTable.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? ""), /10 9\.8 缺口 0\.2 98% — — — — — —/);
+  } finally { browser.restore(); }
+});
+
+test("six-dimension rendered copy and export keep every grouped row, all student columns, fiscal order and a single footer", async () => {
+  const groups = ["track", "product", "subject", "grade", "campus", "season"];
+  const browser = forecastHistoryBrowser(`http://127.0.0.1:5188/budget/forecast?bf_scope=1&${groups.map(key => `fg_row=${key}`).join("&")}`);
+  try {
+    const rows = ["智慧空间", "智慧伴学"].flatMap(track => ["春季", "寒假", "秋季", "暑假"].map(season => row({ track, season, budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 })));
+    const html = render(calculation({ rows })), table = html.match(/<table[^>]*aria-label="维度达成表"[\s\S]*?<\/table>/)?.[0] ?? "";
+    const domRows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(([, body]) => ({ cells: [...body.matchAll(/<t[hd]([^>]*)>([\s\S]*?)<\/t[hd]>/g)].map(([, attrs, value]) => ({
+      innerText: text(value), rowSpan: Number(attrs.match(/rowSpan="(\d+)"/)?.[1] ?? 1), colSpan: Number(attrs.match(/colSpan="(\d+)"/)?.[1] ?? 1), querySelectorAll: () => [],
+    })) }));
+    const transfer = readRenderedTable({ rows: domRows, tHead: { rows: domRows.slice(0, 2) } });
+    assert.equal(transfer.grid.length, 11); assert.ok(transfer.grid.every(row => row.length === 16));
+    assert.deepEqual(transfer.headings.slice(0, 6), ["赛道", "产品", "科目", "年级", "校区", "季度"]);
+    assert.deepEqual(transfer.headings.slice(-6), ["预算人次 / 总人次", "预算人次 / 新生人次", "预算人次 / 老生人次", "预计 / 实际人次 / 总人次", "预计 / 实际人次 / 新生人次", "预计 / 实际人次 / 老生人次"]);
+    assert.deepEqual(transfer.body.slice(0, 4).map(row => row[5]), ["暑假", "秋季", "寒假", "春季"]);
+    assert.equal(transfer.body.filter(row => row[0] === "当前范围合计").length, 1);
+    const exported = tableExportData(transfer.headings, transfer.body), workbook = await budgetWorkbook(exported.columns, exported.rows, "当前范围达成");
+    const { default: ExcelJS } = await import("exceljs"), reopened = new ExcelJS.Workbook();
+    await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
+    const sheet = reopened.worksheets[0]; assert.equal(sheet.rowCount, 10); assert.equal(sheet.columnCount, 16);
+    assert.equal(sheet.getCell(10, 1).value, "当前范围合计");
+    for (let col = 11; col <= 16; col++) {
+      assert.equal(sheet.getCell(2, col).type, ExcelJS.ValueType.Number);
+      assert.equal(sheet.getCell(2, col).value, [100, 40, 60, 97, 37, 60][col - 11]);
+      assert.equal(sheet.getCell(10, col).value, [800, 320, 480, 776, 296, 480][col - 11]);
+    }
+    assert.doesNotMatch(text(html), /已合并所选季度/);
+  } finally { browser.restore(); }
+});
+
+test("scope typed transfer keeps known budget numbers numeric beside unbudgeted text and carries all groups and one unambiguous footer", async () => {
+  const dimensions = ["season", "track", "subject", "product", "grade", "campus"];
+  const rows = [row({ campus: "真实预算", budget_revenue: "100000.123456", forecast_revenue: "98000.654321", budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 }),
+    row({ campus: "独立业务", budget_covered: false, budget_revenue: 0, budget_total: 0, budget_new: 0, budget_old: 0, forecast_revenue: "500.123456", forecast_total: 2, forecast_new: 1, forecast_old: 1 })];
+  const before = JSON.stringify(rows), transfer = forecastScopeTransfer(dimensions, groupForecastRows(rows, dimensions), summarizeForecastRows(rows));
+  assert.equal(transfer.rows.length, 3); assert.equal(transfer.columns.length, 16);
+  const known = transfer.rows.find(row => row.campus === "真实预算"), independent = transfer.rows.find(row => row.campus === "独立业务"), footer = transfer.rows.at(-1);
+  assert.equal(known.budget_revenue, 100000.123456 / 10000); assert.equal(known.budget_total, 100);
+  assert.equal(independent.budget_revenue, "未单列"); assert.equal(independent.budget_total, "未单列"); assert.equal(independent.budget_new, null);
+  assert.equal(footer.season, "当前范围合计"); assert.ok(dimensions.slice(1).every(key => footer[key] === ""));
+  assert.equal(footer.budget_revenue, known.budget_revenue); assert.equal(footer.forecast_total, 99);
+  const copied = tableCopyRows(transfer.columns, transfer.rows);
+  assert.equal(copied.length, 4); assert.ok(copied.every(row => row.length === 16));
+  assert.deepEqual(copied[0].slice(-6), ["预算人次 / 总人次", "预算人次 / 新生人次", "预算人次 / 老生人次", "预计 / 实际人次 / 总人次", "预计 / 实际人次 / 新生人次", "预计 / 实际人次 / 老生人次"]);
+  const workbook = await budgetWorkbook(transfer.columns, transfer.rows, "当前范围达成");
+  const { default: ExcelJS } = await import("exceljs"), reopened = new ExcelJS.Workbook(); await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
+  const sheet = reopened.worksheets[0], knownIndex = transfer.rows.indexOf(known) + 2, independentIndex = transfer.rows.indexOf(independent) + 2;
+  assert.equal(sheet.getCell(knownIndex, 7).type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell(knownIndex, 11).type, ExcelJS.ValueType.Number);
+  assert.equal(sheet.getCell(knownIndex, 7).value, known.budget_revenue); assert.equal(sheet.getCell(independentIndex, 7).value, "未单列");
+  for (const col of [7, 8, 10, 11, 12, 13, 14, 15, 16]) assert.equal(sheet.getCell(4, col).type, ExcelJS.ValueType.Number, `footer column ${col}`);
+  assert.equal(JSON.stringify(rows), before);
+  const empty = forecastScopeTransfer(dimensions, [], summarizeForecastRows([])); assert.equal(empty.rows.length, 0);
+  const unnamed = [row({ track: "", method: "UNMAPPED_ACTUAL", budget_revenue: 0, budget_total: 0 })];
+  const unnamedTransfer = forecastScopeTransfer(["track"], groupForecastRows(unnamed, ["track"]), summarizeForecastRows(unnamed));
+  assert.equal(unnamedTransfer.rows[0].track, "未填写"); assert.equal(unnamedTransfer.rows[0].budget_revenue, null);
+  assert.equal(unnamedTransfer.rows[0].gap_label, null); assert.equal(unnamedTransfer.rows[0].achievement, null);
+  const tree = dashboardHarness(calculation({ rows }))();
+  const region = findTree(tree, node => node.type === "div" && node.props["aria-label"] === "维度达成表")[0];
+  const action = findTree(region, node => typeof node.type === "function" && node.type.name === "ActionTable")[0];
+  assert.equal(action.props.exportData.rows.length, 2); assert.equal(action.props.exportLabel, "导出当前表格");
+});
+
 test("board and detail navigation shares one exact scope, preserves it across tabs, and never changes the whole-year or quarter result", () => {
   const data = calculation({ rows: [row(), row({ campus: "西直门南" }), row({ season: "秋季" })] });
   const before = JSON.stringify(data), page = dashboardHarness(data);
@@ -195,7 +383,7 @@ test("forecast details own one copy/export group and transfer every filtered row
 test("forecast detail transfer retains trial filenames and honest empty filter results", () => {
   const page = dashboardHarness(calculation({ rows: [row({ season: "秋季" })] }), true);
   let tree = page();
-  const table = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0];
+  const table = tree => findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.tableLabel === "预测明细")[0];
   assert.equal(table(tree).props.exportData.filename, "FY27-试用预测明细");
   findTree(tree, node => typeof node.type === "function" && node.type.name === "FilterSelect")[0].props.onChange("寒假");
   tree = page();
@@ -211,7 +399,7 @@ test("forecast multi-value scope is exact OR within dimensions and AND across di
   scope(tree).props.onChange({ season: ["暑假", "秋季"], track: "", campus: ["西直门", "中关村"], product: "", grade: "", subject: ["数学", "英语"] });
   tree = page();
   assert.equal(scope(tree).props.count, 3);
-  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData;
+  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.tableLabel === "预测明细")[0].props.exportData;
   assert.deepEqual(transfer.rows.map(value => [value.campus, value.season, value.subject]), rows.slice(0, 3).map(value => [value.campus, value.season, value.subject]));
   assert.deepEqual(scope(tree).props.filters.campus, ["西直门", "中关村"]);
   const sections = findTree(tree, node => typeof node.type === "function" && node.type.name === "BudgetDataSection");
@@ -221,12 +409,12 @@ test("forecast multi-value scope is exact OR within dimensions and AND across di
   assert.equal(JSON.stringify(data), before);
   scope(tree).props.onChange({ ...scope(tree).props.filters, campus: ["不存在校区1", "不存在校区2"] });
   tree = page(); assert.equal(scope(tree).props.count, 0);
-  assert.deepEqual(findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData.rows, []);
+  assert.deepEqual(findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.tableLabel === "预测明细")[0].props.exportData.rows, []);
 });
 
 test("forecast revenue labels use carryover terminology with original units and unchanged field values", () => {
   const data = calculation(), before = JSON.stringify(data), tree = dashboardHarness(data)();
-  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData)[0].props.exportData;
+  const transfer = findTree(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.tableLabel === "预测明细")[0].props.exportData;
   assert.deepEqual(transfer.columns.filter(column => ["budget_revenue", "forecast_revenue"].includes(column.key)), [
     { key: "budget_revenue", label: "定版预算结转收入（元）", format: "money" },
     { key: "forecast_revenue", label: "预计结转收入（元）", format: "money" },
@@ -278,7 +466,7 @@ test("unmatched actuals retain money and counts but can never claim an excess ag
   assert.equal(JSON.stringify(actual), frozen, "engine zero contribution and source actuals stay unchanged");
   const html = render(calculation({ rows: [actual] }));
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(table), /— 1,353\.69 — — — 4,321/);
+  assert.match(text(table), /— 1,353\.69 — — — — — 4,321 — —/);
   assert.doesNotMatch(text(table), /超额|100%/);
 });
 test("mixed mapped and unmatched groups keep known amounts but postpone gap and achievement even with zero budgets", () => {
@@ -593,12 +781,12 @@ test("trial default dimension view uses open-quarter results without altering de
   const data = calculation({ ready: false, trial_ready: true, rows: [row({ forecast_revenue: null, forecast_total: null, data_status: "ACTUAL_UNAVAILABLE" }), row({ season: "秋季", forecast_revenue: "68000", forecast_total: 68, method: "TERMINAL_FORECAST" })] });
   const html = renderToStaticMarkup(createElement(ForecastDashboard, { calculation: data, trialMode: true }));
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);
+  assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 — — 68 — —/);
   assert.match(text(html), /预计全年结转收入 37\.6 万/); assert.equal(data.annual.forecast_revenue, "376000");
   const all = render(data); assert.doesNotMatch(text(all), /\d+条实际(?:结转收入|人次)/);
   assert.doesNotMatch(text(all), /全年分组暂不合计/);
   const allTable = all.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(allTable), /20 6\.8 缺口 13\.2 34% 200 68/);
+  assert.match(text(allTable), /20 6\.8 缺口 13\.2 34% 200 — — 68 — —/);
 });
 
 test("trial notes explicitly disclose entered rates that were not applied, including numerical zero", () => {
@@ -689,7 +877,7 @@ test("fixed forecast completeness displays known totals but cannot bypass data, 
   assert.equal(findTree(dashboardHarness(data)(), node => typeof node.type === "function" && node.type.name === "BudgetScopeBar")[0].props.filters.season, "秋季");
   assert.doesNotMatch(html, /class="forecast-data-notice"|forecast-section forecast-issues|部分实际明细未对应/);
   const table = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 68/);
+  assert.match(text(table), /10 6\.8 缺口 3\.2 68% 100 — — 68 — —/);
   assert.equal(JSON.stringify(data), before); assert.equal(data.rows[0].forecast_revenue, null);
   const actor = { userId: "owner", departmentId: "test", roles: ["DEPARTMENT_BUDGET_OWNER"] };
   const version = fixedVersion({ calculation: data });
@@ -753,7 +941,7 @@ test("summer dimension achievement and detail display zero-default actual revenu
     rows: [missing], issues: Array.from({ length: 47 }, () => ({ code: "ACTUAL_UNAVAILABLE", severity: "BLOCKING", season: "暑假", message: "实际明细待补充" })) });
   const before = JSON.stringify(data), html = render(data), readable = text(html);
   const dimension = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(text(dimension), /智慧空间 10 0 缺口 10 0% 100 0/);
+  assert.match(text(dimension), /智慧空间 10 0 缺口 10 0% 100 — — 0 0 0/);
   const detail = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(detail), /100,000 0 100 0 实际结转收入、人次按0计/);
   assert.doesNotMatch(readable, /\d+条实际(?:结转收入|人次)|数据待核对 · 47项/);
@@ -841,8 +1029,8 @@ test("removing dimension hints does not alter grouped values, unmatched warnings
   const html = render(data), readable = text(html);
   const dimension = html.match(/aria-label="维度达成表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.doesNotMatch(readable, /\d+条实际(?:结转收入|人次)|含未单列业务/);
-  assert.match(text(dimension), /智慧空间 10 0\.5 缺口 9\.5 5% 100 5/);
-  assert.match(text(dimension), /智慧伴学 含未对应实际 — 0\.25 — — — 3/);
+  assert.match(text(dimension), /智慧空间 10 0\.5 缺口 9\.5 5% 100 — — 5 — —/);
+  assert.match(text(dimension), /智慧伴学 含未对应实际 — 0\.25 — — — — — 3 — —/);
   assert.doesNotMatch(readable, /数据待核对 · 2项/);
   const details = html.match(/aria-label="预测明细表"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
   assert.match(text(details), /100,000 0 100 0 实际结转收入、人次按0计/);

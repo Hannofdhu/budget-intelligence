@@ -147,7 +147,7 @@
   .fy27-year-label { font-size: var(--budget-caption-size); }
   .fy27-topbar .decision-version { font-size: var(--budget-caption-size); gap: 4px; }
   .fy27-module-switch { width: min(100%, 420px); }
-  .fy27-module-switch a { padding: 8px 10px; font-size: 12px; }
+  .fy27-module-switch a { min-width: 0; flex-direction: column; padding: 4px 8px; font-size: 12px; line-height: 1.2; }
 }
 @media (max-width: 767px) {
   .decision-shell.history-budget .history-heading h1, .next-year-shell .ny-heading h1 { font-size: 1.625rem; line-height: 1.3077; }

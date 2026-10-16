@@ -359,7 +359,7 @@ test("the main page has one adjustment entry, an in-place three-panel drawer and
   assert.equal(buttons(tree, "调整预测").length, 1);
   const heading = find(tree, node => node.type === "header" && node.props.className === "forecast-heading")[0];
   assert.equal(buttons(heading, "调整预测").length, 1, "adjustment is next to the unique page heading");
-  assert.equal(find(tree, node => node.type === "h1" && elementText(node) === "达成预测").length, 1);
+  assert.equal(find(tree, node => node.type === "h1" && elementText(node) === "FY27全年预测").length, 1);
   const drawer = component(tree, "ForecastSettingsDrawer");
   assert.ok(drawer); assert.equal(drawer.props.open, false);
   const panels = find(drawer.props.children, node => node.type === "section" && node.props.role === "tabpanel");

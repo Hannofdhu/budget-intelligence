@@ -30,19 +30,33 @@ test("filter face stays one compact named dropdown with selected values, not an 
 function harness(initial = {}) {
   const names = ["window", "document"], descriptors = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   const listeners = new Map(), windowListeners = new Map(), states = [], refs = [], slots = [], pending = [];
-  const changes = [], portals = [], optionElements = new Map();
+  const changes = [], portals = [], optionElements = new Map(), focusCalls = [], mountStyles = [];
   let stateIndex = 0, refIndex = 0, effectIndex = 0, dirty = false, props;
   const onChange = value => { changes.push(value); props = { ...props, value }; dirty = true; };
   props = { value: "", options: ["A,B", "中关村", "西直门"], "aria-label": "筛选校区", onChange, ...initial };
   const document = { body: { name: "document-body" }, activeElement: null,
     addEventListener(name, fn) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); },
     removeEventListener(name, fn) { listeners.get(name)?.delete(fn); } };
-  const triggerElement = { name: "trigger", focus() { document.activeElement = this; },
-    getBoundingClientRect() { return { left: 20, top: 40, right: 260, bottom: 80, width: 240, height: 40 }; },
+  function focus(element, options) {
+    focusCalls.push({ name: element.name ?? element.key, options, geometry: { ...menuElement.style } });
+    document.activeElement = element;
+    // A focus contract model, not browser layout: unguarded focus can scroll
+    // both the document and its containing dialog, as the CUA reproduction did.
+    if (!options?.preventScroll) { window.scrollY = 4079; document.body.scrollTop = 4079; if (initial.dialog) initial.dialog.scrollTop = 4079; }
+  }
+  const triggerElement = { name: "trigger", focus(options) { focus(this, options); },
+    getBoundingClientRect() { return initial.triggerRect ?? { left: 20, top: 40, right: 260, bottom: 80, width: 240, height: 40 }; },
     contains(node) { return node === this; }, closest() { return initial.dialog ?? null; } };
-  const menuElement = { name: "menu", contains(node) { return node === this || [...optionElements.values()].includes(node); },
+  const menuElement = { name: "menu", style: {}, scrollTop: 0, clientTop: 1,
+    get clientHeight() { return Math.min(initial.menuHeight ?? 320, Number.parseFloat(this.style.maxHeight ?? "320"), optionElements.size * 36); },
+    getBoundingClientRect() {
+      const top = this.style.top && this.style.top !== "auto" ? Number.parseFloat(this.style.top)
+        : window.innerHeight - Number.parseFloat(this.style.bottom ?? "0") - this.clientHeight;
+      return { top, bottom: top + this.clientHeight, height: this.clientHeight };
+    },
+    contains(node) { return node === this || [...optionElements.values()].includes(node); },
     querySelectorAll() { return [...optionElements.values()]; }, querySelector() { return [...optionElements.values()].find(node => node.selected) ?? null; } };
-  const window = { innerWidth: 390, innerHeight: 844,
+  const window = { innerWidth: 390, innerHeight: 844, scrollY: 640,
     addEventListener(name, fn) { if (!windowListeners.has(name)) windowListeners.set(name, new Set()); windowListeners.get(name).add(fn); },
     removeEventListener(name, fn) { windowListeners.get(name)?.delete(fn); } };
   for (const [name, value] of Object.entries({ document, window })) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
@@ -68,10 +82,16 @@ function harness(initial = {}) {
       const trigger = find(tree, node => node.props?.role === "combobox")[0]; trigger.props.ref.current = triggerElement;
       const menu = find(tree, node => node.props?.role === "listbox")[0];
       if (menu) {
+        mountStyles.push({ ...menu.props.style }); Object.assign(menuElement.style, menu.props.style);
         menu.props.ref.current = menuElement;
         const visible = new Set();
         for (const button of find(menu, node => node.props?.role === "option")) {
-          const key = String(button.key), element = optionElements.get(key) ?? { key, focus() { document.activeElement = this; } };
+          const key = String(button.key), element = optionElements.get(key) ?? { key, focus(options) { focus(this, options); },
+            getBoundingClientRect() {
+              const index = [...optionElements.keys()].indexOf(key);
+              const top = menuElement.getBoundingClientRect().top + menuElement.clientTop + index * 36 - menuElement.scrollTop;
+              return { top, bottom: top + 36, height: 36 };
+            } };
           element.selected = button.props["aria-selected"]; optionElements.set(key, element); visible.add(key);
         }
         for (const key of optionElements.keys()) if (!visible.has(key)) optionElements.delete(key);
@@ -81,8 +101,9 @@ function harness(initial = {}) {
     } while (dirty);
     return tree;
   };
-  return { render, changes, portals, document, triggerElement, listeners,
+  return { render, changes, portals, document, window, triggerElement, menuElement, listeners, focusCalls, mountStyles,
     dispatch(name, target) { for (const listener of listeners.get(name) ?? []) listener({ target }); },
+    dispatchWindow(name) { for (const listener of windowListeners.get(name) ?? []) listener(); },
     restore() { slots.forEach(slot => slot.cleanup?.()); for (const name of names) { const descriptor = descriptors.get(name);
       if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; } },
   };
@@ -161,4 +182,44 @@ test("filter menus mount inside their nearest modal dialog and otherwise use the
       assert.ok(h.portals.every(target => target === (dialog ?? h.document.body)), "a body portal cannot escape a native modal top layer");
     } finally { h.restore(); }
   }
+});
+
+test("first open positions a fixed popup before focus and opening/reopening/closing never requests page scrolling", () => {
+  for (const dialog of [null, { name: "containing-dialog", scrollTop: 135 }]) {
+    const h = harness({ dialog });
+    try {
+      let tree = h.render();
+      for (let i = 0; i < 2; i++) {
+        trigger(tree).props.onClick(); tree = h.render();
+        assert.equal(h.mountStyles.at(-1).position, "fixed", "the first DOM commit must not append an in-flow menu");
+        const call = h.focusCalls.at(-1);
+        assert.equal(call.geometry.top, "84px", "placement must be applied before initial focus, not in a later commit");
+        assert.deepEqual(call.options, { preventScroll: true });
+        menu(tree).props.onKeyDown(key("Escape")); tree = h.render();
+      }
+      assert.equal(h.window.scrollY, 640); assert.equal(h.document.body.scrollTop, undefined);
+      if (dialog) assert.equal(dialog.scrollTop, 135);
+      assert.ok(h.focusCalls.every(call => call.options?.preventScroll));
+      assert.deepEqual(h.changes, []);
+    } finally { h.restore(); }
+  }
+});
+
+test("initial last selection and Home/End scroll only the listbox; resize clears the old placement side", () => {
+  const options = Array.from({ length: 30 }, (_, i) => `校区${i}`), h = harness({ options, value: "校区29", menuHeight: 144 });
+  try {
+    let tree = h.render(); trigger(tree).props.onClick(); tree = h.render();
+    assert.equal(h.document.activeElement.key, "校区29"); assert.ok(h.menuElement.scrollTop > 0);
+    assert.equal(h.window.scrollY, 640);
+    menu(tree).props.onKeyDown(key("Home")); assert.equal(h.menuElement.scrollTop, 0);
+    menu(tree).props.onKeyDown(key("End")); assert.ok(h.menuElement.scrollTop > 0);
+    assert.equal(h.window.scrollY, 640); assert.ok(h.focusCalls.every(call => call.options?.preventScroll));
+    h.window.innerHeight = 250; h.dispatchWindow("resize");
+    assert.equal(h.menuElement.style.maxHeight, "158px", "a downward menu may not use the larger space above its trigger");
+    h.window.innerHeight = 100; h.dispatchWindow("resize");
+    assert.equal(h.menuElement.style.top, "auto"); assert.notEqual(h.menuElement.style.bottom, "auto");
+    h.window.innerHeight = 844; h.dispatchWindow("resize");
+    assert.equal(h.menuElement.style.top, "84px"); assert.equal(h.menuElement.style.bottom, "auto");
+    assert.deepEqual(h.changes, []);
+  } finally { h.restore(); }
 });

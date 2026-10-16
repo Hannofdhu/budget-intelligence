@@ -312,7 +312,7 @@ test("phase 2 changing the selected source expires the preview and a late respon
 });
 test("initial page never creates a draft; no confirmed source has one clear forecast link", () => {
   const restore = fakeBrowser();
-  try { const harness = pageHarness({ stateData: envelope({ source: null, draft: null }) }); const html = harness.html(); assert.match(html, /先确认 FY27 预测/); assert.match(html, /前往达成预测/); assert.doesNotMatch(html, /生成 FY28 草稿/); }
+  try { const harness = pageHarness({ stateData: envelope({ source: null, draft: null }) }); const html = harness.html(); assert.match(html, /先确认 FY27 预测/); assert.match(html, /前往FY27全年预测/); assert.doesNotMatch(html, /生成 FY28 草稿/); }
   finally { restore(); }
 });
 test("saved draft and unsaved preview are distinct; changing inputs shows the original results as pending recalculation", () => {
@@ -841,6 +841,11 @@ test("year-specific URLs reload their ledger, roll back on failure, and protect 
     await listeners.popstate();
     assert.equal(harness.state[15], 2029); assert.equal(harness.state[1].draft.inputs.fiscal_year, 2029); assert.match(globalThis.location.search, /year=2029/);
     assert.equal(nodes(harness.render()).find(node => typeof node.type === "function" && node.type.name === "FY27Header").props.fiscalYear, 2029);
+    const savedBusy = harness.state[4], savedData = harness.state[1];
+    harness.state[4] = "load"; assert.match(harness.html(), /正在读取 FY29预算编制…/);
+    harness.state[4] = "prepare"; harness.state[1] = { ...savedData, draft: null };
+    assert.match(harness.html(), /正在生成 FY29 草稿…/);
+    harness.state[4] = savedBusy; harness.state[1] = savedData;
     filterEffect(harness, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=2", search: "?year=2028&nyTask=2" };
     globalThis.fetch = async (url, options) => { requests.push({ url, method: options?.method ?? "GET" }); return Response.json(url.endsWith("session") ? identity : url.endsWith("catalog") ? { sources: [], fiscal_years: [{ fiscal_year: 2028 }] } : envelope()); };
     await listeners.popstate(); assert.equal(harness.state[15], 2028); assert.equal(harness.state[9], 2); assert.equal(harness.state[1].draft.inputs.fiscal_year, 2028);

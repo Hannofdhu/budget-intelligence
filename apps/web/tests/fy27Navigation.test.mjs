@@ -24,13 +24,14 @@ const urls = {
   "next-year": "/budget/next-year",
   ai: "/budget/ai",
 };
-const labels = { budget: "查看预算", forecast: "达成预测", "next-year": "下一年预算", ai: "AI智解" };
+const labels = { budget: "FY27定版预算", forecast: "FY27全年预测", "next-year": "FY28预算编制", ai: "AI智解" };
 const nodes = tree => {
   if (Array.isArray(tree)) return tree.flatMap(nodes);
   if (!tree || typeof tree !== "object") return [];
   return [tree, ...nodes(tree.props?.children)];
 };
-const links = tree => nodes(tree).filter(node => node.type === "a" && Object.values(labels).includes(node.props.children));
+const links = tree => nodes(nodes(tree).find(node => node.props?.className === "fy27-module-switch")).filter(node => node.type === "a");
+const linkLabel = node => node.props["aria-label"];
 
 test("FY27 modules render the same single switch with exact routes and one current page", () => {
   for (const active of Object.keys(labels)) {
@@ -45,7 +46,7 @@ test("FY27 modules render the same single switch with exact routes and one curre
     const actual = links(tree);
     assert.equal(actual.length, 4);
     for (const key of Object.keys(labels)) {
-      const link = actual.find(node => node.props.children === labels[key]);
+      const link = actual.find(node => linkLabel(node) === labels[key]);
       assert.equal(link.props.href, urls[key]);
       assert.equal(link.props["aria-current"], active === key ? "page" : undefined);
     }
@@ -75,7 +76,9 @@ test("AI is a cross-year product assistant, not a mislabeled FY27 or FY28 budget
   const html = renderToStaticMarkup(createElement(FY27Header, { active: "ai", children: "已配置模型" }));
   assert.match(html, /产品助手/);
   assert.match(html, /已配置模型/);
-  assert.doesNotMatch(html, /FY27|FY28|学校版|<select|aria-haspopup/);
+  const context = nodes(FY27Header({ active: "ai", children: "已配置模型" })).find(node => node.props?.className === "fy27-header-context");
+  assert.doesNotMatch(renderToStaticMarkup(context), /FY27|FY28|学校版|<select|aria-haspopup/);
+  assert.match(html, /FY27定版预算/); assert.match(html, /FY27全年预测/); assert.match(html, /FY28预算编制/);
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
   assert.match(html, /href="\/budget\/ai" aria-current="page"/);
   assert.match(source("App.tsx"), /if \(path === "\/budget\/ai"\) return <AiAgentPage \/>/);
@@ -87,6 +90,19 @@ test("an explicit budget fiscal year is displayed truthfully without introducing
   assert.doesNotMatch(html, /FY28|<select|aria-label="预算财年"/);
   assert.match(html, /预算草稿 N2/);
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
+});
+
+test("module names take independent fiscal years, including equal years, without renaming unrelated data destinations", () => {
+  const unchangedBase = FY27Header({ active: "next-year", fiscalYear: 2029, children: null });
+  assert.deepEqual(links(unchangedBase).map(linkLabel), ["FY27定版预算", "FY27全年预测", "FY29预算编制", "AI智解"]);
+  for (const years of [{ budget: 2029, forecast: 2029, "next-year": 2030 }, { budget: 2029, forecast: 2029, "next-year": 2029 }]) {
+    const tree = FY27Header({ active: "ai", moduleFiscalYears: years, children: null });
+    assert.deepEqual(links(tree).map(linkLabel), ["FY29定版预算", "FY29全年预测", `FY${String(years["next-year"]).slice(-2)}预算编制`, "AI智解"]);
+    assert.deepEqual(links(tree).map(node => node.props.href), Object.values(urls), "display-only configuration must not invent future routing");
+  }
+  const forecast = FY27Header({ active: "forecast", fiscalYear: 2031, children: null });
+  assert.equal(linkLabel(links(forecast)[1]), "FY31全年预测");
+  assert.equal(linkLabel(links(forecast)[0]), "FY27定版预算", "another module's FY27 archive must not be mislabeled");
 });
 
 test("clicking the current module never reloads or invokes the leave guard", () => {
@@ -118,13 +134,13 @@ test("AI entry carries the current local scope and loaded version while other na
   try {
     let guarded = 0;
     const tree = FY27Header({ active: "next-year", children: null, sourceVersion: { id: "saved-N12", label: "N12" }, onBeforeLeave(event) { guarded++; event.preventDefault(); } });
-    const actual = links(tree), ai = actual.find(node => node.props.children === "AI智解");
+    const actual = links(tree), ai = actual.find(node => linkLabel(node) === "AI智解");
     const href = new URL(ai.props.href, "http://127.0.0.1:5188");
     const source = new URL(href.searchParams.get("source"), "http://127.0.0.1:5188");
     assert.equal(href.pathname, "/budget/ai"); assert.deepEqual(source.searchParams.getAll("bf_campus"), ["西直门", "中关村"]);
     assert.equal(source.searchParams.get("nyVersion"), "saved-N12", "returning from AI restores this version even if current advances");
     assert.equal(href.searchParams.get("sourceVersion"), "saved-N12"); assert.equal(href.searchParams.get("sourceVersionLabel"), "N12");
-    for (const key of ["budget", "forecast", "next-year"]) assert.equal(actual.find(node => node.props.children === labels[key]).props.href, urls[key]);
+    for (const key of ["budget", "forecast", "next-year"]) assert.equal(actual.find(node => linkLabel(node) === labels[key]).props.href, urls[key]);
     let prevented = 0; ai.props.onClick({ preventDefault() { prevented++; } });
     assert.equal(guarded, 1); assert.equal(prevented, 1, "unsaved protection still owns whether navigation occurs");
     globalThis.location.search = "?nyTask=3&bf_season=秋季&bf_season=寒假";

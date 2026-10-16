@@ -1,22 +1,24 @@
 import { ActionTable } from "./ActionTable";
 import { skuText } from "./budgetDisplay";
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { newRequestId, parseResponse, type ApiIdentity } from "./api";
 import { FY27Header } from "./FY27Header";
+import { budgetModuleName, defaultBudgetModuleYears } from "./budgetModules";
 import { BudgetScopeBar } from "./BudgetScopeBar";
 import { BudgetDataSection } from "./BudgetDataSection";
 import { skuIdentityCells, skuIdentityHeaders } from "./SkuIdentity";
 import { FilterSelect } from "./FilterSelect";
+import { ForecastGroupSelector } from "./ForecastGroupSelector";
 import { filterValues, matchesFilter, type FilterValue } from "./filterSelection";
-import { hasForecastFilterState, readForecastViewFilters, writeForecastViewFilters, type ForecastViewFilters } from "./forecastViewState";
+import { hasForecastFilterState, readForecastViewFilters, writeForecastViewFilters, readForecastGroupDimensions, writeForecastGroupDimensions, type ForecastViewFilters } from "./forecastViewState";
 import { BudgetUtilityPanel } from "./BudgetUtilityPanel";
 import { ForecastDataReview, forecastConfirmationHint } from "./ForecastDataReview";
 import type { ExportColumn } from "./budgetExport";
 import {
   confirmForecast, defaultForecastStates, forecastDimensionLabels, forecastNumber, forecastSeasons, forecastStateLabels,
-  getForecast, getForecastVersion, downloadForecastSnapshot, forecastFailure, forecastFailureCategory, groupForecastRows, groupForecastIssues, forecastMappingIssues, prepareForecastMapping, forecastPresentationRow, forecastActualRevenueDefaultsToZero, forecastActualHeadcountDefaultsToZero, refreshForecast, reviseForecast,
+  getForecast, getForecastVersion, downloadForecastSnapshot, forecastFailure, forecastFailureCategory, groupForecastRows, summarizeForecastRows, forecastGroupDimensionLabels, forecastQuarterHeadcounts, groupForecastIssues, forecastMappingIssues, prepareForecastMapping, forecastPresentationRow, forecastActualRevenueDefaultsToZero, forecastActualHeadcountDefaultsToZero, refreshForecast, reviseForecast,
   trialFinancialDraft, applyTrialFinancialDraft, canConfirmForecast, usesFixedForecastRules, forecastCalculationComplete, fixedForecastRulesVersion, type ForecastAdjustmentKind, type ForecastAssumptions,
-  type ForecastCalculation, type ForecastDimension, type ForecastDimensions, type ForecastEnvelope, type ForecastMapping,
+  type ForecastCalculation, type ForecastDimension, type ForecastGroupDimension, type ForecastGroup, type ForecastSummary, type ForecastDimensions, type ForecastEnvelope, type ForecastMapping,
   type ForecastNumber, type ForecastRow, type ForecastSeason, type ForecastState, type ForecastIssue, type ForecastScope, type TrialFinancialDraft, type TrialAssumption, type ForecastVersion, type ForecastRequestError,
 } from "./forecastApi";
 import "./forecast.css";
@@ -77,6 +79,28 @@ const exportColumns: ExportColumn[] = [
   { key: "old_withdrawal", label: "预计后续老生退班", format: "count" }, { key: "method_label", label: "预测方式" },
 ];
 const forecastDetailTransfer = (rows: ForecastRow[], trialMode = false) => ({ columns: exportColumns, rows: rows.map(row => ({ ...forecastPresentationRow(row), method_label: forecastRowLabel(row) })), filename: trialMode ? "FY27-试用预测明细" : "FY27-达成预测明细" });
+
+/** Explicit formats keep known budget cells numeric even when another group is “未单列”. */
+export function forecastScopeTransfer(dimensions: readonly ForecastGroupDimension[], groups: ForecastGroup[], totals: ForecastSummary) {
+  const columns: ExportColumn[] = [...dimensions.map(key => ({ key, label: forecastGroupDimensionLabels[key] })),
+    { key: "budget_revenue", label: "预算结转收入（万元）", format: "money" }, { key: "forecast_revenue", label: "预计 / 实际结转收入（万元）", format: "money" },
+    { key: "gap_label", label: "缺口 / 超额（万元）" }, { key: "achievement", label: "达成率", format: "rate" },
+    ...(["budget", "forecast"] as const).flatMap(kind => (["total", "new", "old"] as const).map(key => ({ key: `${kind}_${key}`,
+      label: `${kind === "budget" ? "预算人次" : "预计 / 实际人次"} / ${{ total: "总人次", new: "新生人次", old: "老生人次" }[key]}`, format: "count" as const }))),
+  ];
+  const values = (item: ForecastSummary) => ({
+    budget_revenue: item.budget_revenue === null ? item.hasUnbudgeted && !item.unmapped ? "未单列" : null : item.budget_revenue / 10000,
+    forecast_revenue: item.forecast_revenue === null ? null : item.forecast_revenue / 10000,
+    gap_label: item.gap === null ? null : `${item.gap >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(item.gap) / 10000, 2)}`,
+    achievement: item.achievement,
+    budget_total: item.budget_total === null && item.hasUnbudgeted && !item.unmapped ? "未单列" : item.budget_total,
+    budget_new: item.budget_new, budget_old: item.budget_old,
+    forecast_total: item.forecast_total, forecast_new: item.forecast_new, forecast_old: item.forecast_old,
+  });
+  const rows = groups.map(item => ({ ...Object.fromEntries(dimensions.map(key => [key, item.dimensions[key] || "未填写"])), ...values(item) }));
+  if (totals.records > 0) rows.push({ ...Object.fromEntries(dimensions.map((key, index) => [key, index === 0 ? "当前范围合计" : ""])), ...values(totals) });
+  return { columns, rows, filename: "当前范围达成" };
+}
 
 export function ForecastLogic() {
   return <section className="forecast-logic" aria-label="预测逻辑"><h2>预测逻辑</h2><ol>
@@ -229,7 +253,7 @@ export function ForecastIssueGroups({ issues }: { issues: ForecastIssue[] }) {
 
 /** Presentation only: the server owns the forecasting rules and official readiness. */
 export function ForecastDashboard({ calculation, busy = false, trialMode = false, onRecords }: { calculation: ForecastCalculation; busy?: boolean; trialMode?: boolean; onRecords?: () => void }) {
-  const [group, setGroup] = useState<ForecastDimension>("track");
+  const [group, setGroup] = useState<ForecastGroupDimension[]>(() => readForecastGroupDimensions(forecastSearch()));
   const preferOpenSeason = trialMode || calculation.fixed_rules_version === fixedForecastRulesVersion;
   const defaultSeason = preferOpenSeason ? calculation.quarters.find(quarter => quarter.state === "OPEN")?.season ?? "" : "";
   const [season, setSeason] = useState<FilterValue>(() => readForecastViewFilters(forecastSearch(), defaultSeason).season);
@@ -243,6 +267,17 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
   const [view, setView] = useState<"board" | "details">("board");
   const rows = useMemo(() => calculation.rows.filter(row => matchesFilter(row.season, season) && dimensions.every(key => matchesFilter(row[key], scope[key] ?? ""))), [calculation, season, scope]);
   const grouped = useMemo(() => groupForecastRows(rows, group), [rows, group]);
+  const totals = useMemo(() => summarizeForecastRows(rows), [rows]);
+  const groupTableHead = useRef<HTMLTableSectionElement>(null);
+  useEffect(() => {
+    const head = groupTableHead.current, table = head?.closest("table");
+    if (!head || !table) return;
+    const measure = () => table.style.setProperty("--forecast-group-header-height", `${head.rows[0]?.getBoundingClientRect().height ?? 0}px`);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(head);
+    return () => observer?.disconnect();
+  }, [group, rows, view]);
   const max = Math.max(1, ...calculation.quarters.flatMap(quarter => [forecastNumber(quarter.budget_revenue), forecastNumber(quarter.forecast_revenue)]).filter((value): value is number => value !== null).map(Math.abs));
   const complete = forecastCalculationComplete(calculation, trialMode);
   const pageRows = rows.slice(detailPage * 30, (detailPage + 1) * 30).map(forecastPresentationRow);
@@ -252,6 +287,12 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
     applyFilters(next);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href); url.search = writeForecastViewFilters(url.search, next);
+    if (url.href !== window.location.href) window.history.pushState(window.history.state, "", url);
+  }
+  function updateGroup(next: ForecastGroupDimension[]) {
+    setGroup(next);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href); url.search = writeForecastGroupDimensions(url.search, next);
     if (url.href !== window.location.href) window.history.pushState(window.history.state, "", url);
   }
   useEffect(() => {
@@ -265,7 +306,7 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
     // A default is still the actual reading scope: expose it to deep links and AI,
     // without creating a navigation entry or fetching a different budget result.
     syncDefaultScope();
-    const restore = () => { applyFilters(readForecastViewFilters(forecastSearch(), defaultSeason)); syncDefaultScope(); };
+    const restore = () => { applyFilters(readForecastViewFilters(forecastSearch(), defaultSeason)); setGroup(readForecastGroupDimensions(forecastSearch())); syncDefaultScope(); };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, [defaultSeason]);
@@ -289,12 +330,48 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
           <div className="forecast-quarter-gap"><span>{forecastGapLabel(quarter.gap, quarter.state === "FINALIZED")}</span><strong>{gapMoney(quarter.gap)}</strong></div>
         </div>)}
       </div>
-      <div className="forecast-table-region" aria-label="季度达成明细表"><ActionTable keyboardNavigation aria-label="季度达成明细表" className="forecast-quarter-table" tableLabel="季度达成" scrollClassName="forecast-table-wrap"><thead><tr>{["季度", "状态", "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）", "预算人次", "预计 / 实际人次"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{calculation.quarters.map(quarter => <tr key={quarter.season}><th scope="row">{quarter.season}</th><td>{forecastStateLabels[quarter.state]}</td><td>{displayNumber(forecastNumber(quarter.budget_revenue) === null ? null : forecastNumber(quarter.budget_revenue)! / 10000, 2)}</td><td>{displayNumber(forecastNumber(quarter.forecast_revenue) === null ? null : forecastNumber(quarter.forecast_revenue)! / 10000, 2)}</td><td>{forecastNumber(quarter.gap) === null ? "—" : `${forecastNumber(quarter.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(quarter.gap)!) / 10000, 2)}`}</td><td>{displayNumber(quarter.budget_total)}</td><td>{displayNumber(quarter.forecast_total)}</td></tr>)}</tbody></ActionTable></div>
+      <div className="forecast-table-region" aria-label="季度达成明细表"><ActionTable keyboardNavigation aria-label="季度达成明细表" className="forecast-quarter-table" tableLabel="季度达成" scrollClassName="forecast-table-wrap">
+        <thead><tr>{["季度", "状态", "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）"].map(label => <th key={label} rowSpan={2} scope="col">{label}</th>)}
+          <th colSpan={3} scope="colgroup">预算人次</th><th colSpan={3} scope="colgroup">预计 / 实际人次</th>
+        </tr><tr>{["budget", "forecast"].flatMap(kind => ["总人次", "新生人次", "老生人次"].map((label, index) => <th key={`${kind}-${label}`} scope="col" className={index === 0 ? "forecast-student-group-start" : undefined}>{label}</th>))}</tr></thead>
+        <tbody>{calculation.quarters.map(quarter => {
+          const counts = forecastQuarterHeadcounts(calculation.rows, quarter.season);
+          return <tr key={quarter.season}><th scope="row">{quarter.season}</th><td>{forecastStateLabels[quarter.state]}</td>
+            <td>{displayNumber(forecastNumber(quarter.budget_revenue) === null ? null : forecastNumber(quarter.budget_revenue)! / 10000, 2)}</td>
+            <td>{displayNumber(forecastNumber(quarter.forecast_revenue) === null ? null : forecastNumber(quarter.forecast_revenue)! / 10000, 2)}</td>
+            <td>{forecastNumber(quarter.gap) === null ? "—" : `${forecastNumber(quarter.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(quarter.gap)!) / 10000, 2)}`}</td>
+            <td className="forecast-student-group-start">{displayNumber(quarter.budget_total)}</td><td>{displayNumber(counts.budget_new)}</td><td>{displayNumber(counts.budget_old)}</td>
+            <td className="forecast-student-group-start">{displayNumber(quarter.forecast_total)}</td><td>{displayNumber(counts.forecast_new)}</td><td>{displayNumber(counts.forecast_old)}</td>
+          </tr>;
+        })}</tbody>
+      </ActionTable></div>
     </BudgetDataSection>
     </div>
     <BudgetScopeBar filters={filters} dimensions={scopeDimensions} count={rows.length} disabled={busy} onChange={updateFilters} onClear={() => updateFilters(readForecastViewFilters("?bf_scope=1"))}/>
-    <BudgetDataSection id="forecast-scope-achievement" title="当前范围达成" className="forecast-section" hidden={view !== "board"} actions={<div className="forecast-group-switch" role="group" aria-label="分组维度">{(["track", "campus", "grade"] as ForecastDimension[]).map(key => <button key={key} aria-pressed={group === key} onClick={() => setGroup(key)}>{forecastDimensionLabels[key]}</button>)}</div>}>
-      <div className="forecast-table-region" aria-label="维度达成表"><ActionTable keyboardNavigation aria-label="维度达成表" tableLabel="当前范围达成" scrollClassName="forecast-table-wrap"><thead><tr>{[forecastDimensionLabels[group], "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）", "达成率", "预算人次", "预计 / 实际人次"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{grouped.map(item => <tr key={item.name}><th scope="row">{item.name || "未填写"}{item.unmapped && <span className="forecast-unmapped">含未对应实际</span>}</th><td>{item.hasUnbudgeted && !item.unmapped && item.budget_revenue === null ? "未单列" : displayNumber(forecastNumber(item.budget_revenue) === null ? null : forecastNumber(item.budget_revenue)! / 10000, 2)}</td><td>{displayNumber(forecastNumber(item.forecast_revenue) === null ? null : forecastNumber(item.forecast_revenue)! / 10000, 2)}</td><td>{forecastNumber(item.gap) === null ? "—" : `${forecastNumber(item.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(item.gap)!) / 10000, 2)}`}</td><td>{achievement(item.achievement)}</td><td>{item.hasUnbudgeted && !item.unmapped && item.budget_total === null ? "未单列" : displayNumber(item.budget_total)}</td><td>{displayNumber(item.forecast_total)}</td></tr>)}</tbody></ActionTable>{!rows.length && <p className="forecast-empty" role="status">当前范围暂无预测明细</p>}</div>
+    <BudgetDataSection id="forecast-scope-achievement" title="当前范围达成" count={grouped.length} countLabel="个分组" className="forecast-section" hidden={view !== "board"}
+      actions={<ForecastGroupSelector value={group} onChange={updateGroup} disabled={busy}/> }>
+      {!group.includes("season") && new Set(rows.map(row => row.season)).size > 1 && <p className="forecast-group-scope-note">已合并所选季度；人次为累计人次，不是去重人数。</p>}
+      <div className="forecast-table-region" aria-label="维度达成表"><ActionTable keyboardNavigation aria-label="维度达成表" tableLabel="当前范围达成" className="forecast-scope-table" scrollClassName="forecast-table-wrap forecast-scope-table-wrap"
+        style={{ "--forecast-group-count": group.length } as CSSProperties} exportData={forecastScopeTransfer(group, grouped, totals)} exportLabel="导出当前表格">
+        <thead ref={groupTableHead}><tr>{group.map(key => <th key={key} scope="col" rowSpan={2} className="forecast-group-dimension">{forecastGroupDimensionLabels[key]}</th>)}
+          {["预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）", "达成率"].map(label => <th key={label} rowSpan={2} scope="col" className="forecast-group-metric">{label}</th>)}
+          <th scope="colgroup" colSpan={3}>预算人次</th><th scope="colgroup" colSpan={3}>预计 / 实际人次</th>
+        </tr><tr>{["budget", "forecast"].flatMap(kind => ["总人次", "新生人次", "老生人次"].map((label, index) => <th key={`${kind}-${label}`} scope="col" className={index === 0 ? "forecast-student-group-start" : undefined}>{label}</th>))}</tr></thead>
+        <tbody>{grouped.map(item => <tr key={item.key}>{group.map((key, index) => <th scope="row" key={key} className="forecast-group-dimension">{item.dimensions[key] || "未填写"}{index === 0 && item.unmapped && <span className="forecast-unmapped">含未对应实际</span>}</th>)}
+          <td>{item.hasUnbudgeted && !item.unmapped && item.budget_revenue === null ? "未单列" : displayNumber(forecastNumber(item.budget_revenue) === null ? null : forecastNumber(item.budget_revenue)! / 10000, 2)}</td>
+          <td>{displayNumber(forecastNumber(item.forecast_revenue) === null ? null : forecastNumber(item.forecast_revenue)! / 10000, 2)}</td>
+          <td>{forecastNumber(item.gap) === null ? "—" : `${forecastNumber(item.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(item.gap)!) / 10000, 2)}`}</td><td>{achievement(item.achievement)}</td>
+          <td className="forecast-student-group-start">{item.hasUnbudgeted && !item.unmapped && item.budget_total === null ? "未单列" : displayNumber(item.budget_total)}</td><td>{displayNumber(item.budget_new)}</td><td>{displayNumber(item.budget_old)}</td>
+          <td className="forecast-student-group-start">{displayNumber(item.forecast_total)}</td><td>{displayNumber(item.forecast_new)}</td><td>{displayNumber(item.forecast_old)}</td>
+        </tr>)}</tbody>
+        {rows.length > 0 && <tfoot><tr><th scope="row">当前范围合计</th>{group.slice(1).map(key => <td key={key} className="forecast-group-dimension"/>)}
+          <td>{totals.hasUnbudgeted && !totals.unmapped && totals.budget_revenue === null ? "未单列" : displayNumber(forecastNumber(totals.budget_revenue) === null ? null : forecastNumber(totals.budget_revenue)! / 10000, 2)}</td>
+          <td>{displayNumber(forecastNumber(totals.forecast_revenue) === null ? null : forecastNumber(totals.forecast_revenue)! / 10000, 2)}</td>
+          <td>{forecastNumber(totals.gap) === null ? "—" : `${forecastNumber(totals.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(totals.gap)!) / 10000, 2)}`}</td><td>{achievement(totals.achievement)}</td>
+          <td className="forecast-student-group-start">{totals.hasUnbudgeted && !totals.unmapped && totals.budget_total === null ? "未单列" : displayNumber(totals.budget_total)}</td><td>{displayNumber(totals.budget_new)}</td><td>{displayNumber(totals.budget_old)}</td>
+          <td className="forecast-student-group-start">{displayNumber(totals.forecast_total)}</td><td>{displayNumber(totals.forecast_new)}</td><td>{displayNumber(totals.forecast_old)}</td>
+        </tr></tfoot>}
+      </ActionTable>{!rows.length && <p className="forecast-empty" role="status">当前范围暂无预测明细</p>}</div>
     </BudgetDataSection>
     <BudgetDataSection id="forecast-details" title="预测明细" count={rows.length} countLabel="条明细" className="forecast-section" hidden={view !== "details"}>
       <div className="forecast-table-region" aria-label="预测明细表"><ActionTable keyboardNavigation aria-label="预测明细表" className="forecast-sku-table" tableLabel="预测明细" scrollClassName="forecast-table-wrap" exportData={forecastDetailTransfer(rows, trialMode)}><thead><tr><th scope="col">季度</th>{skuIdentityHeaders.map(label => <th key={label} scope="col">{label}</th>)}{["预算结转收入（元）", "预计 / 实际结转收入（元）", "预算人次", "预计 / 实际人次", "预测方式"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{pageRows.map((row, index) => <tr key={`${row.season}-${JSON.stringify(dimensions.map(key => row[key]))}-${index}`}><td>{row.season}</td>{skuIdentityCells(row)}<td>{row.budget_covered === false && !row.unmapped ? "未单列" : displayNumber(row.budget_revenue, 2)}</td><td>{displayNumber(row.forecast_revenue, 2)}</td><td>{row.counts_not_applicable ? "—" : row.budget_covered === false && !row.unmapped ? "未单列" : displayNumber(row.budget_total)}</td><td>{row.counts_not_applicable ? "—" : displayNumber(row.forecast_total)}</td><td>{forecastRowLabel(rows[detailPage * 30 + index])}</td></tr>)}</tbody></ActionTable></div>
@@ -476,13 +553,13 @@ export function ForecastPage() {
   }, [version]);
   return <div className="budget-shell decision-shell forecast-shell">
     <a className="skip-link" href="#forecast-content">跳到主要内容</a>
-    <FY27Header active="forecast" onBeforeLeave={beforeLeave} sourceVersion={version ? { id: version.id, label: `P${version.sequence}` } : null}><div className="decision-version"><span className={`status-dot ${version?.status === "CONFIRMED" && !trialMode ? "is-published" : ""}`}/><span>{trialMode ? "试用试算" : version ? version.status === "CONFIRMED" ? "预测已确认" : "预测草稿" : "尚未预测"}</span>{version && <small>P{version.sequence}</small>}</div></FY27Header>
+    <FY27Header active="forecast" fiscalYear={data?.baseline_year} onBeforeLeave={beforeLeave} sourceVersion={version ? { id: version.id, label: `P${version.sequence}` } : null}><div className="decision-version"><span className={`status-dot ${version?.status === "CONFIRMED" && !trialMode ? "is-published" : ""}`}/><span>{trialMode ? "试用试算" : version ? version.status === "CONFIRMED" ? "预测已确认" : "预测草稿" : "尚未预测"}</span>{version && <small>P{version.sequence}</small>}</div></FY27Header>
     <dialog className="forecast-leave-dialog" ref={leaveDialog} aria-labelledby="forecast-leave-title" onCancel={() => setPendingNavigation("")}>
       <h2 id="forecast-leave-title">修改尚未保存</h2>
       <div><button className="forecast-primary" autoFocus onClick={() => { setPendingNavigation(""); if (pendingPredictionChanges) openDrawer(drawerTab); }}>继续编辑</button><button onClick={() => { leaving.current = true; location.assign(pendingNavigation); }}>离开，不保存</button></div>
     </dialog>
     <main className="decision-workspace" id="forecast-content">
-      <header className="forecast-heading"><h1>达成预测</h1><div>{version && <span>截至 {version.as_of}</span>}<button type="button" disabled={!data || Boolean(busy)} aria-haspopup="dialog" onClick={() => setVersionsOpen(true)}>版本记录{version ? ` P${version.sequence}` : ""}</button>{version && canMaintain && <button disabled={Boolean(busy)} onClick={() => openDrawer(pendingPredictionChanges ? drawerTab : "people")}>调整预测</button>}{!readonly && <button className="forecast-primary" disabled={!identity || !canEditBasis || Boolean(busy) || pendingPredictionChanges} onClick={() => void updateForecast()}>{["更新预测", "重试更新"].includes(busy) ? "正在更新…" : version ? "更新预测" : "生成预测"}</button>}</div></header>
+      <header className="forecast-heading"><h1>{budgetModuleName("forecast", data?.baseline_year ?? defaultBudgetModuleYears.forecast)}</h1><div>{version && <span>截至 {version.as_of}</span>}<button type="button" disabled={!data || Boolean(busy)} aria-haspopup="dialog" onClick={() => setVersionsOpen(true)}>版本记录{version ? ` P${version.sequence}` : ""}</button>{version && canMaintain && <button disabled={Boolean(busy)} onClick={() => openDrawer(pendingPredictionChanges ? drawerTab : "people")}>调整预测</button>}{!readonly && <button className="forecast-primary" disabled={!identity || !canEditBasis || Boolean(busy) || pendingPredictionChanges} onClick={() => void updateForecast()}>{["更新预测", "重试更新"].includes(busy) ? "正在更新…" : version ? "更新预测" : "生成预测"}</button>}</div></header>
       <BudgetUtilityPanel open={versionsOpen} title="预测版本与快照" onClose={() => setVersionsOpen(false)} busy={Boolean(busy)}>
         <div className="forecast-version-actions">{readonly && <button disabled={!identity || Boolean(busy) || unsaved} onClick={() => void loadSavedVersion("")}>返回当前版本</button>}{version && <button disabled={!identity || Boolean(busy)} onClick={() => void downloadSnapshot()}>{busy === "下载快照" ? "正在下载…" : "下载本次快照"}</button>}</div>
         {unsaved && <p className="forecast-version-pending" role="status">先保存或放弃当前修改，再切换版本。</p>}

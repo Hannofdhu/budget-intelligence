@@ -5,10 +5,10 @@ import { moveTableSelection, renderedCellGrid, scrollTableViewportToEdge, select
 
 type TransferData = { columns: ExportColumn[]; rows: object[]; filename: string };
 type Props = ComponentProps<"table"> & { tableLabel?: string; exportData?: TransferData; copyRows?: string[][]; keyboardNavigation?: boolean;
-  toolbarStart?: ReactNode; scrollClassName?: string; scrollRef?: Ref<HTMLDivElement>; scrollLabel?: string };
+  exportLabel?: string; toolbarStart?: ReactNode; scrollClassName?: string; scrollRef?: Ref<HTMLDivElement>; scrollLabel?: string };
 
 /** All tables share honest, visible-table transfers; paged details may supply the full filtered dataset. */
-export function ActionTable({ tableLabel, exportData, copyRows, keyboardNavigation = false, toolbarStart, scrollClassName, scrollRef, scrollLabel, children, ref: outerRef,
+export function ActionTable({ tableLabel, exportData, exportLabel, copyRows, keyboardNavigation = false, toolbarStart, scrollClassName, scrollRef, scrollLabel, children, ref: outerRef,
   onKeyDown, onClick, onFocus, onCopy, ...props }: Props) {
   const table = useRef<HTMLTableElement>(null), statusId = useId(), keyboardId = useId();
   const selection = useRef<{ range: TableSelection; signature: string } | null>(null);
@@ -143,6 +143,6 @@ export function ActionTable({ tableLabel, exportData, copyRows, keyboardNavigati
     {keyboardNavigation && <details className="table-keyboard-help"><summary>快捷键</summary><p id={keyboardId}>点击单元格或按 Tab 进入表格；方向键移动，Shift 连选，Home / End 到行首尾，Ctrl / ⌘ + Home / End 到表首尾，Ctrl / ⌘ + C 复制所选，Esc 清除。选区仅限当前页，一键复制和导出仍包含完整范围。</p></details>}
     {keyboardNavigation && selectionLabel && <button type="button" disabled={Boolean(busy)} onClick={() => void copySelected()}>{busy === "selection" ? "正在复制…" : "复制所选"}</button>}
     <button type="button" disabled={Boolean(busy)} onClick={() => void transfer("copy")}>{busy === "copy" ? "正在复制…" : "一键复制"}</button>
-    <button type="button" disabled={Boolean(busy)} onClick={() => void transfer("export")}>{busy === "export" ? "正在导出…" : exportData ? "导出明细" : "导出当前表格"}</button>
+    <button type="button" disabled={Boolean(busy)} onClick={() => void transfer("export")}>{busy === "export" ? "正在导出…" : exportLabel ?? (exportData ? "导出明细" : "导出当前表格")}</button>
   </div>{scrollClassName ? <div className={scrollClassName} ref={scrollRef} aria-label={scrollLabel}>{tableElement}</div> : tableElement}</>;
 }

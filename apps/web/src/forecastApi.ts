@@ -1,4 +1,5 @@
 import { identityHeaders, newRequestId, parseResponse, type ApiIdentity } from "./api.ts";
+import { compareBudgetGrades } from "./budgetDisplay.ts";
 
 export const forecastSeasons = ["暑假", "秋季", "寒假", "春季"] as const;
 export type ForecastSeason = typeof forecastSeasons[number];
@@ -7,6 +8,9 @@ export type ForecastNumber = string | number | null;
 export type ForecastDimension = "track" | "campus" | "product" | "grade" | "subject";
 export type ForecastDimensions = Record<ForecastDimension, string>;
 export const forecastDimensionLabels: Record<ForecastDimension, string> = { track: "赛道", campus: "校区", product: "产品", grade: "年级", subject: "科目" };
+export type ForecastGroupDimension = ForecastDimension | "season";
+export const forecastGroupDimensions = ["track", "product", "subject", "grade", "campus", "season"] as const;
+export const forecastGroupDimensionLabels: Record<ForecastGroupDimension, string> = { ...forecastDimensionLabels, season: "季度" };
 export const forecastStateLabels: Record<ForecastState, string> = { FINALIZED: "已定版", OPEN: "招生中", ENDED: "招生结束", FUTURE: "未开始" };
 export const defaultForecastStates: Record<ForecastSeason, ForecastState> = { 暑假: "FINALIZED", 秋季: "OPEN", 寒假: "FUTURE", 春季: "FUTURE" };
 export const fixedForecastRulesVersion = "fy27-fixed-rules-v1";
@@ -46,7 +50,8 @@ export function forecastMappingIssues(issues: ForecastIssue[]): ForecastIssue[] 
 }
 export interface ForecastRow extends ForecastDimensions {
   season: string; budget_revenue: ForecastNumber; forecast_revenue: ForecastNumber; budget_total: ForecastNumber;
-  forecast_total: ForecastNumber; forecast_new?: ForecastNumber; forecast_old?: ForecastNumber;
+  forecast_total: ForecastNumber; budget_new?: ForecastNumber; budget_old?: ForecastNumber;
+  forecast_new?: ForecastNumber; forecast_old?: ForecastNumber;
   method: "FROZEN_ACTUAL" | "ACTUAL_UNAVAILABLE" | "TERMINAL_FORECAST" | "PARENT_PARAMETER_PROJECTION" | "UNMAPPED_ACTUAL" | "UNMAPPED_FROZEN_CARRYIN";
   additional?: ForecastNumber; new_withdrawal?: ForecastNumber; old_withdrawal?: ForecastNumber;
   renewal?: ForecastNumber; unmapped?: boolean; counts_not_applicable?: boolean; budget_covered?: boolean;
@@ -181,7 +186,7 @@ export function forecastNumber(value: ForecastNumber | undefined): number | null
 }
 
 /** Missing one component means the entire selected total is unknown, not zero. */
-export function sumForecastRows(rows: ForecastRow[], key: "budget_revenue" | "forecast_revenue" | "budget_total" | "forecast_total"): number | null {
+export function sumForecastRows(rows: ForecastRow[], key: "budget_revenue" | "forecast_revenue" | "budget_total" | "forecast_total" | "budget_new" | "budget_old" | "forecast_new" | "forecast_old"): number | null {
   if (!rows.length) return null;
   let sum = 0, correction = 0;
   for (const row of rows) {
@@ -195,24 +200,94 @@ export function sumForecastRows(rows: ForecastRow[], key: "budget_revenue" | "fo
   return Number.isFinite(total) ? total : null;
 }
 
-export function groupForecastRows(rows: ForecastRow[], dimension: ForecastDimension): (ForecastTotals & { name: string; records: number; unmapped: boolean; hasUnbudgeted: boolean })[] {
-  const groups = new Map<string, ForecastRow[]>();
-  for (const row of rows) groups.set(row[dimension], [...(groups.get(row[dimension]) ?? []), row]);
-  return [...groups].map(([name, group]) => {
-    const isUnmapped = (row: ForecastRow) => row.unmapped === true || row.method === "UNMAPPED_ACTUAL" || row.method === "UNMAPPED_FROZEN_CARRYIN";
-    const unmapped = group.some(isUnmapped), budgetRows = group.filter(row => !isUnmapped(row) && row.budget_covered !== false);
-    // Unmatched actuals remain visible, but the engine's contribution zero is not a known budget for that business.
-    // A mixed group can display its known baseline; correspondence is required before any comparison is meaningful.
-    const budget = budgetRows.length ? sumForecastRows(budgetRows, "budget_revenue") : null;
-    const presented = group.map(forecastPresentationRow);
-    const forecast = sumForecastRows(presented, "forecast_revenue");
-    const studentRows = presented.filter(row => !row.counts_not_applicable);
-    return { name, records: group.length, unmapped, hasUnbudgeted: group.some(row => row.budget_covered === false),
-      budget_revenue: budget, forecast_revenue: forecast, gap: unmapped || budget === null || forecast === null ? null : budget - forecast,
-      achievement: unmapped || budget === null || budget <= 0 || forecast === null ? null : forecast / budget,
-      budget_total: budgetRows.length ? sumForecastRows(budgetRows.filter(row => !row.counts_not_applicable), "budget_total") : null,
-      forecast_total: sumForecastRows(studentRows, "forecast_total") };
-  }).sort((a, b) => (forecastNumber(b.budget_revenue) ?? -Infinity) - (forecastNumber(a.budget_revenue) ?? -Infinity) || a.name.localeCompare(b.name, "zh-CN"));
+function isUnmappedForecastRow(row: ForecastRow): boolean {
+  return row.unmapped === true || row.method === "UNMAPPED_ACTUAL" || row.method === "UNMAPPED_FROZEN_CARRYIN";
+}
+
+export interface ForecastHeadcountSplits {
+  budget_new: number | null; budget_old: number | null; forecast_new: number | null; forecast_old: number | null;
+}
+
+/** Saved split fields are independent facts: do not infer missing old snapshots from totals. */
+function summarizeForecastStudentSplits(rows: ForecastRow[]): ForecastHeadcountSplits {
+  const students = rows.filter(row => !row.counts_not_applicable);
+  const budgeted = students.filter(row => row.budget_covered !== false && !isUnmappedForecastRow(row));
+  const presented = students.map(row => ({ ...row,
+    forecast_new: row.forecast_new == null && isUnavailableForecastActual(row) ? 0 : row.forecast_new,
+    forecast_old: row.forecast_old == null && isUnavailableForecastActual(row) ? 0 : row.forecast_old,
+  }));
+  return { budget_new: sumForecastRows(budgeted, "budget_new"), budget_old: sumForecastRows(budgeted, "budget_old"),
+    forecast_new: sumForecastRows(presented, "forecast_new"), forecast_old: sumForecastRows(presented, "forecast_old") };
+}
+
+/** Read saved student splits only; the quarter's authoritative department totals stay unchanged. */
+export function forecastQuarterHeadcounts(rows: ForecastRow[], season: string): ForecastHeadcountSplits {
+  return summarizeForecastStudentSplits(rows.filter(row => row.season === season));
+}
+
+export interface ForecastSummary extends ForecastTotals, ForecastHeadcountSplits {
+  records: number; unmapped: boolean; hasUnbudgeted: boolean;
+  budget_revenue: number | null; forecast_revenue: number | null; gap: number | null; achievement: number | null;
+  budget_total: number | null; forecast_total: number | null;
+}
+export interface ForecastGroup extends ForecastSummary {
+  key: string; name: string; dimensions: Partial<Record<ForecastGroupDimension, string>>;
+}
+
+/** Aggregate raw scoped rows, never rounded group values or the department's saved quarter totals. */
+export function summarizeForecastRows(rows: ForecastRow[]): ForecastSummary {
+  const unmapped = rows.some(isUnmappedForecastRow), budgetRows = rows.filter(row => !isUnmappedForecastRow(row) && row.budget_covered !== false);
+  // Unmatched actuals retain their values, but the engine's contribution zero is not a known budget.
+  // A mixed group retains its known baseline, and postpones comparisons until correspondence exists.
+  const budget = sumForecastRows(budgetRows, "budget_revenue");
+  const presented = rows.map(forecastPresentationRow), forecast = sumForecastRows(presented, "forecast_revenue");
+  return { records: rows.length, unmapped, hasUnbudgeted: rows.some(row => row.budget_covered === false),
+    budget_revenue: budget, forecast_revenue: forecast, gap: unmapped || budget === null || forecast === null ? null : budget - forecast,
+    achievement: unmapped || budget === null || budget <= 0 || forecast === null ? null : forecast / budget,
+    budget_total: sumForecastRows(budgetRows.filter(row => !row.counts_not_applicable), "budget_total"),
+    forecast_total: sumForecastRows(presented.filter(row => !row.counts_not_applicable), "forecast_total"),
+    ...summarizeForecastStudentSplits(rows) };
+}
+
+const forecastGroupCollator = new Intl.Collator("zh-CN", { numeric: true });
+function compareForecastGroupValue(dimension: ForecastGroupDimension, left: string, right: string): number {
+  if (dimension === "grade") return compareBudgetGrades(left, right);
+  if (dimension === "season") {
+    const leftRank = forecastSeasons.indexOf(left as ForecastSeason), rightRank = forecastSeasons.indexOf(right as ForecastSeason);
+    const order = (leftRank < 0 ? forecastSeasons.length : leftRank) - (rightRank < 0 ? forecastSeasons.length : rightRank);
+    if (order) return order;
+  }
+  return forecastGroupCollator.compare(left, right) || (left < right ? -1 : left > right ? 1 : 0);
+}
+
+/** Each exact selected tuple appears once; the display name is never used as the group identity. */
+export function groupForecastRows(rows: ForecastRow[], dimension: ForecastGroupDimension | readonly ForecastGroupDimension[]): ForecastGroup[] {
+  const requested = typeof dimension === "string" ? [dimension] : dimension;
+  const selected = [...new Set(requested.filter(key => forecastGroupDimensions.includes(key)))];
+  const dimensions: ForecastGroupDimension[] = selected.length ? selected : ["track"];
+  const groups = new Map<string, { dimensions: ForecastGroup["dimensions"]; values: string[]; rows: ForecastRow[] }>();
+  for (const row of rows) {
+    const values = dimensions.map(key => row[key]), key = JSON.stringify(values);
+    let group = groups.get(key);
+    if (!group) {
+      group = { dimensions: Object.fromEntries(dimensions.map((key, index) => [key, values[index]])), values, rows: [] };
+      groups.set(key, group);
+    }
+    group.rows.push(row);
+  }
+  return [...groups].map(([key, group]) => ({ key, dimensions: group.dimensions, name: group.values.join(" / "), ...summarizeForecastRows(group.rows) }))
+    .sort((left, right) => {
+      // Preserve the existing default track overview's revenue-first reading order.
+      if (dimensions.length === 1 && dimensions[0] === "track") {
+        const order = (right.budget_revenue ?? -Infinity) - (left.budget_revenue ?? -Infinity);
+        if (order) return order;
+      }
+      for (const key of dimensions) {
+        const order = compareForecastGroupValue(key, left.dimensions[key] ?? "", right.dimensions[key] ?? "");
+        if (order) return order;
+      }
+      return 0;
+    });
 }
 
 const base = "/api/v1/forecasts/fy27";

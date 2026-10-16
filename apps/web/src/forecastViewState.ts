@@ -1,4 +1,5 @@
 import { readFilterParam, writeFilterParam, type FilterValue } from "./filterSelection.ts";
+import { forecastGroupDimensions, type ForecastGroupDimension } from "./forecastApi.ts";
 
 export const forecastFilterDimensions = ["season", "track", "campus", "product", "grade", "subject"] as const;
 export type ForecastViewFilters = Record<typeof forecastFilterDimensions[number], FilterValue>;
@@ -22,5 +23,24 @@ export function writeForecastViewFilters(search: string, filters: ForecastViewFi
   const params = new URLSearchParams(search);
   for (const key of forecastFilterDimensions) writeFilterParam(params, `bf_${key}`, filters[key]);
   params.set("bf_scope", "1");
+  return params.toString();
+}
+
+function normalizedGroupDimensions(groups: readonly string[]): ForecastGroupDimension[] {
+  const selected = [...new Set(groups.filter((group): group is ForecastGroupDimension =>
+    forecastGroupDimensions.includes(group as ForecastGroupDimension)))].slice(0, 6);
+  return selected.length ? selected : ["track"];
+}
+
+/** Grouping changes table presentation only, never the selected data scope. */
+export function readForecastGroupDimensions(search: string): ForecastGroupDimension[] {
+  return normalizedGroupDimensions(new URLSearchParams(search).getAll("fg_row"));
+}
+
+/** Own only fg_row; exact snapshot, scope, and unrelated navigation state survive. */
+export function writeForecastGroupDimensions(search: string, groups: readonly ForecastGroupDimension[]): string {
+  const params = new URLSearchParams(search);
+  params.delete("fg_row");
+  for (const group of normalizedGroupDimensions(groups)) params.append("fg_row", group);
   return params.toString();
 }

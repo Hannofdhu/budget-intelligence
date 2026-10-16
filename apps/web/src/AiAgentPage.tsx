@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { FY27Header } from "./FY27Header";
+import { budgetModuleName, budgetModuleYears } from "./budgetModules";
 import { aiBudgetContextPrompt, readAiBudgetContext, type AiBudgetContext } from "./aiBudgetContext";
 import {
   AiAgentTerminalConnection, aiAgentSessionActive, createAiAgentSession, getAiAgentStatus, stopAiAgentSession,
@@ -29,9 +30,9 @@ function sessionLabel(session: AiAgentSession): string {
 }
 
 export const aiAgentBudgetTasks = [
-  { id: "budget", category: "查看预算", question: "结转收入和招生人次主要分布在哪里？", prompt: "请先读取已保存的预算，列明财年、版本、金额单位和数据时间。按季度、赛道和校区分析结转收入与招生人次，指出主要分布和差异。不要修改预算。" },
-  { id: "forecast", category: "达成预测", question: "预计缺口主要来自哪些业务？", prompt: "请先读取最新已保存的达成预测及其预算基准，列明财年、版本、金额单位和数据时间。按季度和赛道解释预计达成率与缺口，区分实际和预测。不要刷新或确认预测。" },
-  { id: "next-year", category: "下一年预算", question: "离经营目标还差多少，先调整什么？", prompt: "请先读取最新已保存的下一年预算及其预测基准，列明财年、版本、金额单位和数据时间。核对经营目标是否已手工设置；未设置时不要自行假定目标。若已设置，分析缺口及招生人次、续班率、学费的调整方向，只给建议，不保存或调平。具体调整仍在下一年预算原有流程完成。" },
+  { id: "budget", question: "结转收入和招生人次主要分布在哪里？", prompt: "请先读取已保存的预算，列明财年、版本、金额单位和数据时间。按季度、赛道和校区分析结转收入与招生人次，指出主要分布和差异。不要修改预算。" },
+  { id: "forecast", question: "预计缺口主要来自哪些业务？", prompt: "请先读取最新已保存的全年预测及其预算基准，列明财年、版本、金额单位和数据时间。按季度和赛道解释预计达成率与缺口，区分实际和预测。不要刷新或确认预测。" },
+  { id: "next-year", question: "离经营目标还差多少，先调整什么？", prompt: "请先读取最新已保存的编制预算及其预测基准，列明财年、版本、金额单位和数据时间。核对经营目标是否已手工设置；未设置时不要自行假定目标。若已设置，分析缺口及招生人次、续班率、学费的调整方向，只给建议，不保存或调平。具体调整仍在预算编制原有流程完成。" },
 ] as const;
 
 /** A task prepares text only. The sole send path remains the user's Pi input. */
@@ -63,6 +64,7 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
   sourceContext?: AiBudgetContext | null;
 }) {
   const sessions = (status?.sessions ?? []).filter(aiAgentSessionActive);
+  const years = budgetModuleYears(sourceContext ? { [sourceContext.module]: sourceContext.fiscalYear } : {});
   const preparedPrompt = aiAgentPreparedPrompt(preparedTaskId, sourceContext);
   return <main className="decision-workspace ai-agent-workspace" aria-busy={loading || busy}>
     <header className="ai-agent-heading">
@@ -84,7 +86,7 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
       </div>
       <section className="ai-agent-source-context" aria-labelledby="ai-agent-source-title">
         <div><h2 className="budget-subsection-title" id="ai-agent-source-title">当前阅读上下文</h2>{sourceContext && <a href={sourceContext.sourceHref}>返回来源页面</a>}</div>
-        {sourceContext ? <dl><div><dt>来源</dt><dd>{sourceContext.moduleLabel} · FY{String(sourceContext.fiscalYear).slice(-2)}</dd></div><div><dt>版本</dt><dd>{sourceContext.versionLabel}</dd></div><div><dt>范围</dt><dd>{sourceContext.scopeLabel}</dd></div></dl>
+        {sourceContext ? <dl><div><dt>来源</dt><dd>{sourceContext.moduleLabel}</dd></div><div><dt>版本</dt><dd>{sourceContext.versionLabel}</dd></div><div><dt>范围</dt><dd>{sourceContext.scopeLabel}</dd></div></dl>
           : <p>未绑定来源页面。分析前先读取并核对财年、精确版本和范围。</p>}
         <p>此处仅准备问题；复制并在 Pi 中发送后才会分析。未保存改动不会传入，链接中的版本和范围仍须通过授权只读接口核对，返回来源页面后也请核对版本。</p>
       </section>
@@ -93,7 +95,7 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
         <div className="ai-agent-task-grid">
           {aiAgentBudgetTasks.map(task => <button key={task.id} className={preparedTaskId === task.id ? "is-selected" : ""}
             aria-pressed={preparedTaskId === task.id} onClick={() => onPrepareTask?.(task.id)}>
-            <span>{task.category}</span><strong>{task.question}</strong>
+            <span>{budgetModuleName(task.id, years[task.id])}</span><strong>{task.question}</strong>
           </button>)}
         </div>
         {preparedPrompt && <div className="ai-agent-prepared" role="region" aria-label="准备的问题">
@@ -302,7 +304,7 @@ export function AiAgentPage() {
     } catch { if (mounted.current) setCopyNotice("复制失败，请选中问题后使用系统复制快捷键"); }
   };
   return <div className="decision-shell ai-agent-shell">
-    <FY27Header active="ai"><span className="ai-agent-header-model" title={aiAgentModelLabel(status)}>{aiAgentModelLabel(status)}</span></FY27Header>
+    <FY27Header active="ai" moduleFiscalYears={sourceContext ? { [sourceContext.module]: sourceContext.fiscalYear } : undefined}><span className="ai-agent-header-model" title={aiAgentModelLabel(status)}>{aiAgentModelLabel(status)}</span></FY27Header>
     <AiAgentWorkspace status={status} loading={loading} busy={busy} error={error} notice={notice} sessionId={sessionId}
       sessionEnded={["stopped", "exited", "terminated"].includes(sessionState.toLowerCase())}
       selectedSession={selectedSession} onSelectSession={setSelectedSession} onStart={() => { void start(); }}
