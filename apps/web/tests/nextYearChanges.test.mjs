@@ -27,7 +27,7 @@ const addBusiness = (value, id, dimensions = {}) => {
 test("saved-baseline diff includes staged scalars, raw edits and state controls without mutating inputs", () => {
   const baseline = inputs(), staged = structuredClone(baseline);
   staged.entry_total = 120; staged.rates[0].renewal_ppm = 850000; staged.finance[0].price_yuan = "3200";
-  staged.class_sizes[0].planned_class_size = 22; staged.combinations[0].enabled = false; staged.combinations[0].entry_override = false;
+  staged.class_sizes[0].minimum = 22; staged.combinations[0].enabled = false; staged.combinations[0].entry_override = false;
   staged.combinations[0].entry_locked = true; staged.rates[0].locked = true; staged.plans[0].locked = true;
   const raw = { [key("tax")]: "1.05" }, before = JSON.stringify([baseline, staged, raw]);
   const summary = summarizeNextYearChanges(baseline, staged, raw);
@@ -129,9 +129,20 @@ test("undo newly introduced nullable fields removes the property rather than wri
   let summary = summarizeNextYearChanges(baseline, staged, {});
   let result = undoNextYearChange(baseline, staged, {}, get(summary, ["bounds", "r1", "renewal_lower_ppm"]));
   assert.equal(Object.hasOwn(result.inputs.rates[0], "renewal_lower_ppm"), false);
-  summary = summarizeNextYearChanges(baseline, result.inputs, {});
-  result = undoNextYearChange(baseline, result.inputs, {}, get(summary, ["class-size", 0]));
-  assert.equal(Object.hasOwn(result.inputs.class_sizes[0], "planned_class_size"), false);
+  assert.equal(summarizeNextYearChanges(baseline, result.inputs, {}).totalCount, 0);
+});
+
+test("only the shared class average is editable and legacy plan size cannot become a second control", () => {
+  const baseline = inputs(), staged = structuredClone(baseline), frozen = JSON.stringify(baseline);
+  staged.class_sizes[0].planned_class_size = 99;
+  assert.equal(summarizeNextYearChanges(baseline, staged, {}).totalCount, 0);
+  const legacyEdit = applyNextYearEdits(baseline, { [key("class-size", 0)]: "30" });
+  assert.equal(legacyEdit.inputs, null); assert.match(legacyEdit.errors[key("class-size", 0)], /合并为班均/);
+  const raw = { [key("class", 0)]: "24" }, summary = summarizeNextYearChanges(baseline, baseline, raw);
+  assert.equal(summary.totalCount, 1); assert.match(get(summary, ["class", 0]).label, /班均/);
+  assert.equal(applyNextYearEdits(baseline, raw).inputs.class_sizes[0].minimum, 24);
+  const undone = undoNextYearChange(baseline, baseline, raw, get(summary, ["class", 0]));
+  assert.deepEqual(undone.edits, {}); assert.equal(JSON.stringify(baseline), frozen);
 });
 
 test("new-business initialization is represented once with all dimensions and explicit task", () => {

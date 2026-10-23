@@ -16,6 +16,7 @@ from packages.config.settings import get_settings
 from packages.domain.identity.models import Actor, Role
 from packages.forecast.calculation import calculate_forecast
 from packages.forecast.daily import schedule_status
+from packages.forecast.daily_diagnostics import mark_stage
 from packages.forecast.database_store import PostgreSQLForecastStore
 from packages.forecast.refresh_lock import refresh_slot as database_refresh_slot
 from packages.forecast.rules import FIXED_RULES_VERSION, build_fixed_assumptions
@@ -441,17 +442,20 @@ async def refresh(request: Request, body: Refresh, actor: ActorDep, request_id: 
 async def _refresh_from_source(
     baseline: Json, body: Refresh, actor: Actor, request_id: str, digest: str, *, automatic: bool = False
 ) -> Json:
+    mark_stage("parent_read")
     view = await _current(actor)
     parent = view["version"]
     # The background job may have waited while a maintainer revised the parent.
     # Inherit states from THIS read, never replay a stale job's state decisions.
     states = parent["assumptions"]["states"] if automatic and parent else body.states
+    mark_stage("validate_assumptions")
     assumptions = Assumptions.model_validate(
         {**(parent["assumptions"] if parent else {}), "states": states}
     ).model_dump()
     assumptions = _retire_finalized_adjustments(parent, assumptions)
     _guard_change(parent, assumptions, actor)
     try:
+        mark_stage("source_extract")
         snapshot = await extract_forecast_source(get_settings())
         snapshot.setdefault("provenance", {})["verified_by"] = actor.user_id
         snapshot["provenance"]["verification_mode"] = (
@@ -460,16 +464,19 @@ async def _refresh_from_source(
             else "SIGNED_MAINTAINER_APPROVED_FORMULA_CHECK"
         )
         snapshot["provenance"]["refresh_mode"] = "AUTOMATIC" if automatic else "MANUAL"
+        mark_stage("fixed_assumptions")
         assumptions = Assumptions.model_validate(
             build_fixed_assumptions(baseline, snapshot, assumptions)
         ).model_dump(mode="json")
         _guard_change(parent, assumptions, actor)
+        mark_stage("calculation")
         calculation = calculate_forecast(baseline, snapshot, assumptions)
         if automatic and calculation.get("ready") is not True:
             raise SourceAdapterError(
                 "FORECAST_DAILY_DATA_INCOMPLETE",
                 "本次来源数据检查未通过，自动更新未保存新版本；请人工查看数据问题，上次结果已保留",
             )
+        mark_stage("append_version")
         result = await _store_call(
             "append_version",
             department=actor.department_id,

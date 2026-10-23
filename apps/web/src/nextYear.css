@@ -50,9 +50,8 @@
 .ny-field textarea { resize: vertical; width: 100%; line-height: 1.5; font-family: ui-monospace, monospace; }
 .ny-bulk-panel details { margin-top: 16px; }
 .ny-bulk-panel details .ny-field { margin: 16px 0 12px; }
-.ny-bulk-panel button, .ny-grade-picks button, .ny-add-business button, .ny-history-banner button, .ny-versions button, .ny-adjustment button:not(.decision-primary) { border: 1px solid var(--budget-control-border); border-radius: 8px; padding: 10px 14px; min-height: 40px; background: #fff; color: #315a48; font: inherit; font-size: var(--budget-body-size); cursor: pointer; }
-.ny-grade-picks { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 24px; }
-.ny-grade-picks button[aria-pressed=true] { border-color: #4e7c64; background: #dceade; color: #254c38; }
+.ny-bulk-panel button, .ny-add-business button, .ny-history-banner button, .ny-versions button, .ny-adjustment button:not(.decision-primary) { border: 1px solid var(--budget-control-border); border-radius: 8px; padding: 10px 14px; min-height: 40px; background: #fff; color: #315a48; font: inherit; font-size: var(--budget-body-size); cursor: pointer; }
+.ny-entry-scope { margin-inline-start: 12px; color: var(--budget-text-secondary); font-size: var(--budget-body-size); font-weight: 400; }
 .ny-impact-metrics { display: grid; grid-template-columns: 1.5fr repeat(4, 1fr); gap: 16px; margin: 20px 0; }
 .ny-impact-metrics > div { display: grid; gap: 12px; padding: 20px; border-left: 2px solid #a8c1ae; background: #eef4ee; }
 .ny-impact-metrics span, .ny-impact-metrics small { font-size: .75rem; color: var(--budget-text-secondary); }
@@ -248,8 +247,8 @@
 @media (max-width: 600px) { .ny-heading { padding: 22px 0; } .ny-heading-actions button { padding: 8px 12px; } .ny-year-context { font-size: var(--budget-body-size); } .ny-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ny-form-grid { grid-template-columns: minmax(0, 1fr); } .ny-metrics > div, .ny-quarter-grid > div { padding: 18px 16px; } .ny-metrics strong { font-size: 2rem; } .ny-save-bar > div { flex-wrap: wrap; } .ny-save-actions { width: 100%; } .ny-save-actions label { width: 100%; } .ny-message { flex-wrap: wrap; } .ny-target-summary { gap: 16px; flex-wrap: wrap; } .ny-class-check { padding: var(--budget-space-4); } .ny-class-check .ny-section-heading { align-items: flex-start; flex-wrap: wrap; } .ny-class-check-filters label { flex: 1 1 40%; } }
 @media (prefers-reduced-motion: reduce) { .next-year-shell button:active:not(:disabled) { transform: none; } }
 
-/* ChangeDiffPanel: fixed right sidebar on wide screens, bottom sheet on narrow screens. */
-.ny-diff-panel { position: fixed; right: 24px; top: 128px; width: 320px; max-height: calc(100dvh - 160px); display: flex; flex-direction: column; background: #ffffff; border: 1px solid #d8e0d6; border-radius: 14px; box-shadow: 0 6px 24px rgba(23, 63, 55, .08); padding: 18px 16px; z-index: 20; font-size: .75rem; color: #243b32; overflow: hidden; }
+/* The standalone variant is in flow; production embeds the list in the shared tool rail. */
+.ny-diff-panel { display: flex; flex-direction: column; background: #ffffff; border: 1px solid #d8e0d6; border-radius: 14px; padding: 18px 16px; font-size: .75rem; color: #243b32; min-width: 0; }
 .ny-diff-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid #e8ece7; margin-bottom: 10px; }
 .ny-diff-head strong { font-size: .875rem; display: block; color: #173f37; }
 .ny-diff-head span { color: #607369; font-size: .75rem; }
@@ -289,15 +288,14 @@
 .ny-diff-body { display: flex; flex-direction: column; min-height: 0; }
 .ny-panel-toggle { display: none; }
 
-/* Below 1400px there's not enough room for a side panel; collapse to a bottom-right pill that expands upward. */
+/* Compact standalone lists may collapse, but never float above the editor. */
 @media (max-width: 1399px) {
-  .ny-diff-panel { top: auto; right: 16px; bottom: 16px; width: min(360px, calc(100% - 32px)); max-height: 60dvh; }
   .ny-panel-toggle { display: flex; justify-content: space-between; gap: 16px; padding: 10px 4px; border: 0; background: transparent; color: #173f37; font-weight: 600; }
   .ny-diff-panel:not(.is-open) .ny-diff-body { display: none; }
   .ny-diff-panel.is-open .ny-diff-body { overflow-y: auto; }
 }
 @media (max-width: 600px) {
-  .ny-diff-panel { right: 8px; bottom: 8px; left: 8px; width: auto; max-height: 55dvh; padding: 14px; }
+  .ny-diff-panel { padding: 14px; }
 }
 
 /* Keep the current task ahead of its annual summary; only the results page needs full KPI cards. */
@@ -378,23 +376,9 @@
 .next-year-shell .ny-action-bar button { margin: 0; }
 .next-year-shell .ny-action-bar .ny-field input { margin: 0; min-height: 36px; padding: 7px 10px; }
 
-/* Context tools appear only on request, without reducing the page to an empty-sidebar layout. */
+/* Geometry for every requested tool is owned by budgetUtility.css. */
 .ny-context-panel {
-  position: fixed;
-  z-index: 50;
-  top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 12px);
-  right: max(16px, calc((100% - 1480px) / 2));
-  bottom: calc(var(--ny-action-bar-height) + 12px);
-  display: flex;
-  flex-direction: column;
-  width: min(460px, calc(100% - 32px));
-  min-height: 0;
-  max-height: 720px;
-  overflow: hidden;
   background: #fff;
-  border: 1px solid #cbd9ce;
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgb(23 63 55 / 12%);
   color: #173f37;
 }
 .ny-context-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border-bottom: 1px solid #dce3dd; }
@@ -430,7 +414,6 @@
   .ny-action-status { flex: 1 1 200px; }
   .ny-action-buttons { flex: 1 1 420px; }
   .ny-action-buttons .ny-field { flex: 1 1 170px; width: auto; }
-  .ny-context-panel { top: calc(var(--budget-header-height, 120px) + var(--budget-page-nav-height, 62px) + 8px); }
 }
 @media (max-width: 600px) {
   .next-year-shell { --ny-action-bar-height: 160px; }
@@ -444,7 +427,6 @@
   .ny-action-buttons .ny-field { flex: 1 1 100%; }
   .ny-action-buttons > button { flex: 1 1 0; }
   .ny-action-buttons .ny-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .ny-context-panel { right: 8px; width: calc(100% - 16px); bottom: calc(var(--ny-action-bar-height) + 8px); border-radius: 10px; }
   .ny-context-heading { padding: 12px 14px; }
   .ny-context-content { padding: 14px; }
   .ny-context-content .ny-bulk-panel { padding: 12px; }
@@ -544,5 +526,4 @@
 @media (max-height: 600px) {
   .ny-action-bar { position: static; margin-top: 1.5rem; padding-inline: 0; }
   .next-year-shell:has(.ny-action-bar) .decision-workspace { padding-bottom: 1.5rem; }
-  .ny-context-panel { bottom: 1rem; max-height: calc(100dvh - var(--budget-header-height, 72px) - var(--budget-page-nav-height, 62px) - 2rem); }
 }

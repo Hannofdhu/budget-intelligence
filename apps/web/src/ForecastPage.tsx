@@ -223,9 +223,9 @@ export function ForecastTrialScopeEditor({ scopes, states, onChange, onDraftChan
   }
   return <BudgetDataSection id="forecast-independent-parameters" title={legacyTrial ? "试用假设" : "独立业务参数"} count={matches.length} countLabel="条季度明细" headingLevel={3} className="forecast-trial-scopes">
     <div className="forecast-trial-scope-filters"><label>季度<FilterSelect aria-label="筛选参数季度" value={seasonFilter} onChange={changeSeason} options={[...forecastSeasons]}/></label><label>筛选SKU<input value={query} placeholder="校区、产品、年级或科目" onChange={event => { setQuery(event.target.value); setPage(0); }}/></label></div>
-    <ActionTable exportData={parameterTransfer} keyboardNavigation tableLabel={legacyTrial ? "试用假设明细" : "独立业务参数"} aria-label={legacyTrial ? "试用假设明细表" : "独立业务参数表"} className="forecast-sku-parameter-table" scrollClassName="forecast-table-wrap"><thead><tr><th scope="col">季度</th>{skuIdentityHeaders.map(label => <th scope="col" key={label}>{label}</th>)}{["学费（元）", "折扣", "当季结转比例", "续班率", "新生占比", "后续新增", "操作"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{pageRows.map(({ scope, index, season: rowSeason }) => {
+    <ActionTable exportData={parameterTransfer} keyboardNavigation tableLabel={legacyTrial ? "试用假设明细" : "独立业务参数"} aria-label={legacyTrial ? "试用假设明细表" : "独立业务参数表"} className="forecast-sku-parameter-table" scrollClassName="forecast-table-wrap"><thead><tr><th scope="col">季度</th>{skuIdentityHeaders.map(label => <th scope="col" key={label}>{label}</th>)}{["学费（元）", "折扣", "当季结转比例", "续班率", "新生占比", "后续新增", "操作"].map(label => <th scope="col" key={label} className={label === "操作" ? "budget-cell-center" : "budget-cell-number"}>{label}</th>)}</tr></thead><tbody>{pageRows.map(({ scope, index, season: rowSeason }) => {
       const financial = scope.financial[rowSeason], readonly = scope.kind === "FINANCIAL_ONLY" || states[rowSeason] === "FINALIZED";
-      return <tr key={`${rowSeason}-${JSON.stringify(scope.dims)}`}><td>{rowSeason}</td>{skuIdentityCells(scope.dims)}<td>{displayNumber(financial?.price, 2)}</td><td>{achievement(financial?.discount)}</td><td>{achievement(financial?.recognition)}</td><td>{achievement(financial?.renewal)}</td><td>{achievement(financial?.share)}</td><td>{scope.additional[rowSeason] === undefined ? "—" : displayNumber(scope.additional[rowSeason])}</td><td>{readonly ? <span className="forecast-scope-readonly">{scope.kind === "FINANCIAL_ONLY" ? "结转实际" : "已定版实际"}</span> : <button disabled={disabled} aria-label={`调整${rowSeason} ${dimensions.map(key => scope.dims[key]).join(" / ")}${legacyTrial ? "试用假设" : "预测参数"}`} onClick={() => selectScope(index, rowSeason)}>调整</button>}</td></tr>;
+      return <tr key={`${rowSeason}-${JSON.stringify(scope.dims)}`}><td>{rowSeason}</td>{skuIdentityCells(scope.dims)}<td>{displayNumber(financial?.price, 2)}</td><td>{achievement(financial?.discount)}</td><td>{achievement(financial?.recognition)}</td><td>{achievement(financial?.renewal)}</td><td>{achievement(financial?.share)}</td><td>{scope.additional[rowSeason] === undefined ? "—" : displayNumber(scope.additional[rowSeason])}</td><td className="budget-cell-center">{readonly ? <span className="forecast-scope-readonly">{scope.kind === "FINANCIAL_ONLY" ? "结转实际" : "已定版实际"}</span> : <button disabled={disabled} aria-label={`调整${rowSeason} ${dimensions.map(key => scope.dims[key]).join(" / ")}${legacyTrial ? "试用假设" : "预测参数"}`} onClick={() => selectScope(index, rowSeason)}>调整</button>}</td></tr>;
     })}</tbody></ActionTable>{!matches.length && <p className="forecast-empty" role="status">{legacyTrial ? "当前范围没有独立试用明细" : "当前范围没有独立业务明细"}</p>}
     <div className="budget-data-section__pagination forecast-pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>上一页</button><span>{matches.length ? page + 1 : 0} / {Math.ceil(matches.length / 20)} 页</span><button disabled={(page + 1) * 20 >= matches.length} onClick={() => setPage(page + 1)}>下一页</button></div>
     {currentScope && draft && <div className="forecast-scope-editor" ref={editorRef}><header><div><strong>{season} · {currentScope.dims.campus}</strong><span>{currentScope.dims.track} / {currentScope.dims.product} / {currentScope.dims.grade} / {currentScope.dims.subject}</span></div><button disabled={disabled} onClick={() => { setSelected(null); setDraft(null); setError(""); }}>{draftChanged ? "放弃当前编辑" : "取消"}</button></header>
@@ -332,12 +332,12 @@ export function ForecastDashboard({ calculation, busy = false, trialMode = false
         </div>)}
       </div>
       <div className="forecast-table-region" aria-label="季度达成明细表" {...budgetVersionExportAttributes(exportContext)}><ActionTable keyboardNavigation aria-label="季度达成明细表" className="forecast-quarter-table" tableLabel="季度达成" scrollClassName="forecast-table-wrap">
-        <thead><tr>{["季度", "状态", "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）"].map(label => <th key={label} rowSpan={2} scope="col">{label}</th>)}
+        <thead><tr>{["季度", "状态", "预算结转收入（万元）", "预计 / 实际结转收入（万元）", "缺口 / 超额（万元）"].map(label => <th key={label} rowSpan={2} scope="col" className={label === "季度" || label === "状态" ? "budget-cell-text" : "budget-cell-number"}>{label}</th>)}
           <th colSpan={3} scope="colgroup">预算人次</th><th colSpan={3} scope="colgroup">预计 / 实际人次</th>
         </tr><tr>{["budget", "forecast"].flatMap(kind => ["总人次", "新生人次", "老生人次"].map((label, index) => <th key={`${kind}-${label}`} scope="col" className={index === 0 ? "forecast-student-group-start" : undefined}>{label}</th>))}</tr></thead>
         <tbody>{calculation.quarters.map(quarter => {
           const counts = forecastQuarterHeadcounts(calculation.rows, quarter.season);
-          return <tr key={quarter.season}><th scope="row">{quarter.season}</th><td>{forecastStateLabels[quarter.state]}</td>
+          return <tr key={quarter.season}><th scope="row">{quarter.season}</th><td className="budget-cell-text">{forecastStateLabels[quarter.state]}</td>
             <td>{displayNumber(forecastNumber(quarter.budget_revenue) === null ? null : forecastNumber(quarter.budget_revenue)! / 10000, 2)}</td>
             <td>{displayNumber(forecastNumber(quarter.forecast_revenue) === null ? null : forecastNumber(quarter.forecast_revenue)! / 10000, 2)}</td>
             <td>{forecastNumber(quarter.gap) === null ? "—" : `${forecastNumber(quarter.gap)! >= 0 ? "缺口" : "超额"} ${displayNumber(Math.abs(forecastNumber(quarter.gap)!) / 10000, 2)}`}</td>
@@ -389,26 +389,15 @@ export function ForecastSettingsDrawer({ open, tab, onTabChange, onClose, canMai
   open: boolean; tab: ForecastDrawerTab; onTabChange: (tab: ForecastDrawerTab) => void; onClose: () => void;
   canMaintain: boolean; busy?: boolean; children: ReactNode; footer?: ReactNode;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!open || !dialog) return;
-    dialog.showModal();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { dialog.close(); document.body.style.overflow = previousOverflow; };
-  }, [open]);
-  return <dialog className="forecast-drawer" ref={dialogRef} aria-labelledby="forecast-drawer-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <header className="forecast-drawer-heading"><h2 id="forecast-drawer-title">{tab === "data" ? "数据核对" : "调整预测"}</h2><button type="button" autoFocus disabled={busy} onClick={onClose} aria-label="关闭预测侧栏">关闭</button></header>
+  return <BudgetUtilityPanel open={open} title={tab === "data" ? "数据核对" : "调整预测"} onClose={onClose} busy={busy} className="forecast-drawer" footer={footer}>
     <div className="forecast-drawer-tabs" role="tablist" aria-label="预测调整项目">{(["people", "business", "data"] as const).map(value => <button type="button" key={value} role="tab" id={`forecast-tab-${value}`} aria-selected={tab === value} aria-controls={`forecast-panel-${value}`} tabIndex={tab === value ? 0 : -1} disabled={!canMaintain && value !== "data"} onClick={() => onTabChange(value)} onKeyDown={event => {
       const tabs: ForecastDrawerTab[] = canMaintain ? ["people", "business", "data"] : ["data"];
       const index = tabs.indexOf(value);
       const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : undefined;
-      if (next) { event.preventDefault(); onTabChange(next); dialogRef.current?.querySelector<HTMLButtonElement>(`#forecast-tab-${next}`)?.focus(); }
+      if (next) { event.preventDefault(); onTabChange(next); event.currentTarget.closest("[role=tablist]")?.querySelector<HTMLButtonElement>(`#forecast-tab-${next}`)?.focus({ preventScroll: true }); }
     }}>{{ people: "人数调整", business: "业务参数", data: "数据维护" }[value]}</button>)}</div>
     <div className="forecast-drawer-body">{children}</div>
-    {footer && <footer className="forecast-drawer-footer">{footer}</footer>}
-  </dialog>;
+  </BudgetUtilityPanel>;
 }
 
 export function ForecastPage() {
@@ -512,7 +501,7 @@ export function ForecastPage() {
     catch (error) { const detail = forecastFailure(error); setError(detail.message); setFailure({ action, error: detail }); return false; }
     finally { lock.current = false; setBusy(""); }
   }
-  function openDrawer(tab: ForecastDrawerTab) { setDrawerTab(tab); setDrawerOpen(true); }
+  function openDrawer(tab: ForecastDrawerTab) { setVersionsOpen(false); setDrawerTab(tab); setDrawerOpen(true); }
   function updateForecast(retry = false) {
     if (!identity || !canEditBasis || pendingPredictionChanges || lock.current) return;
     if (!retry || !refreshIntent.current) refreshIntent.current = { requestId: newRequestId(), states: { ...(version?.states ?? defaultForecastStates) }, reason: version ? "更新 FY27 达成预测" : "首次 FY27 自然预测" };
@@ -577,14 +566,14 @@ export function ForecastPage() {
         {trialMode && <ForecastTrialStatus ready={version.calculation.trial_ready === true} busy={Boolean(busy)}/>}
         <ForecastDashboard calculation={version.calculation} trialMode={trialMode} busy={Boolean(busy)} onRecords={() => setVersionsOpen(true)} exportContext={{ fiscalYear: data.baseline_year, object: "全年预测", sequence: version.sequence, createdAt: version.created_at, id: version.id, asOf: version.as_of }}
           trend={identity && <ForecastRevenueTrend identity={identity} versionId={version.id} busy={Boolean(busy) || unsaved} onVersion={id => void loadSavedVersion(id)}/>}/>
-        <ForecastSettingsDrawer open={drawerOpen} tab={drawerTab} onTabChange={setDrawerTab} onClose={() => { if (!busy) setDrawerOpen(false); }} canMaintain={canMaintain} busy={Boolean(busy)} footer={canMaintain && <>
+        <ForecastSettingsDrawer open={drawerOpen && !versionsOpen} tab={drawerTab} onTabChange={setDrawerTab} onClose={() => { if (!busy) setDrawerOpen(false); }} canMaintain={canMaintain} busy={Boolean(busy)} footer={canMaintain && <>
           <label>本次修改原因<input disabled={Boolean(busy)} value={reason} onChange={event => setReason(event.target.value)}/></label>
           <div className="forecast-drawer-save"><span role="status">{busy ? `${busy}中…` : unfinishedInputs ? "先完成当前明细调整" : pendingPredictionChanges ? "修改未保存" : "没有未保存的修改"}</span><button type="button" className="forecast-primary" disabled={Boolean(busy) || !settingChanged || unfinishedInputs || !reason.trim() || !Number.isInteger(assumptions.minimum_sample) || assumptions.minimum_sample < 1} onClick={() => identity && void perform("保存预测", () => reviseForecast(identity, version.id, assumptions, reason.trim()))}>保存并重算</button></div>
         </>}>
           {error && <p className="forecast-scope-error" role="alert">{error}</p>}
           <section {...budgetVersionExportAttributes({ fiscalYear: data.baseline_year, object: "全年预测", sequence: version.sequence, createdAt: version.created_at, id: version.id, asOf: version.as_of })} role="tabpanel" id="forecast-panel-people" aria-labelledby="forecast-tab-people" hidden={drawerTab !== "people"} className="forecast-settings forecast-drawer-panel">
           <fieldset disabled={Boolean(busy) || !canMaintain}><legend>按校区调整人数</legend>
-            {version.calculation.campuses.length > 0 && <div className="forecast-table-region" aria-label="校区预测人数"><ActionTable keyboardNavigation tableLabel="校区预测人数" className="forecast-campus-table" scrollClassName="forecast-table-wrap" aria-label="校区预测人数"><thead><tr>{["季度", "校区", "预算新生", "当前业务新生", "预算内后续新增", "独立业务新增", "后续新增合计", "后续新生退班", "后续老生退班"].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{version.calculation.campuses.map(item => <tr key={`${item.season}-${item.campus}`}><th scope="row">{item.season}</th><td>{item.campus}</td><td>{displayNumber(item.budget_new)}</td><td>{displayNumber(item.current_business_new)}</td><td>{displayNumber(item.budgeted_additional)}</td><td>{displayNumber(item.unbudgeted_additional)}</td><td>{displayNumber(item.additional)}</td><td>{displayNumber(item.new_withdrawal)}</td><td>{displayNumber(item.old_withdrawal)}</td></tr>)}</tbody></ActionTable></div>}
+            {version.calculation.campuses.length > 0 && <div className="forecast-table-region" aria-label="校区预测人数"><ActionTable keyboardNavigation tableLabel="校区预测人数" className="forecast-campus-table" scrollClassName="forecast-table-wrap" aria-label="校区预测人数"><thead><tr>{["季度", "校区", "预算新生", "当前业务新生", "预算内后续新增", "独立业务新增", "后续新增合计", "后续新生退班", "后续老生退班"].map(label => <th key={label} scope="col" className={label === "季度" || label === "校区" ? "budget-cell-text" : "budget-cell-number"}>{label}</th>)}</tr></thead><tbody>{version.calculation.campuses.map(item => <tr key={`${item.season}-${item.campus}`}><th scope="row">{item.season}</th><td className="budget-cell-text">{item.campus}</td><td>{displayNumber(item.budget_new)}</td><td>{displayNumber(item.current_business_new)}</td><td>{displayNumber(item.budgeted_additional)}</td><td>{displayNumber(item.unbudgeted_additional)}</td><td>{displayNumber(item.additional)}</td><td>{displayNumber(item.new_withdrawal)}</td><td>{displayNumber(item.old_withdrawal)}</td></tr>)}</tbody></ActionTable></div>}
             <div className="forecast-adjustment-fields"><label>季度<select value={adjustment.season} onChange={event => setAdjustment({ ...adjustment, season: event.target.value })}>{forecastSeasons.filter(season => assumptions.states[season] !== "FINALIZED" && assumptions.states[season] !== "FUTURE").map(season => <option key={season}>{season}</option>)}</select></label><label>校区<select value={adjustment.campus} onChange={event => setAdjustment({ ...adjustment, campus: event.target.value })}><option value="">选择校区</option>{existingCampuses.map(campus => <option key={campus}>{campus}</option>)}</select></label><label>项目<select value={adjustment.kind} onChange={event => setAdjustment({ ...adjustment, kind: event.target.value as ForecastAdjustmentKind })}><option value="additional">预算内后续新增</option><option value="new_withdrawal">后续新生退班</option><option value="old_withdrawal">后续老生退班</option></select></label><label>人次<input type="number" min="0" step="1" value={adjustment.value} onChange={event => setAdjustment({ ...adjustment, value: event.target.value })}/></label></div>
             <label>调整原因<input value={adjustment.reason} onChange={event => setAdjustment({ ...adjustment, reason: event.target.value })}/></label>
             <button type="button" disabled={!adjustment.campus || !/^\d+$/.test(adjustment.value) || !adjustment.reason.trim() || !Number.isSafeInteger(Number(adjustment.value)) || !["OPEN", "ENDED"].includes(assumptions.states[adjustment.season as ForecastSeason])} onClick={() => { const next = { ...adjustment, value: Number(adjustment.value), reason: adjustment.reason.trim() }; setAssumptions({ ...assumptions, adjustments: [...assumptions.adjustments.filter(item => !(item.season === next.season && item.campus === next.campus && item.kind === next.kind)), next] }); if (!reason.trim()) setReason(next.reason); setAdjustment({ ...adjustment, value: "", reason: "" }); }}>加入本次调整</button>

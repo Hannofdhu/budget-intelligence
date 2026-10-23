@@ -20,8 +20,8 @@ const find = (node, predicate) => Array.isArray(node) ? node.flatMap(child => fi
   : !node || typeof node !== "object" ? [] : [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)];
 const text = node => Array.isArray(node) ? node.map(text).join("") : node && typeof node === "object" ? text(node.props?.children)
   : node == null || typeof node === "boolean" ? "" : String(node);
-const trigger = tree => find(tree, node => node.type === "button" && node.props.popoverTarget)[0];
-const panel = tree => find(tree, node => node.props.popover === "auto")[0];
+const trigger = tree => find(tree, node => node.type === "button" && node.props.className === "forecast-group-trigger")[0];
+const panel = tree => find(tree, node => node.props.className === "forecast-group-panel")[0];
 const checkbox = (tree, name) => find(tree, node => node.type === "label" && text(node) === name)
   .flatMap(node => find(node, child => child.type === "input" && child.props.type === "checkbox"))[0];
 const button = (tree, label) => find(tree, node => node.type === "button" && node.props["aria-label"] === label)[0];
@@ -54,12 +54,7 @@ function harness(initial = {}) {
   const panelElement = { style: {}, rect: { left: 0, right: 300, top: 150, bottom: 500 }, clientHeight: 350, scrollHeight: 350,
     _scrollTop: 0, get scrollTop() { return this._scrollTop; },
     set scrollTop(value) { this._scrollTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
-    getBoundingClientRect() { return this.rect; }, hidePopover() {
-    hides++;
-    // Model only the notification a browser sends after hidePopover, not the
-    // native state machine, top layer, autofocus or page-scroll behavior.
-    panel(tree)?.props.onToggle({ nativeEvent: { newState: "closed" } });
-  } };
+    getBoundingClientRect() { return this.rect; } };
   // Deliberately synthetic geometry/capture only; actual mouse/touch hit testing,
   // capture delivery and native popup dismissal are checked in the browser.
   const listElement = { children: [], getBoundingClientRect() {
@@ -96,7 +91,9 @@ function harness(initial = {}) {
     let attempts = 0;
     do {
       dirty = false; stateIndex = refIndex = effectIndex = 0; pending.length = 0;
+      const previouslyOpen = tree && !panel(tree).props.hidden;
       tree = Component(props);
+      if (previouslyOpen && panel(tree).props.hidden) hides++;
       trigger(tree).props.ref.current = triggerElement;
       const menu = panel(tree); menu.props.ref.current = panelElement;
       const list = find(tree, node => node.type === "ol")[0];
@@ -117,8 +114,7 @@ function harness(initial = {}) {
     handle, pointerEvents, keyEvents, unmount, frames, canceledFrames,
     get hides() { return hides; },
     open() {
-      panel(tree).props.onBeforeToggle({ nativeEvent: { newState: "open" } });
-      panel(tree).props.onToggle({ nativeEvent: { newState: "open" } });
+      if (panel(tree).props.hidden) trigger(tree).props.onClick();
       return render();
     },
     choose(name, checked) {
@@ -153,11 +149,11 @@ function harness(initial = {}) {
   };
 }
 
-test("one settings button owns one native popover with all six dimensions and no extra editing workflow", () => {
+test("one settings button owns one non-covering panel with all six dimensions and no extra editing workflow", () => {
   const Component = load(require);
   const html = renderToStaticMarkup(createElement(Component, { value: ["track", "grade"], onChange() {} }));
-  assert.equal((html.match(/popovertarget=/gi) ?? []).length, 1);
-  assert.equal((html.match(/popover="auto"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /popovertarget=|popover=/);
+  assert.equal((html.match(/class="forecast-group-panel"/g) ?? []).length, 1);
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 6);
   assert.match(html, /aria-label="分组维度：赛道、年级，设置"/);
   assert.match(html, /选择后即时更新，仅改变展示/);
@@ -169,10 +165,10 @@ test("one settings button owns one native popover with all six dimensions and no
   const h = harness();
   try {
     const tree = h.render(), target = trigger(tree), popup = panel(tree);
-    assert.equal(target.props.popoverTarget, popup.props.id);
     assert.equal(target.props["aria-controls"], popup.props.id);
     assert.equal(target.props["aria-expanded"], false);
-    assert.equal(popup.props.style.position, "fixed", "the first commit cannot append an in-flow panel");
+    assert.equal(popup.props.hidden, true);
+    assert.equal(popup.props.style, undefined, "shared CSS owns rail versus in-flow layout, not viewport-positioning JS");
     assert.deepEqual(find(popup, node => node.type === "label").map(text), ["赛道", "产品", "科目", "年级", "校区", "季度"]);
     assert.equal(find(tree, node => node.type === "button" && text(node) === "完成").length, 1);
   } finally { h.restore(); }
@@ -344,7 +340,7 @@ test("a pointer over clipped rows outside the visible popup cannot select or com
   } finally { h.restore(); }
 });
 
-for (const reason of ["pointer-cancel", "lost-capture", "Escape", "outside", "light-dismiss", "disabled", "external-order", "unmount"])
+for (const reason of ["pointer-cancel", "lost-capture", "Escape", "outside", "close", "disabled", "external-order", "unmount"])
   test(`an in-progress drag is safely abandoned after ${reason}`, () => {
     const h = harness({ value: ["track", "grade", "subject"] });
     try {
@@ -355,8 +351,8 @@ for (const reason of ["pointer-cancel", "lost-capture", "Escape", "outside", "li
       if (reason === "lost-capture") tree = h.pointer("赛道", "onLostPointerCapture");
       if (reason === "Escape") tree = h.key("赛道", "Escape");
       if (reason === "outside") tree = h.pointer("赛道", "onPointerUp", { clientX: 301, clientY: 310 });
-      if (reason === "light-dismiss") {
-        panel(tree).props.onToggle({ nativeEvent: { newState: "closed" } }); tree = h.render();
+      if (reason === "close") {
+        trigger(tree).props.onClick(); tree = h.render();
       }
       if (reason === "disabled") tree = h.render({ disabled: true });
       if (reason === "external-order") tree = h.render({ value: ["subject", "grade", "track"] });
@@ -433,7 +429,7 @@ test("keyboard Escape cancels only sorting without dismissing the panel, blur ca
   } finally { h.restore(); }
 });
 
-test("done and Escape request native hide and return focus with preventScroll, without changing dimensions", () => {
+test("done and Escape close the panel and return focus with preventScroll, without changing dimensions", () => {
   const h = harness({ value: ["track", "season"] });
   try {
     let tree = h.render(); tree = h.open();
@@ -452,49 +448,31 @@ test("done and Escape request native hide and return focus with preventScroll, w
   } finally { h.restore(); }
 });
 
-test("beforetoggle synchronously positions the first fixed panel, respecting viewport sides and available height", () => {
+test("opening the group tool is controlled, starts hidden and never writes floating geometry", () => {
   const h = harness();
   try {
-    const tree = h.render();
-    assert.equal(h.mountStyles[0].position, "fixed");
-    panel(tree).props.onBeforeToggle({ nativeEvent: { newState: "open" } });
-    assert.deepEqual(h.panelElement.style, { position: "fixed", width: "360px", maxHeight: "520px", left: "880px", top: "152px", bottom: "auto" });
-    assert.equal(trigger(tree).props["aria-expanded"], false, "geometry must be applied before the later toggle notification");
-    assert.deepEqual(h.focusCalls, [], "the component leaves native open autofocus to the browser");
+    let tree = h.render();
+    assert.equal(panel(tree).props.hidden, true);
+    tree = h.open(); assert.equal(panel(tree).props.hidden, false);
+    assert.equal(trigger(tree).props["aria-expanded"], true);
+    assert.deepEqual(h.panelElement.style, {});
     h.window.innerWidth = 320; h.window.innerHeight = 300;
-    h.triggerElement.rect = { left: 10, right: 310, top: 230, bottom: 270 };
-    panel(tree).props.onBeforeToggle({ nativeEvent: { newState: "open" } });
-    assert.deepEqual(h.panelElement.style, { position: "fixed", width: "288px", maxHeight: "218px", left: "16px", top: "auto", bottom: "74px" });
-    h.triggerElement.rect = { left: 20, right: 180, top: 20, bottom: 60 };
-    panel(tree).props.onBeforeToggle({ nativeEvent: { newState: "open" } });
-    assert.equal(h.panelElement.style.maxHeight, "228px");
-    assert.equal(h.panelElement.style.left, "16px");
-    assert.equal(h.panelElement.style.top, "64px"); assert.equal(h.panelElement.style.bottom, "auto");
-    const geometry = { ...h.panelElement.style };
-    h.triggerElement.rect.top = 200;
-    panel(tree).props.onBeforeToggle({ nativeEvent: { newState: "closed" } });
-    assert.deepEqual(h.panelElement.style, geometry, "closing does not relocate the trigger or panel");
+    tree = h.render(); assert.deepEqual(h.panelElement.style, {});
+    trigger(tree).props.onClick(); tree = h.render(); assert.equal(panel(tree).props.hidden, true);
   } finally { h.restore(); }
 });
 
-test("resize and capturing scroll listeners exist only while open and clean up on close or unmount", () => {
+test("responsive placement needs no scroll or resize event listeners", () => {
   const h = harness();
   try {
     let tree = h.render();
     assert.equal(h.listeners.size, 0);
     tree = h.open();
-    assert.equal(h.listeners.get("resize").size, 1); assert.equal(h.listeners.get("scroll").size, 1);
-    assert.equal([...h.listeners.get("scroll")][0].capture, true);
-    h.window.innerHeight = 200; h.triggerElement.rect = { left: 20, right: 300, top: 150, bottom: 190 };
-    h.dispatch("resize"); assert.equal(h.panelElement.style.top, "auto"); assert.equal(h.panelElement.style.bottom, "54px");
-    h.window.innerHeight = 720; h.triggerElement.rect = { left: 20, right: 300, top: 20, bottom: 60 };
-    h.dispatch("scroll"); assert.equal(h.panelElement.style.top, "64px"); assert.equal(h.panelElement.style.bottom, "auto");
-    panel(tree).props.onToggle({ nativeEvent: { newState: "closed" } }); tree = h.render();
-    assert.equal(h.listeners.get("resize").size, 0); assert.equal(h.listeners.get("scroll").size, 0);
-    assert.ok(h.removed.some(entry => entry.name === "scroll" && entry.capture === true));
-    tree = h.open(); assert.equal(h.listeners.get("resize").size, 1); assert.equal(h.listeners.get("scroll").size, 1);
+    assert.equal(h.listeners.size, 0);
+    trigger(tree).props.onClick(); tree = h.render(); assert.equal(panel(tree).props.hidden, true);
+    tree = h.open(); assert.equal(h.listeners.size, 0);
   } finally {
     h.restore();
-    assert.equal(h.listeners.get("resize").size, 0); assert.equal(h.listeners.get("scroll").size, 0);
+    assert.equal(h.listeners.size, 0);
   }
 });

@@ -14,6 +14,8 @@ from packages.domain.versioning.errors import DomainError
 from packages.forecast.daily import JOB_TYPE as FORECAST_DAILY_JOB_TYPE
 from packages.forecast.daily import enqueue_due
 from packages.forecast.daily import execute_job as execute_daily_forecast_job
+from packages.forecast.daily import prepare_runtime as prepare_daily_forecast_runtime
+from packages.forecast.daily_diagnostics import safe_diagnostic
 from packages.observability.logging import configure_logging
 from packages.persistence.audit_archive import AUDIT_ARCHIVE_JOB_TYPE, build_audit_archive
 from packages.persistence.database import dispose_engine, get_session_factory
@@ -37,8 +39,27 @@ async def handle_one(
     structlog.contextvars.bind_contextvars(job_id=str(job.job_id), job_type=job.job_type)
     try:
         if job.job_type == FORECAST_DAILY_JOB_TYPE:
-            await execute_daily_forecast_job(job, repository, get_settings())
-            logger.info("forecast_daily_attempt_finished")
+            started = time.monotonic()
+            try:
+                await execute_daily_forecast_job(job, repository, get_settings())
+            except Exception as exc:
+                # A failed lease acknowledgement is not a successful attempt.
+                # Keep it recoverable; the scheduler's lease/idempotency checks
+                # will replay an already committed version after storage returns.
+                logger.warning(
+                    "forecast_daily_acknowledgement_unavailable",
+                    **safe_diagnostic(
+                        {
+                            "stage": "job_acknowledgement",
+                            "diagnostic_id": uuid.uuid4().hex[:16],
+                            "exception_type": type(exc).__name__,
+                            "attempt": job.attempt_no,
+                            "elapsed_ms": int((time.monotonic() - started) * 1000),
+                            "outcome": "FAILED",
+                            "retry": False,
+                        }
+                    ),
+                )
             return True
         elif job.job_type == "NOOP":
             result: dict[str, object] = {"status": "ok"}
@@ -123,8 +144,19 @@ async def _daily_loop(settings: Settings, repository: JobRepository, stop: async
             last_tick = time.monotonic()
             try:
                 await enqueue_due(settings)
-            except Exception:
-                logger.warning("forecast_daily_scheduler_unavailable")
+            except Exception as exc:
+                logger.warning(
+                    "forecast_daily_scheduler_unavailable",
+                    **safe_diagnostic(
+                        {
+                            "stage": "job_acknowledgement",
+                            "diagnostic_id": uuid.uuid4().hex[:16],
+                            "exception_type": type(exc).__name__,
+                            "outcome": "FAILED",
+                            "retry": False,
+                        }
+                    ),
+                )
         delay = settings.worker_poll_seconds
         try:
             handled = await handle_one(repository, job_type=FORECAST_DAILY_JOB_TYPE)
@@ -141,6 +173,22 @@ async def _daily_loop(settings: Settings, repository: JobRepository, stop: async
 async def worker_loop(*, once: bool) -> None:
     settings = get_settings()
     configure_logging(settings)
+    try:
+        prepare_daily_forecast_runtime(settings)
+    except Exception as exc:
+        logger.error(
+            "forecast_daily_runtime_unavailable",
+            **safe_diagnostic(
+                {
+                    "stage": "runtime_import",
+                    "diagnostic_id": uuid.uuid4().hex[:16],
+                    "exception_type": type(exc).__name__,
+                    "outcome": "FAILED",
+                    "retry": False,
+                }
+            ),
+        )
+        raise RuntimeError("自动更新服务初始化失败，请重新部署并启动服务") from None
     repository = JobRepository(worker_id=settings.worker_id)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

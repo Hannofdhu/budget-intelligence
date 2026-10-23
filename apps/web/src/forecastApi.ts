@@ -149,6 +149,10 @@ export interface ForecastRevenueTrendPoint {
   date: string; version_id: string; sequence: number; status: "DRAFT" | "CONFIRMED";
   created_at: string; as_of: string; generation: "AUTOMATIC" | "MANUAL" | null;
   periods: Record<ForecastTrendPeriod, ForecastRevenueTrendValue>;
+  previous_version?: {
+    version_id: string; sequence: number; created_at: string; as_of: string;
+    periods: Record<ForecastTrendPeriod, ForecastRevenueTrendValue> | null;
+  } | null;
 }
 export interface ForecastRevenueTrendEnvelope {
   baseline_year: number; timezone: string; points: ForecastRevenueTrendPoint[];
@@ -156,7 +160,7 @@ export interface ForecastRevenueTrendEnvelope {
 export interface ForecastSchedule {
   enabled: boolean; time: string; timezone: string; next_run_at: string | null;
   last_success_at: string | null; catch_up: boolean;
-  last_run: { state: string; finished_at?: string | null; error?: { message?: string; code?: string } | string | null; scheduled_for?: string } | null;
+  last_run: { state: string; finished_at?: string | null; error?: { message?: string; code?: string; stage?: string; diagnostic_id?: string; exception_type?: string } | string | null; scheduled_for?: string } | null;
 }
 export interface ForecastSnapshotArchive extends Record<string, unknown> {
   version: ForecastVersionSummary;

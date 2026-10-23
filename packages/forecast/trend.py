@@ -128,6 +128,17 @@ def project_forecast_versions(versions: list[Json], *, baseline_hash: str) -> li
                 "periods": _periods(version) if complete else None,
             }
         )
+    # A daily point may omit intraday revisions. Compare with the saved version's
+    # exact parent, never the preceding day selected for the chart. Keep only a
+    # bounded projection; no snapshots, source rows or recursive parent chain.
+    by_id = {point["version_id"]: point for point in projected}
+    for version, point in zip(versions, projected, strict=True):
+        parent = by_id.get(version.get("parent_id"))
+        point["previous_version"] = (
+            {key: parent[key] for key in ("version_id", "sequence", "created_at", "as_of", "periods")}
+            if parent is not None and parent["sequence"] + 1 == point["sequence"]
+            else None
+        )
     return projected
 
 

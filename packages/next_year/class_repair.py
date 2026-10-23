@@ -339,7 +339,7 @@ def repair_class_plan(inputs: Json) -> Json:
                     "before_input": original_combos[key].get("entry_students"),
                     "stable_old_floor": initial_old_floors[key, "暑假"],
                     "minimum": minimums[combo["track"], combo["product"]],
-                    "reason": "在固定入口总量内重新分配，保留全部业务及原最低成班人数"
+                    "reason": "在固定入口总量内重新分配，保留全部业务及原班均"
                     if value != entry_before[key]
                     else "保留本次其余入口分配，防止系统再次按历史权重重分配",
                 }

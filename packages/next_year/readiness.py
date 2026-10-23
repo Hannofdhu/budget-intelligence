@@ -183,7 +183,7 @@ def class_readiness(inputs: Json) -> Json:
                     "upper_students": upper,
                     "minimum": minimum,
                     "unreachable": unreachable,
-                    "message": "入口固定时，当前比例可调范围到不了最低成班人数。"
+                    "message": "入口固定时，当前比例可调范围到不了班均。"
                     if unreachable
                     else "当前保守范围不能证明不可达，仍需完整预算求解和核对。",
                 }

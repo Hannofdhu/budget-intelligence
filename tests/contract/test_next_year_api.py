@@ -1189,6 +1189,55 @@ async def test_impact_previews_input_and_result_changes_without_saving(
 
 
 @pytest.mark.asyncio
+async def test_legacy_class_size_is_frozen_until_explicit_preview_and_revision(
+    setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, actor, _ = setup_route
+    inputs = _inputs()
+    inputs["entry_total"] = 333
+    inputs["class_sizes"][0].update(minimum=24, planned_class_size=30)
+    frozen_calculation = calculate_plan(inputs)
+    frozen_calculation["rule_versions"].pop("class_count")
+    for row in frozen_calculation["rows"]:
+        row.pop("class_average")
+        row["planned_class_size"] = 30
+        row["class_count"] = (row["total_students"] + 29) // 30
+    frozen_calculation["annual"]["class_count"] = sum(
+        row["class_count"] for row in frozen_calculation["rows"]
+    )
+    monkeypatch.setattr(route, "prepare_inputs", lambda *_: deepcopy(inputs))
+    monkeypatch.setattr(route, "calculate_plan", lambda _: deepcopy(frozen_calculation))
+    saved = await _prepare(request, actor)
+    monkeypatch.setattr(route, "calculate_plan", calculate_plan)
+    before_budget, before_forecast = _bytes(route.store.root), _bytes(_forecast_store().root)
+    current = await route.current(request, actor)
+    assert current["draft"]["calculation"] == frozen_calculation
+    preview = await route.preview(
+        request, route.Preview(parent_id=saved["draft"]["id"], inputs=inputs), actor
+    )
+    summer = next(
+        row
+        for row in preview["calculation"]["rows"]
+        if row["combination_id"] == inputs["combinations"][0]["id"] and row["season"] == "暑假"
+    )
+    assert (summer["total_students"], summer["class_average"], summer["class_count"]) == (333, 24, 14)
+    for field in ("revenue_yuan", "total_students", "old_students", "new_students"):
+        assert preview["calculation"]["annual"][field] == frozen_calculation["annual"][field]
+    assert _bytes(route.store.root) == before_budget
+    assert _bytes(_forecast_store().root) == before_forecast
+    revised = await route.revise(
+        request,
+        route.Revise(parent_id=saved["draft"]["id"], inputs=inputs, reason="统一班均口径"),
+        actor,
+        "class-average-explicit-revision",
+    )
+    assert revised["draft"]["sequence"] == 2
+    assert revised["draft"]["calculation"] == preview["calculation"]
+    assert all(_bytes(route.store.root)[name] == content for name, content in before_budget.items())
+    assert _bytes(_forecast_store().root) == before_forecast
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("has_proposal", [True, False])
 async def test_balance_is_only_a_preview_and_handles_no_proposal(
     setup_route: tuple[Request, Actor, Json], monkeypatch: pytest.MonkeyPatch, has_proposal: bool

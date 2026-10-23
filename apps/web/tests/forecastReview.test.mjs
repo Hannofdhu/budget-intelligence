@@ -223,9 +223,9 @@ test("business confirmation explanations mirror permissions, draft safety, missi
 
 const drawerProps = (more = {}) => ({ open: true, tab: "people", onTabChange() {}, onClose() {}, canMaintain: true,
   children: createElement("section", { id: "forecast-panel-people", role: "tabpanel" }, "人数调整内容"), footer: createElement("button", null, "保存并重算"), ...more });
-test("the in-place settings drawer has native dialog semantics, three labeled tabs, content and one save footer", () => {
+test("the settings tool reuses the labelled non-modal panel, three tabs and one save footer", () => {
   const html = render(ForecastSettingsDrawer, drawerProps());
-  assert.match(html, /<dialog[^>]*aria-labelledby="forecast-drawer-title"/);
+  assert.match(html, /<dialog[^>]*open=""[^>]*class="budget-utility-panel forecast-drawer"[^>]*aria-labelledby=/);
   assert.match(html, /role="tablist"[^>]*aria-label="预测调整项目"/);
   assert.equal((html.match(/role="tab"/g) ?? []).length, 3);
   for (const name of ["人数调整", "业务参数", "数据维护"]) assert.match(text(html), new RegExp(name));
@@ -236,19 +236,17 @@ test("the in-place settings drawer has native dialog semantics, three labeled ta
   assert.match(text(render(ForecastSettingsDrawer, drawerProps({ tab: "data" }))), /数据核对/);
 });
 
-test("drawer tab changes, close and cancel are actual callbacks, and busy cancel cannot discard edits", () => {
+test("drawer tab callbacks and dismissal delegate to the shared busy-aware tool without changing drafts", () => {
   // Evaluate hooks synchronously; no simulated browser or dialog implementation.
   const { ForecastSettingsDrawer: Drawer } = loadPage(name => name === "react" ? { ...require(name), useRef: () => ({ current: null }), useEffect() {} } : require(name));
-  const changes = []; let closes = 0, prevented = 0;
+  const changes = []; let closes = 0;
   const tree = Drawer(drawerProps({ onTabChange: tab => changes.push(tab), onClose: () => { closes++; } }));
   for (const button of find(tree, node => node.type === "button" && node.props.role === "tab")) button.props.onClick();
   assert.deepEqual(changes, ["people", "business", "data"]);
-  const [close] = find(tree, node => node.type === "button" && node.props["aria-label"] === "关闭预测侧栏");
-  close.props.onClick(); assert.equal(closes, 1);
-  tree.props.onCancel({ preventDefault() { prevented++; } }); assert.equal(closes, 2); assert.equal(prevented, 1);
+  assert.equal(tree.type.name, "BudgetUtilityPanel");
+  tree.props.onClose(); assert.equal(closes, 1);
   const busy = Drawer(drawerProps({ busy: true, onClose: () => { closes++; } }));
-  busy.props.onCancel({ preventDefault() { prevented++; } }); assert.equal(closes, 2); assert.equal(prevented, 2);
-  assert.equal(find(busy, node => node.type === "button" && node.props["aria-label"] === "关闭预测侧栏")[0].props.disabled, true);
+  assert.equal(busy.props.busy, true); assert.equal(closes, 1);
 });
 
 test("read-only users can view data maintenance but cannot select editable tabs", () => {
@@ -507,7 +505,7 @@ test("drawer tabs use one keyboard stop and real arrow, Home and End handlers wi
   const tree = Drawer(drawerProps({ tab: "business", onTabChange: tab => changes.push(tab) }));
   const tabs = find(tree, node => node.type === "button" && node.props.role === "tab");
   assert.deepEqual(tabs.map(tab => tab.props.tabIndex), [-1, 0, -1]);
-  const key = (tab, name) => tab.props.onKeyDown({ key: name, preventDefault() { prevented++; } });
+  const key = (tab, name) => tab.props.onKeyDown({ key: name, currentTarget: { closest() { return null; } }, preventDefault() { prevented++; } });
   key(tabs[1], "ArrowRight"); key(tabs[1], "ArrowLeft"); key(tabs[1], "Home"); key(tabs[1], "End");
   key(tabs[0], "ArrowLeft"); key(tabs[2], "ArrowRight"); key(tabs[1], "Escape");
   assert.deepEqual(changes, ["data", "people", "people", "data", "data", "people"]); assert.equal(prevented, 6);

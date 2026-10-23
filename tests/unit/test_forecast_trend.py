@@ -18,6 +18,7 @@ def saved(sequence: int, at: str, *, ready: bool = True, automatic: bool = False
     }
     return {
         "id": f"version-{sequence}",
+        "parent_id": f"version-{sequence - 1}" if sequence > 1 else None,
         "sequence": sequence,
         "created_at": at,
         "created_by": "forecast-daily-scheduler" if automatic else "synthetic-owner",
@@ -197,3 +198,56 @@ def test_empty_or_all_incomplete_never_fabricates_points() -> None:
 def test_bad_saved_time_is_reported_not_replaced_by_today(at: str) -> None:
     with pytest.raises(ForecastStoreError, match="保存时间"):
         build_forecast_trend([saved(1, at)], baseline_hash="baseline")
+
+
+def test_previous_version_is_exact_intraday_parent_not_previous_daily_point() -> None:
+    versions = [
+        saved(1, "2026-10-14T09:30:00+08:00"),
+        saved(2, "2026-10-15T09:30:00+08:00"),
+        saved(3, "2026-10-15T10:30:00+08:00"),
+    ]
+    before = deepcopy(versions)
+    points = build_forecast_trend(list(reversed(versions)), baseline_hash="baseline")["points"]
+    assert [point["sequence"] for point in points] == [1, 3]
+    assert points[0]["previous_version"] is None
+    previous = points[1]["previous_version"]
+    assert previous["version_id"] == "version-2"
+    assert previous["sequence"] == 2
+    assert previous["periods"]["全年"]["forecast_revenue"] == "200000.123456789"
+    assert set(previous) == {"version_id", "sequence", "created_at", "as_of", "periods"}
+    assert versions == before
+
+
+def test_previous_incomplete_version_is_not_replaced_with_an_older_complete_version() -> None:
+    versions = [
+        saved(1, "2026-10-14T09:30:00+08:00"),
+        saved(2, "2026-10-15T09:30:00+08:00", ready=False),
+        saved(3, "2026-10-16T09:30:00+08:00"),
+    ]
+    points = build_forecast_trend(versions, baseline_hash="baseline")["points"]
+    assert [point["sequence"] for point in points] == [1, 3]
+    assert points[1]["previous_version"]["sequence"] == 2
+    assert points[1]["previous_version"]["periods"] is None
+
+
+def test_previous_version_before_window_remains_exact_and_never_looks_ahead() -> None:
+    versions = [
+        saved(1, "2026-08-31T09:30:00+08:00"),
+        saved(2, "2026-10-15T09:30:00+08:00"),
+        saved(3, "2026-10-15T10:30:00+08:00"),
+    ]
+    points = build_forecast_trend(versions, baseline_hash="baseline", days="30", through_version="version-2")[
+        "points"
+    ]
+    assert [point["sequence"] for point in points] == [2]
+    assert points[0]["previous_version"]["sequence"] == 1
+    assert "version-3" not in str(points)
+
+
+@pytest.mark.parametrize("parent", [None, "unknown", "version-3", "version-1"])
+def test_missing_future_or_nonadjacent_parent_never_fabricates_comparison(parent: str | None) -> None:
+    versions = [saved(index, "2026-10-15T09:30:00+08:00") for index in (1, 2, 3)]
+    versions[2]["parent_id"] = parent
+    point = build_forecast_trend(versions, baseline_hash="baseline")["points"][0]
+    assert point["sequence"] == 3
+    assert point["previous_version"] is None

@@ -72,7 +72,7 @@ export function ActionTable({ tableLabel, exportData, exportLabel, copyRows, key
     } catch (failure) { setNotice(failure instanceof Error ? failure.message : "操作失败，请重试"); }
     finally { setBusy(""); }
   };
-  const tableElement = <table {...props} tabIndex={keyboardNavigation ? props.tabIndex ?? 0 : props.tabIndex}
+  const tableElement = <table {...props} data-budget-table tabIndex={keyboardNavigation ? props.tabIndex ?? 0 : props.tabIndex}
     aria-label={keyboardNavigation ? props["aria-label"] ?? tableLabel ?? "可选择复制的表格" : props["aria-label"]}
     aria-describedby={keyboardNavigation ? [props["aria-describedby"], keyboardId, statusId].filter(Boolean).join(" ") : props["aria-describedby"]}
     data-table-keyboard={keyboardNavigation || undefined}

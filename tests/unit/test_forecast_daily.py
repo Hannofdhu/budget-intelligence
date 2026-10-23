@@ -1,4 +1,7 @@
 import asyncio
+import importlib
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -11,6 +14,7 @@ from apps.api.routes import forecast as route
 from packages.config.settings import Settings
 from packages.domain.identity.models import Role
 from packages.forecast import daily
+from packages.forecast.daily_diagnostics import diagnostic_scope, mark_stage, safe_diagnostic
 from packages.forecast.refresh_lock import refresh_lock_id
 from packages.persistence.jobs import JobRepository
 from packages.source_snapshot.adapter import SourceAdapterError
@@ -213,7 +217,11 @@ async def test_job_failures_have_finite_retries_and_no_saved_result(
     await daily.execute_job(job_for_today(attempt=attempt), cast(JobRepository, repository), configured())
     outcome = statements[-1]
     assert outcome["status"] == expected
-    assert outcome["last_error_code"] == "BI_TEMPORARY" and outcome["result"] is None
+    assert outcome["last_error_code"] == "BI_TEMPORARY"
+    assert "version_id" not in outcome["result"]
+    assert outcome["result"]["diagnostics"]["exception_type"] == "SourceAdapterError"
+    assert outcome["result"]["diagnostics"]["outcome"] == expected
+    assert outcome["result"]["attempts"] == [outcome["result"]["diagnostics"]]
     assert (outcome["finished_at"] is None) == (expected == "QUEUED")
     assert "attempt_no_1" in outcome  # old attempt cannot complete a recovered lease
 
@@ -229,3 +237,152 @@ async def test_cancellation_propagates_and_leaves_recoverable_lease(monkeypatch:
     with pytest.raises(asyncio.CancelledError):
         await daily.execute_job(job_for_today(), cast(JobRepository, repository), configured())
     assert len(statements) == 1 and statements[0]["timeout_at"] is not None
+
+
+def test_runtime_preloads_established_refresh_before_a_worker_waits_for_next_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: calls.append(name))
+    daily.prepare_runtime(configured(forecast_daily_enabled=False))
+    assert calls == []
+    daily.prepare_runtime(configured())
+    assert calls == ["apps.api.routes.forecast"]
+
+
+def test_preloading_prevents_first_daily_import_from_mixing_cached_and_new_modules() -> None:
+    # An isolated interpreter reproduces the observed old-store/new-trend import
+    # shape without altering any source file, database or live worker process.
+    reproduce = """
+import importlib
+from packages.forecast import store
+del store.forecast_generation
+try:
+    importlib.import_module('apps.api.routes.forecast')
+except ImportError:
+    print('mixed-module-import-failed')
+else:
+    raise AssertionError('expected old cached store to lack the new trend dependency')
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", reproduce], capture_output=True, text=True, timeout=15, check=True
+    )
+    assert completed.stdout.strip() == "mixed-module-import-failed"
+    coherent = """
+import importlib
+from packages.forecast import store
+route = importlib.import_module('apps.api.routes.forecast')
+del store.forecast_generation
+assert importlib.import_module('apps.api.routes.forecast') is route
+print('preloaded-runtime-remains-coherent')
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", coherent], capture_output=True, text=True, timeout=15, check=True
+    )
+    assert completed.stdout.strip() == "preloaded-runtime-remains-coherent"
+
+
+@pytest.mark.parametrize(
+    "exc,code,retry",
+    [
+        (ImportError("credential-secret SQL-value"), "FORECAST_DAILY_RUNTIME_INVALID", False),
+        (ValueError("credential-secret SQL-value"), "FORECAST_DAILY_FAILED", False),
+        (TimeoutError("credential-secret SQL-value"), "FORECAST_DAILY_TIMEOUT", True),
+    ],
+)
+async def test_safe_failure_logs_type_stage_and_correlation_without_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: Exception,
+    code: str,
+    retry: bool,
+) -> None:
+    from structlog.testing import capture_logs
+
+    statements: list[dict[str, Any]] = []
+    repository = SimpleNamespace(session_factory=lambda: Session(statements), worker_id="test-worker")
+
+    async def fail(*_args: Any) -> Any:
+        mark_stage("runtime_import")
+        raise exc
+
+    monkeypatch.setattr(daily, "_generate", fail)
+    with capture_logs() as logs:
+        result = await daily.execute_job(job_for_today(), cast(JobRepository, repository), configured())
+    assert result["error_code"] == code and result["retry"] is retry
+    assert result["exception_type"] == type(exc).__name__ and result["stage"] == "runtime_import"
+    assert len(result["diagnostic_id"]) == 16 and result["elapsed_ms"] >= 0
+    assert logs[-1]["event"] == "forecast_daily_attempt_completed"
+    assert logs[-1]["outcome"] == ("QUEUED" if retry else "FAILED")
+    assert "credential-secret" not in repr(logs) + repr(statements)
+    assert "SQL-value" not in repr(logs) + repr(statements)
+
+
+def test_diagnostic_context_isolated_and_stored_json_revalidated() -> None:
+    with diagnostic_scope() as outer:
+        mark_stage("source_extract")
+        with diagnostic_scope() as inner:
+            mark_stage("calculation")
+            assert inner.stage == "calculation"
+        mark_stage("append_version")
+        assert outer.stage == "append_version" and inner.stage == "calculation"
+    assert (
+        safe_diagnostic({"stage": {}, "outcome": [], "exception_type": "SQL select secret", "raw": "secret"})
+        == {}
+    )
+
+
+async def test_success_outcome_is_reported_only_after_own_lease_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[dict[str, Any]] = []
+    repository = SimpleNamespace(session_factory=lambda: Session(statements), worker_id="test-worker")
+
+    async def generated(*_args: Any) -> Any:
+        return {"version_id": "new", "sequence": 21}
+
+    monkeypatch.setattr(daily, "_generate", generated)
+    result = await daily.execute_job(job_for_today(), cast(JobRepository, repository), configured())
+    assert result["outcome"] == "SUCCEEDED"
+    assert statements[-1]["status"] == "SUCCEEDED" and statements[-1]["result"]["version_id"] == "new"
+
+
+async def test_lost_acknowledgement_never_claims_a_successful_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from structlog.testing import capture_logs
+
+    statements: list[dict[str, Any]] = []
+
+    class LosingSession(Session):
+        async def scalar(self, statement: Any) -> Any:
+            self.statements.append(statement.compile().params)
+            return "synthetic" if len(self.statements) == 1 else None
+
+    repository = SimpleNamespace(session_factory=lambda: LosingSession(statements), worker_id="test-worker")
+
+    async def generated(*_args: Any) -> Any:
+        return {"version_id": "committed-before-lease-change", "sequence": 21}
+
+    monkeypatch.setattr(daily, "_generate", generated)
+    with capture_logs() as logs:
+        result = await daily.execute_job(job_for_today(), cast(JobRepository, repository), configured())
+    assert result["outcome"] == "LEASE_LOST" and result["retry"] is False
+    assert logs[-1]["outcome"] == "LEASE_LOST" and logs[-1]["log_level"] == "warning"
+
+
+def test_programming_storage_errors_and_unknown_rule_conflicts_do_not_retry() -> None:
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    secret = "raw SQL credential-secret"
+    assert daily._safe_failure(IntegrityError(secret, {"token": secret}, ValueError(secret)))[2] is False
+    transient = OperationalError(secret, {"token": secret}, OSError(secret), connection_invalidated=True)
+    assert daily._safe_failure(transient)[2] is True
+    wrapped = HTTPException(
+        503, {"code": "FORECAST_STORAGE_UNAVAILABLE", "message": secret, "retryable": True}
+    )
+    wrapped.__cause__ = IntegrityError(secret, {"token": secret}, ValueError(secret))
+    assert daily._safe_failure(wrapped)[2] is False
+    assert secret not in repr(daily._safe_failure(wrapped))
+    assert daily._safe_failure(HTTPException(409, "固定规则状态不允许"))[2] is False
+    assert daily._safe_failure(HTTPException(409, "预测版本已变化，请重新读取后操作"))[2] is True

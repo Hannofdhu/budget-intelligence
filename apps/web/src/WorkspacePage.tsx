@@ -30,7 +30,7 @@ const tasks = [
   { key: "foundation", no: "1", label: "定目标和SKU", short: "目标", primary: "source", sections: ["source", "targets", "combinations"] },
   { key: "entry", no: "2", label: "入口新生定多少", short: "入口", primary: "entry-total", sections: ["entry-total", "campus-suggestions", "campus", "entry-scope", "entry-detail"] },
   { key: "rates", no: "3", label: "续班率、新生占比", short: "参数", primary: "rates", sections: ["rates", "planned", "planned-unlock"] },
-  { key: "finance", no: "4", label: "学费、折扣、班额", short: "财务", primary: "resources", sections: ["resources", "discount"] },
+  { key: "finance", no: "4", label: "学费、折扣、班均", short: "财务", primary: "resources", sections: ["resources", "discount"] },
   { key: "review", no: "5", label: "看结果 / 对目标", short: "结果", primary: "results", sections: ["results"] },
 ] as const;
 

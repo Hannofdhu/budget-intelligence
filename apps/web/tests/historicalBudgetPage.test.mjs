@@ -37,7 +37,7 @@ function pageTree(rows, step, filters, page = 0, quarterLayout = "wide") {
 }
 
 test("FY27 uses the same five task names as next-year budget in navigation and current-page headings", () => {
-  const labels = ["定目标和SKU", "入口新生定多少", "续班率、新生占比", "学费、折扣、班额", "看结果 / 对目标"];
+  const labels = ["定目标和SKU", "入口新生定多少", "续班率、新生占比", "学费、折扣、班均", "看结果 / 对目标"];
   const filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
   for (const step of [1, 2, 3, 4, 5]) {
     const tree = pageTree([line(1)], step, filters);

@@ -66,23 +66,8 @@ export function ForecastGroupSelector({ value, onChange, disabled = false }: {
     setPreview({ key: session.key, target: session.target });
     if (scrollFrame.current === null) scrollWhileDragging();
   };
-  const locate = () => {
-    const popup = panel.current, rect = trigger.current?.getBoundingClientRect();
-    if (!popup || !rect) return;
-    const width = Math.min(360, window.innerWidth - 32);
-    const below = Math.max(0, window.innerHeight - rect.bottom - 12), above = Math.max(0, rect.top - 12);
-    const opensBelow = below >= 360 || below >= above;
-    Object.assign(popup.style, { width: `${width}px`, maxHeight: `${Math.min(520, opensBelow ? below : above)}px`,
-      left: `${Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16))}px`,
-      top: opensBelow ? `${rect.bottom + 4}px` : "auto", bottom: opensBelow ? "auto" : `${window.innerHeight - rect.top + 4}px` });
-  };
-  const close = () => { finish(); panel.current?.hidePopover(); trigger.current?.focus({ preventScroll: true }); };
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener("resize", locate); window.addEventListener("scroll", locate, true);
-    return () => { window.removeEventListener("resize", locate); window.removeEventListener("scroll", locate, true); };
-  }, [open]);
-  useEffect(() => { if (disabled) panel.current?.hidePopover(); }, [disabled]);
+  const close = () => { finish(); setOpen(false); trigger.current?.focus({ preventScroll: true }); };
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => { if (reorder.current && !valid(reorder.current)) finish(); }, [disabled, open, value.join()]);
   useEffect(() => () => { const session = reorder.current; reorder.current = null; release(session); }, []);
   const pin = (key: ForecastGroupDimension) => {
@@ -92,13 +77,11 @@ export function ForecastGroupSelector({ value, onChange, disabled = false }: {
     setAnnouncement(`${forecastGroupDimensionLabels[key]}已置顶，显示在第一列`);
   };
   return <div className="forecast-group-selector">
-    <button ref={trigger} type="button" popoverTarget={id} aria-controls={id} aria-expanded={open} disabled={disabled}
+    <button ref={trigger} type="button" aria-controls={id} aria-expanded={open} disabled={disabled} onClick={() => open ? close() : setOpen(true)}
       className="forecast-group-trigger" aria-label={`分组维度：${value.map(key => forecastGroupDimensionLabels[key]).join("、")}，设置`}>
       <span><span className="forecast-group-caption">分组维度：</span>{value.map(key => forecastGroupDimensionLabels[key]).join("、")}</span><span>设置</span>
     </button>
-    <div ref={panel} id={id} popover="auto" role="group" aria-label="分组维度设置" className="forecast-group-panel" style={{ position: "fixed" }}
-      onBeforeToggle={event => { if ((event.nativeEvent as ToggleEvent).newState === "open") locate(); }}
-      onToggle={event => { const isOpen = (event.nativeEvent as ToggleEvent).newState === "open"; if (!isOpen) finish(); setOpen(isOpen); }}
+    <div ref={panel} id={id} hidden={!open} role="group" aria-label="分组维度设置" className="forecast-group-panel"
       onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <fieldset disabled={disabled}><legend>选择分组维度</legend><div className="forecast-group-options">
         {forecastGroupDimensions.map(key => <label key={key}><input type="checkbox" checked={value.includes(key)} disabled={value.length === 1 && value[0] === key}

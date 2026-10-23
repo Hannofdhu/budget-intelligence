@@ -34,31 +34,49 @@ test("shared utility uses a native labelled dialog, blocks busy dismissal and ke
   assert.equal(tree.props.children[0].props.children[1].props["aria-label"], "关闭版本记录");
 });
 
-test("native modal lifecycle opens once, focuses the target and restores the exact launcher", () => {
-  const oldDocument = Object.getOwnPropertyDescriptor(globalThis, "document"), oldElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+test("non-modal lifecycle focuses once, retains inputs and restores the exact launcher without scrolling", () => {
+  const oldDocument = Object.getOwnPropertyDescriptor(globalThis, "document"), oldElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement"), oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   class Element { isConnected = true; focusCount = 0; focus() { this.focusCount++; } }
   const launcher = new Element(), heading = new Element(), initial = new Element();
   const dialog = { open: false, shows: 0, closes: 0, showModal() { this.open = true; this.shows++; }, close() { this.open = false; this.closes++; } };
   Object.defineProperty(globalThis, "HTMLElement", { value: Element, configurable: true });
   Object.defineProperty(globalThis, "document", { value: { activeElement: launcher }, configurable: true });
+  Object.defineProperty(globalThis, "window", { value: { matchMedia: () => ({ matches: false }) }, configurable: true });
   try {
     const h = harness(), props = { open: true, title: "待处理", onClose() {}, children: "details" };
     h.render(props); h.refs[0].current = dialog; h.refs[1].current = heading; h.flush();
-    assert.equal(dialog.shows, 1); assert.equal(heading.focusCount, 1);
-    h.render(props); h.flush(); assert.equal(dialog.shows, 1);
+    assert.equal(dialog.shows, 0); assert.equal(heading.focusCount, 1);
+    h.render(props); h.flush(); assert.equal(heading.focusCount, 1);
     h.render({ ...props, initialFocusRef: { current: initial } }); h.flush();
     assert.equal(initial.focusCount, 0, "a recreated optional ref must not steal focus while the user is working in the open panel");
-    h.render({ ...props, open: false }); h.flush(); assert.equal(dialog.closes, 1); assert.equal(launcher.focusCount, 1);
+    h.render({ ...props, open: false }); h.flush(); assert.equal(dialog.closes, 0); assert.equal(launcher.focusCount, 1);
     h.render({ ...props, initialFocusRef: { current: initial } }); h.flush(); assert.equal(initial.focusCount, 1);
-    h.dispose(); assert.equal(dialog.closes, 2); assert.equal(launcher.focusCount, 2);
+    h.dispose(); assert.equal(dialog.closes, 0); assert.equal(launcher.focusCount, 2);
   } finally {
     if (oldDocument) Object.defineProperty(globalThis, "document", oldDocument); else delete globalThis.document;
     if (oldElement) Object.defineProperty(globalThis, "HTMLElement", oldElement); else delete globalThis.HTMLElement;
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow); else delete globalThis.window;
   }
 });
 
-test("utility presentation supports wide inspectable tables, native backdrop and narrow screens", () => {
+test("all tool families reserve a rail on wide screens and join document flow on narrow screens", () => {
   const css = fs.readFileSync(new URL("../src/budgetUtility.css", import.meta.url), "utf8");
-  assert.match(css, /width: min\(1000px,calc\(100% - 32px\)\)/);
-  assert.match(css, /::backdrop/); assert.match(css, /max-width:600px/); assert.match(css, /prefers-reduced-motion/);
+  for (const family of ["ny-context-panel", "budget-utility-panel[open]", "forecast-group-panel:not([hidden])"]) assert.ok(css.includes(family));
+  assert.match(css, /min-width: 1440px/); assert.match(css, /width < 1440px/);
+  assert.match(css, /width: calc\(100% - var\(--budget-tool-gutter\) \* 2 - var\(--budget-tool-width\) - var\(--budget-tool-gap\)\)/);
+  assert.match(css, /position: static/); assert.doesNotMatch(css, /::backdrop/);
+  assert.match(css, /max-width:600px/); assert.match(css, /prefers-reduced-motion/);
+});
+
+test("Escape closes only the current non-modal tool and cannot dismiss a busy tool", () => {
+  const h = harness(); let closes = 0, stopped = 0;
+  const props = { open: true, title: "版本记录", children: "内容", onClose() { closes++; } };
+  let tree = h.render(props);
+  assert.equal(tree.props.open, true);
+  tree.props.onKeyDown({ key: "Escape", preventDefault() {}, stopPropagation() { stopped++; } });
+  assert.equal(closes, 1); assert.equal(stopped, 1);
+  tree = h.render({ ...props, busy: true });
+  tree.props.onKeyDown({ key: "Escape", preventDefault() {}, stopPropagation() {} }); assert.equal(closes, 1);
+  tree.props.onKeyDown({ key: "Escape", defaultPrevented: true }); assert.equal(closes, 1);
+  tree = h.render({ ...props, open: false }); assert.equal(tree.props.open, false);
 });

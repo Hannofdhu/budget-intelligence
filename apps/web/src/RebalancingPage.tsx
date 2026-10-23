@@ -246,7 +246,7 @@ function CandidateCard({
 export function ChangeTable({ changes }: { changes: ScenarioChange[] }) {
   return (
     <ActionTable tableLabel="候选方案参数变更" aria-label="候选方案参数变更" keyboardNavigation scrollClassName="budget-auxiliary-table-scroll" className="budget-auxiliary-table">
-      <thead><tr>{["杠杆", "对象键", "原值", "建议值", "变化"].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+      <thead><tr>{["杠杆", "对象键", "原值", "建议值", "变化"].map(label => <th scope="col" key={label} className={["原值", "建议值", "变化"].includes(label) ? "budget-cell-number" : "budget-cell-text"}>{label}</th>)}</tr></thead>
       <tbody>
       {changes.map((change) => (
         <tr key={change.scenario_change_id}>

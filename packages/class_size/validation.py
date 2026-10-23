@@ -67,7 +67,7 @@ def validate_class_sizes(
     parameter_by_key: dict[tuple[str, str], ClassSizeInput] = {}
     for parameter_item in parameters:
         if parameter_item.minimum_class_size <= 0:
-            raise ClassSizeInvariantError("INVALID_MINIMUM_CLASS_SIZE", "最低班均必须为正整数")
+            raise ClassSizeInvariantError("INVALID_MINIMUM_CLASS_SIZE", "班均必须为正整数")
         key = parameter_item.track, parameter_item.product
         if key in parameter_by_key:
             raise ClassSizeInvariantError("DUPLICATE_CLASS_SIZE_PARAMETER", "班均参数键不得重复")
@@ -131,7 +131,7 @@ def validate_class_sizes(
                     headcount_item.fiscal_season,
                     headcount_item.combination_stable_key,
                     status,
-                    "取整后计划人次低于最低班均",
+                    "取整后计划人次低于班均",
                     {
                         "integer_total_students": total,
                         "minimum_class_size": parameter.minimum_class_size,

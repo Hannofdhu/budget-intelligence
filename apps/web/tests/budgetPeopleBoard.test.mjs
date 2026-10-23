@@ -56,7 +56,7 @@ test("track and grade renewal rows aggregate numerator and denominator across ca
   ]);
   const table = renewalTable(html);
   assert.match(text(html), /赛道与年级续班率/);
-  assert.match(table, /<th scope="col">赛道<\/th><th scope="col">年级<\/th>/);
+  assert.match(table, /<th scope="col">赛道<\/th><th scope="col" class="budget-cell-text">年级<\/th>/);
   assert.match(table, /aria-label="智慧空间，七年级，春续暑，预算续班率，52\.73%"/);
   assert.match(table, /aria-label="智慧空间，八年级，春续暑，预算续班率，90%"/);
   assert.match(table, /aria-label="智慧伴学，七年级，春续暑，预算续班率，30%"/);
@@ -94,7 +94,7 @@ test("the merged campus budget gives old/new/total equal column treatment instea
   const html = render([fact()]);
   const campus = html.match(/<table\b[^>]*class="ba-table ba-campus-budget-table"[^>]*>([\s\S]*?)<\/table>/)?.[1] ?? "";
   assert.ok(campus);
-  assert.match(campus, /<th scope="col">总人次<\/th><th scope="col">新生人次<\/th><th scope="col">老生人次<\/th>/);
+  assert.match(campus, /<th scope="col" class="budget-cell-number">总人次<\/th><th scope="col" class="budget-cell-number">新生人次<\/th><th scope="col" class="budget-cell-number">老生人次<\/th>/);
   assert.equal((campus.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g) ?? []).length, 1);
   assert.equal((campus.match(/<tfoot>[\s\S]*?<\/tfoot>/)?.[0].match(/<tr\b/g) ?? []).length, 1);
   assert.doesNotMatch(campus, /scope="rowgroup"|row[Ss]pan="3"|ba-people-metric/);

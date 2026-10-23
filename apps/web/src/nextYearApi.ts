@@ -24,6 +24,7 @@ export interface NextYearFinance { id: string; combination_id: string; season: F
 export interface NextYearInputs {
   fiscal_year: number; source_as_of: string; target_revenue_yuan: string | null; track_targets: Record<string, string | null>;
   entry_total: number; tax_factor: string; combinations: NextYearCombination[]; rates: NextYearRate[];
+  /** minimum is the shared 班均; planned_class_size is frozen legacy input, ignored by new calculations. */
   finance: NextYearFinance[]; class_sizes: { track: string; product: string; minimum: number; planned_class_size?: number | null }[];
   plans: { combination_id: string; season: ForecastSeason; students: number; locked?: boolean; reason?: string }[];
   opening_sources: { track: string; product: string; grade: string; subject: string; campus: string; students: number; target_id: string | null; exclusion: string | null }[];
@@ -39,7 +40,7 @@ export interface NextYearRow {
   old_students: number | null; new_students: number | null; total_students: number | null; revenue_yuan: NextYearNumber;
   price_yuan: NextYearNumber; discount_ppm: number | null; renewal_ppm: number | null; share_ppm: number | null; class_size_status: string;
   planned_new_applied: boolean;
-  class_count?: number | null; planned_class_size?: number | null; manual_locked?: boolean;
+  class_count?: number | null; class_average?: number | null; planned_class_size?: number | null; manual_locked?: boolean;
 }
 export interface NextYearCalculation {
   fiscal_year: number; rule_versions: Record<string, string>; annual: NextYearTotals;
@@ -51,6 +52,8 @@ export interface NextYearCalculation {
   issues: { code: string; message: string; season?: string; combination_id?: string; severity: "WARNING" | "BLOCKING"; [key: string]: unknown }[];
   complete: boolean; publication_available: false;
 }
+/** Frozen versions without this rule keep their original results until explicitly recalculated. */
+export const nextYearUsesClassAverage = (calculation: NextYearCalculation) => calculation.rule_versions.class_count === "class-average-ceiling-v1";
 export interface NextYearDraft {
   id: string; sequence: number; parent_id: string | null; status: "DRAFT"; source: ForecastBasis;
   inputs: NextYearInputs; calculation: NextYearCalculation; created_at: string;
@@ -228,10 +231,12 @@ export function applyNextYearEdits(original: NextYearInputs, edits: NextYearEdit
       let remainder = number - allocations.reduce((sum, item) => sum + item.value, 0);
       for (const item of [...allocations].sort((a, b) => b.remainder - a.remainder || a.row.id.localeCompare(b.row.id))) { if (!remainder) break; item.value++; remainder--; }
       for (const item of allocations) { item.row.entry_students = item.value; item.row.entry_locked = true; }
-    } else if (section === "class" || section === "class-size") {
+    } else if (section === "class") {
       const item = inputs.class_sizes[Number(id)];
       if (!item || number === null || !Number.isSafeInteger(number) || number < 1 || number > 10000) fail(key, "班均须为1至10000的整数");
-      else if (section === "class-size") item.planned_class_size = number; else item.minimum = number;
+      else item.minimum = number;
+    } else if (section === "class-size") {
+      fail(key, "计划班额已合并为班均，请修改班均");
     } else if (section === "plan" || section === "manual") {
       if (!inputs.combinations.some(row => row.id === id) || !forecastSeasons.includes(field as ForecastSeason)) { fail(key, "计划明细不存在"); continue; }
       if (number === null || !Number.isSafeInteger(number) || number < 0 || number > 10000000) { fail(key, "计划新生须为0至1000万的整数"); continue; }
@@ -407,7 +412,7 @@ export function summarizeNextYearEdits(inputs: NextYearInputs, edits: NextYearEd
       const isPlan = section === "class-size";
       const current = isPlan ? row?.planned_class_size ?? null : row?.minimum ?? null;
       items.push({ ...base, category: "class_size", task: 4,
-        label: `${row?.track ?? ""} / ${row?.product ?? ""} ${isPlan ? "计划班额" : "最低成班人数"}`,
+        label: `${row?.track ?? ""} / ${row?.product ?? ""} ${isPlan ? "历史班量基准（已停用）" : "班均"}`,
         beforeDisplay: formatCount(current),
         afterDisplay: trimmed ? formatCount(parsedNumber) ?? trimmed : "（清空）",
         beforeNumber: current, afterNumber: parsedNumber, unit: "count" });

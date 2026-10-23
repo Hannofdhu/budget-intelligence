@@ -303,7 +303,7 @@ test("shared read-only tables use one keyboard entry while the existing pivot an
   const analysis = source("BudgetAnalysisView.tsx");
   assert.match(analysis, /<ActionTable keyboardNavigation className="ba-table ba-detail-table" scrollClassName="ba-table-wrap"/);
   assert.match(analysis, /className="ba-table-wrap" ref=\{observeBudgetTableHeader\} tabIndex=\{0\} aria-label="预算透视表，可横向滚动"/);
-  assert.match(analysis, /<table className="ba-table ba-pivot-table" ref=\{tableRef\}>/);
+  assert.match(analysis, /<table className="ba-table ba-pivot-table" ref=\{tableRef\} data-budget-table>/);
   assert.equal((analysis.match(/<ActionTable keyboardNavigation/g) ?? []).length, 1, "the existing pivot range is not replaced by another selection system");
   const people = source("BudgetPeopleBoard.tsx");
   for (const label of ["季度招生预算表", "赛道年级跨季续班率表"]) {

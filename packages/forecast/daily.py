@@ -6,11 +6,14 @@ successful source/result snapshots remain append-only in forecast_ledger_event.
 """
 
 import asyncio
+import importlib
+import time as clock
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -20,6 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.config.settings import Settings
 from packages.domain.identity.models import Actor, Role
+from packages.forecast.daily_diagnostics import (
+    attempt_history,
+    diagnostic_scope,
+    mark_stage,
+    safe_diagnostic,
+    safe_error_code,
+)
 from packages.forecast.refresh_lock import refresh_slot
 from packages.forecast.store import fingerprint
 from packages.persistence.database import get_session_factory
@@ -33,6 +43,19 @@ TIMEZONE = ZoneInfo("Asia/Shanghai")
 RUN_TIME = time(9, 30)
 SERVICE_ACTOR = "forecast-daily-scheduler"
 Json = dict[str, Any]
+logger = structlog.get_logger(__name__)
+
+
+def prepare_runtime(settings: Settings) -> None:
+    """Load one coherent refresh dependency graph before a long-lived worker waits.
+
+    Previously store.py was cached at startup but the HTTP refresh was imported
+    the next morning. A deployment between those times mixed old loaded modules
+    and new files, causing ImportError before any source query. Workers still
+    require a restart when deployed; no hot-reload or second engine is introduced.
+    """
+    if _active(settings, settings.local_trial_department_id):
+        importlib.import_module("apps.api.routes.forecast")
 
 
 def due_time(now: datetime) -> datetime:
@@ -94,6 +117,18 @@ async def enqueue_due(
         ).all()
         for job in jobs:
             retry = job.payload.get("day") == day and job.attempt_no < settings.forecast_daily_max_attempts
+            interrupted = {
+                "attempt": job.attempt_no,
+                "stage": "unknown",
+                "outcome": "QUEUED" if retry else "FAILED",
+                "error_code": "FORECAST_DAILY_WORKER_INTERRUPTED",
+                "retry": retry,
+                "finished_at": now.isoformat(),
+            }
+            history = attempt_history(job.result)
+            if not any(item.get("attempt") == job.attempt_no for item in history):
+                history.append(interrupted)
+            job.result = {"diagnostics": interrupted, "attempts": history[-5:]}
             job.status = "QUEUED" if retry else "FAILED"
             job.available_at = now
             job.finished_at = None if retry else now
@@ -150,6 +185,7 @@ async def _generate(job: AsyncJob, settings: Settings) -> Json:
     # creating a second forecast implementation. No HTTP identity is fabricated.
     from apps.api.routes import forecast as route
 
+    mark_stage("validate_job")
     department = str(job.payload.get("department_id", ""))
     if not _active(settings, department):
         raise SourceAdapterError("FORECAST_DAILY_DISABLED", "本部门自动更新未启用，不会查询观远")
@@ -161,14 +197,18 @@ async def _generate(job: AsyncJob, settings: Settings) -> Json:
         raise SourceAdapterError("JOB_PAYLOAD_INVALID", "自动更新任务身份无效")
     actor = Actor(SERVICE_ACTOR, department, frozenset({Role.DATA_MAINTAINER}))
     digest = fingerprint({"command": "daily-refresh", "department_id": department, "day": today.isoformat()})
+    mark_stage("refresh_lock")
     async with refresh_slot(department):
         # A crash may happen after saving the append-only version but before
         # acknowledging the job. Recover that exact version without querying BI.
+        mark_stage("request_replay")
         replay = await route._store_call("request_result", department, request_id, digest)
         if replay:
             result = replay
         else:
+            mark_stage("baseline_read")
             baseline = await read_database_review(department)
+            mark_stage("parent_read")
             parent = (await route._current(actor))["version"]
             if parent is None:
                 raise SourceAdapterError(
@@ -186,6 +226,7 @@ async def _generate(job: AsyncJob, settings: Settings) -> Json:
             result = await route._refresh_from_source(
                 baseline, body, actor, request_id, digest, automatic=True
             )
+        mark_stage("result_projection")
         version = result["version"]
         return {
             "version_id": version["id"],
@@ -196,7 +237,65 @@ async def _generate(job: AsyncJob, settings: Settings) -> Json:
         }
 
 
-async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settings) -> None:
+def _safe_failure(exc: Exception) -> tuple[str, str, bool]:
+    """Only typed source errors or proven transient storage errors may retry."""
+    if isinstance(exc, TimeoutError):
+        return "FORECAST_DAILY_TIMEOUT", "自动更新超时；已保留上次结果", True
+    if isinstance(exc, ImportError):
+        return (
+            "FORECAST_DAILY_RUNTIME_INVALID",
+            "自动更新服务代码尚未同步，请重启更新服务；已保留上次结果",
+            False,
+        )
+    if isinstance(exc, SourceAdapterError):
+        # Error messages are not taken from arbitrary exceptions or SQL drivers.
+        return safe_error_code(exc.code), "自动更新来源检查未完成；已保留上次结果", exc.retryable
+    if isinstance(exc, HTTPException):
+        if isinstance(exc.detail, dict):
+            retry = exc.detail.get("retryable") is True
+            if isinstance(exc.__cause__, SQLAlchemyError):
+                retry = _transient_storage(exc.__cause__)
+            return (
+                safe_error_code(exc.detail.get("code")),
+                "自动更新未完成；已保留上次结果，请根据诊断编号检查更新服务",
+                retry,
+            )
+        # This is the existing optimistic-concurrency failure, not an arbitrary
+        # 409 rule/validation rejection. Other rule errors require review.
+        changed = exc.status_code == 409 and exc.detail == "预测版本已变化，请重新读取后操作"
+        return (
+            "FORECAST_VERSION_CHANGED" if changed else "FORECAST_DAILY_CONFLICT",
+            "预测版本或规则状态变化，本次未生成新版本；已保留上次结果",
+            changed,
+        )
+    if isinstance(exc, (SQLAlchemyError, OSError)):
+        retry = _transient_storage(exc)
+        return (
+            "FORECAST_STORAGE_UNAVAILABLE" if retry else "FORECAST_STORAGE_ERROR",
+            "预测存储操作未完成；已保留上次结果",
+            retry,
+        )
+    return (
+        "FORECAST_DAILY_FAILED",
+        "自动更新未完成；已保留上次结果，请根据诊断编号检查更新服务",
+        False,
+    )
+
+
+def _transient_storage(exc: BaseException) -> bool:
+    # Programming/constraint/invalid-payload errors must not be blindly retried.
+    # Driver connection invalidation and documented transient SQLSTATEs are safe.
+    if isinstance(exc, OSError):
+        return True
+    if getattr(exc, "connection_invalidated", False) is True:
+        return True
+    state = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    return isinstance(state, str) and (
+        state.startswith("08") or state in {"40001", "40P01", "53300", "57P01", "57P02", "57P03"}
+    )
+
+
+async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settings) -> Json:
     """Lease + bounded attempt + safe durable outcome; no confirmations or FY28 writes."""
     factory = repository.session_factory
     now = datetime.now(UTC)
@@ -215,34 +314,37 @@ async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settin
             .returning(AsyncJob.job_id)
         )
         if lease is None:
-            return
+            return {"outcome": "LEASE_LOST", "retry": False}
     result: Json | None = None
     error: tuple[str, str, bool] | None = None
-    try:
-        async with asyncio.timeout(timeout):
-            result = await _generate(job, settings)
-    except TimeoutError:
-        error = ("FORECAST_DAILY_TIMEOUT", "自动更新超时；已保留上次结果", True)
-    except SourceAdapterError as exc:
-        error = (exc.code, exc.safe_message, exc.retryable)
-    except HTTPException as exc:
-        if isinstance(exc.detail, dict):
-            error = (
-                str(exc.detail.get("code", "FORECAST_DAILY_FAILED")),
-                str(exc.detail.get("message", "自动更新未完成；已保留上次结果")),
-                bool(exc.detail.get("retryable")),
+    started = clock.monotonic()
+    diagnostic: Json = {"diagnostic_id": uuid.uuid4().hex[:16], "attempt": job.attempt_no}
+    with diagnostic_scope() as progress:
+        try:
+            async with asyncio.timeout(timeout):
+                result = await _generate(job, settings)
+        except asyncio.CancelledError:
+            logger.warning(
+                "forecast_daily_cancelled",
+                **diagnostic,
+                stage=progress.stage,
+                exception_type="CancelledError",
+                elapsed_ms=int((clock.monotonic() - started) * 1000),
+                outcome="CANCELLED",
+                retry=False,
             )
-        else:
-            error = (
-                "FORECAST_DAILY_CONFLICT",
-                "预测版本或规则状态变化，本次未生成新版本；将重新读取后重试",
-                exc.status_code == 409,
+            raise
+        except Exception as exc:
+            error = _safe_failure(exc)
+            cause = exc.__cause__ or exc
+            diagnostic["exception_type"] = type(cause).__name__
+            source_id = (
+                exc.detail.get("diagnostic_id")
+                if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)
+                else getattr(exc, "diagnostic_id", None)
             )
-    except (SQLAlchemyError, OSError):
-        error = ("FORECAST_STORAGE_UNAVAILABLE", "预测数据库暂时不可用；已保留上次结果，将有限重试", True)
-    except Exception:
-        # Never persist SQL parameters, credentials, raw source output or tracebacks.
-        error = ("FORECAST_DAILY_FAILED", "自动更新未完成；已保留上次结果，请联系管理员查看服务日志", False)
+            diagnostic.update(safe_diagnostic({"diagnostic_id": source_id}))
+        diagnostic["stage"] = progress.stage
     finished = datetime.now(UTC)
     retry = bool(
         error
@@ -250,9 +352,20 @@ async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settin
         and job.attempt_no < settings.forecast_daily_max_attempts
         and job.payload.get("day") == finished.astimezone(TIMEZONE).date().isoformat()
     )
+    outcome = "SUCCEEDED" if error is None else ("QUEUED" if retry else "FAILED")
+    diagnostic.update(
+        elapsed_ms=int((clock.monotonic() - started) * 1000),
+        outcome=outcome,
+        retry=retry,
+        finished_at=finished.isoformat(),
+    )
+    if error:
+        diagnostic["error_code"] = error[0]
+    diagnostic = safe_diagnostic(diagnostic)
+    history = [*attempt_history(getattr(job, "result", None)), diagnostic]
     values: Json = {
-        "result": result,
-        "status": "SUCCEEDED" if error is None else ("QUEUED" if retry else "FAILED"),
+        "result": {**(result or {}), "diagnostics": diagnostic, "attempts": history[-5:]},
+        "status": outcome,
         "finished_at": None if retry else finished,
         "timeout_at": None,
         "locked_by": None,
@@ -264,7 +377,66 @@ async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settin
             seconds=min(900, settings.forecast_daily_retry_seconds * 2 ** (job.attempt_no - 1))
         )
     async with factory() as session, session.begin():
-        await session.execute(update(AsyncJob).where(*owns).values(**values))
+        acknowledged = await session.scalar(
+            update(AsyncJob).where(*owns).values(**values).returning(AsyncJob.job_id)
+        )
+    if acknowledged is None:
+        diagnostic = {**diagnostic, "outcome": "LEASE_LOST", "retry": False}
+    log = logger.info if diagnostic["outcome"] == "SUCCEEDED" else logger.warning
+    log("forecast_daily_attempt_completed", **diagnostic)
+    return diagnostic
+
+
+async def retry_failed_today(
+    settings: Settings,
+    *,
+    job_id: uuid.UUID,
+    expected_code: str,
+    now: datetime | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> bool:
+    """Explicit operator retry after repair; retain the failed attempt on this job.
+
+    This is not an automatic retry of unknown errors, a backfill, or a new daily
+    identity. It cannot reset successful, expired, exhausted, or another job.
+    """
+    department = settings.local_trial_department_id
+    if not _active(settings, department):
+        return False
+    now = now or datetime.now(UTC)
+    day = now.astimezone(TIMEZONE).date()
+    dedupe_key, request_id = run_identity(department, day)
+    factory = session_factory or get_session_factory()
+    async with factory() as session, session.begin():
+        job = await session.scalar(select(AsyncJob).where(AsyncJob.job_id == job_id).with_for_update())
+        if (
+            job is None
+            or job.job_type != JOB_TYPE
+            or job.payload.get("department_id") != department
+            or job.payload.get("day") != day.isoformat()
+            or job.dedupe_key != dedupe_key
+            or job.payload.get("request_id") != request_id
+            or job.status != "FAILED"
+            or job.last_error_code != expected_code
+            or job.attempt_no >= settings.forecast_daily_max_attempts
+        ):
+            return False
+        history = attempt_history(job.result)
+        if not any(item.get("attempt") == job.attempt_no for item in history):
+            history.append(
+                {
+                    "attempt": job.attempt_no,
+                    "stage": "unknown",
+                    "outcome": "FAILED",
+                    "error_code": safe_error_code(job.last_error_code),
+                    "retry": False,
+                    **({"finished_at": job.finished_at.isoformat()} if job.finished_at else {}),
+                }
+            )
+        job.result = {"attempts": history[-5:]}
+        job.status, job.available_at, job.finished_at = "QUEUED", now, None
+        job.locked_by, job.timeout_at = None, None
+        return True
 
 
 async def schedule_status(
@@ -295,13 +467,22 @@ async def schedule_status(
     last_run = None
     if last:
         state = last.status if last.status in {"SUCCEEDED", "RUNNING", "QUEUED"} else "FAILED"
+        diagnostic = safe_diagnostic((last.result or {}).get("diagnostics"))
         last_run = {
             "state": state,
             "scheduled_for": last.payload["scheduled_for"],
             "finished_at": last.finished_at.isoformat() if last.finished_at else None,
             "version_id": (last.result or {}).get("version_id"),
             "sequence": (last.result or {}).get("sequence"),
-            "error": {"code": last.last_error_code, "message": last.last_error_safe}
+            "error": {
+                "code": last.last_error_code,
+                "message": last.last_error_safe,
+                **{
+                    key: diagnostic[key]
+                    for key in ("stage", "diagnostic_id", "exception_type")
+                    if key in diagnostic
+                },
+            }
             if last.last_error_code
             else None,
         }

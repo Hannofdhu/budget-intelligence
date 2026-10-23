@@ -345,6 +345,13 @@ def compare_calculations(before: Json, after: Json) -> Json:
         )
     result["rows"] = changed
     result["changed_row_count"] = len(changed)
+    if before.get("rule_versions", {}).get("class_count") != after.get("rule_versions", {}).get(
+        "class_count"
+    ):
+        result["annual"]["delta"]["class_count"] = None
+        for collection in ("quarters", "tracks", "campuses", "rows"):
+            for item in result[collection]:
+                item["delta"]["class_count"] = None
     return result
 
 
@@ -379,7 +386,7 @@ def _class_diagnostics(calculation: Json) -> list[Json]:
     rows = {(row["combination_id"], row["season"]): row for row in calculation["rows"]}
     definitions = {
         "BELOW_MINIMUM_CLASS_SIZE": (
-            "部分季度人次不足最低成班人数",
+            "部分季度人次不足班均",
             "调整对应季度的新生人次或招生参数；不开展的业务可关闭范围，但不能丢弃期初结转。",
             ["plans.students", "rates.renewal_ppm", "rates.share_ppm", "combinations.enabled"],
         ),
@@ -670,9 +677,7 @@ def balance_plan(inputs: Json, options: Json | None = None) -> Json:
             result["status"] = "FEASIBLE" if candidate.targets_closed else "PARTIAL"
     if candidate is None:
         if constraints["class_issues"]:
-            result["message"] = (
-                "预算仍有未满足最低成班人数或四季均为零的业务，请先调整人次或关闭范围；原预算未修改。"
-            )
+            result["message"] = "预算仍有未满足班均或四季均为零的业务，请先调整人次或关闭范围；原预算未修改。"
         return result
     proposed = deepcopy(inputs)
     entries = dict(candidate.decision.entry_values)

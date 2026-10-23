@@ -15,7 +15,6 @@
 .budget-auxiliary .opening-zero-confirm { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: 0; cursor: pointer; }
 .budget-auxiliary .opening-zero-confirm input { margin: 0; }
 .budget-auxiliary .opening-uncovered-table table { min-width: 34rem; }
-.budget-auxiliary .opening-table thead :is(th,td):nth-last-child(-n+3) { text-align: right; }
 .budget-auxiliary .budget-data-section .table-transfer-start label { margin: 0; }
 .budget-auxiliary .decision-home { min-height: auto; margin-block: 24px; padding-block: 24px; }
 .budget-auxiliary .decision-home__status :is(span,p), .budget-auxiliary .decision-focus__bar span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }

@@ -1,12 +1,81 @@
-.budget-utility-panel { position: fixed; inset: 0 0 0 auto; width: min(1000px,calc(100% - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0 0 0 auto; padding: 0; overflow: auto; border: 1px solid #dce3dd; border-radius: 16px 0 0 16px; background: #f5f6f2; color: #173f37; box-shadow: -12px 0 42px #173f3722; }
-.budget-utility-panel::backdrop { background: #173f3766; }
+.budget-utility-panel { padding: 0; border: 1px solid var(--budget-divider); background: var(--budget-surface); color: var(--budget-text); }
 .budget-utility-heading { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; border-bottom: 1px solid #dce3dd; background: #f5f6f2; }
 .budget-utility-heading h2 { margin: 0; padding: 0; font: inherit; font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }
 .budget-utility-heading button { flex: 0 0 auto; min-height: 36px; padding: 6px 12px; border: 1px solid var(--budget-control-border); border-radius: var(--budget-radius-control); background: #fff; color: var(--budget-accent); font: inherit; font-size: var(--budget-body-size); }
 .budget-utility-heading button:disabled { opacity: .5; cursor: not-allowed; }
 .budget-utility-heading :is(h2,button):focus-visible { outline: 2px solid #3e7966; outline-offset: 4px; }
 .budget-utility-content { padding: 20px 22px 32px; min-width: 0; }
+.budget-utility-footer { padding: 16px 22px; border-top: 1px solid var(--budget-divider); background: var(--budget-surface); }
 .budget-utility-content > :first-child { margin-top: 0; }
 .budget-utility-content :is(table,.history-table-wrap,.ba-table-wrap) { max-width: 100%; }
-@media(max-width:600px) { .budget-utility-panel { width: 100%; border-radius: 0; } .budget-utility-heading { padding: 14px 16px; } .budget-utility-content { padding: 16px 12px 24px; } }
+/* All reading/editing tools share one reserved rail, never a cover over the table. */
+.budget-shell {
+  --budget-tool-width: clamp(360px, 32vw, 460px);
+  --budget-tool-gap: 24px;
+  --budget-tool-gutter: max(24px, calc((100vw - 1480px) / 2));
+  --budget-tool-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 0px) + 12px);
+  --budget-tool-bottom: calc(var(--ny-action-bar-height, var(--forecast-action-height, 112px)) + 12px);
+}
+.budget-shell :is(.ny-context-panel, .budget-utility-panel[open], .forecast-group-panel:not([hidden])) {
+  position: fixed;
+  inset: var(--budget-tool-top) var(--budget-tool-gutter) var(--budget-tool-bottom) auto;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  width: var(--budget-tool-width);
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 1px solid var(--budget-divider);
+  border-radius: 12px;
+  box-shadow: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  animation: none;
+}
+.budget-shell .budget-utility-panel[open] { overflow: hidden; }
+.budget-utility-panel[open] > .budget-utility-heading { flex-shrink: 0; }
+.budget-utility-panel[open] > .budget-utility-content { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.budget-utility-panel[open] > .budget-utility-footer { flex-shrink: 0; max-height: 40%; overflow: auto; }
+.budget-shell :is(.budget-utility-heading h2, .ny-context-heading h2) { scroll-margin-top: var(--budget-tool-top); }
+.budget-shell :is(.budget-utility-panel:not([open]), .forecast-group-panel[hidden]) { display: none; }
+.budget-shell:has(.budget-utility-panel[open]) .ny-context-panel { display: none; }
+.budget-shell:has(.budget-utility-panel[open]) .forecast-group-panel { display: none; }
+.budget-shell .budget-utility-panel[open]:has(~ .budget-utility-panel[open]) { display: none; }
+.budget-shell .forecast-group-panel:not([hidden]) { padding: 20px; }
+.forecast-drawer > .budget-utility-content { display: flex; flex-direction: column; padding: 0; }
+.forecast-drawer .forecast-drawer-tabs { flex-shrink: 0; flex-wrap: wrap; padding-inline: 20px; gap: 12px; }
+.forecast-drawer .forecast-drawer-body { padding: 20px; overflow: visible; }
+.forecast-drawer .forecast-drawer-save { flex-wrap: wrap; }
+.forecast-drawer .forecast-adjustment-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1440px) {
+  .budget-shell:has(:is(.ny-context-panel, .budget-utility-panel[open], .forecast-group-panel:not([hidden]))) .decision-workspace {
+    width: calc(100% - var(--budget-tool-gutter) * 2 - var(--budget-tool-width) - var(--budget-tool-gap));
+    max-width: none;
+    margin-inline: var(--budget-tool-gutter) auto;
+    min-width: 0;
+  }
+  .budget-shell:has(:is(.ny-context-panel, .budget-utility-panel[open], .forecast-group-panel:not([hidden]))) :is(.ny-summary-compact .ny-metrics, .forecast-metrics) { flex-wrap: wrap; }
+  .budget-shell:has(:is(.ny-context-panel, .budget-utility-panel[open], .forecast-group-panel:not([hidden]))) .forecast-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 0; }
+}
+@media (width < 1440px) {
+  .budget-shell :is(.ny-context-panel, .budget-utility-panel[open], .forecast-group-panel:not([hidden])) {
+    position: static;
+    inset: auto;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    margin-block: 20px;
+  }
+  .budget-shell > :is(.ny-context-panel, .budget-utility-panel[open]) { width: min(1280px, calc(100% - 48px)); margin-inline: auto; margin-bottom: calc(var(--ny-action-bar-height, 112px) + 32px); }
+  .budget-shell :is(.ny-context-content, .budget-utility-panel[open] > .budget-utility-content, .budget-utility-panel[open] > .budget-utility-footer) { max-height: none; overflow: visible; }
+  .budget-shell .forecast-group-selector:has(.forecast-group-panel:not([hidden])) { width: 100%; }
+  .budget-shell .budget-data-section:has(.forecast-group-panel:not([hidden])) .budget-data-section__actions { width: 100%; }
+  .budget-shell .budget-data-section:has(.forecast-group-panel:not([hidden])) .budget-data-section__heading { flex-wrap: wrap; }
+}
+@media (max-height: 600px) { .budget-shell { --budget-tool-bottom: 16px; } }
+@media(max-width:600px) { .budget-utility-heading { padding: 14px 16px; } .budget-utility-content, .budget-utility-footer { padding: 16px 12px 24px; } .budget-shell > :is(.ny-context-panel, .budget-utility-panel[open]) { width: calc(100% - 28px); } }
 @media(prefers-reduced-motion:reduce) { .budget-utility-panel { scroll-behavior: auto; } }

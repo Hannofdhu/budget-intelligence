@@ -104,7 +104,7 @@ const DETAIL_TYPE_LABELS: Record<string, string> = {
   NEW_STUDENT_SHARE: "新生占比",
   PLANNED_NEW_STUDENTS: "计划新生人次",
   BUDGET_TAX_FACTOR: "预算含税转换",
-  CLASS_SIZE: "最低班均",
+  CLASS_SIZE: "班均",
   REVENUE_PARAMETER: "学费与结转参数",
   OPENING_CARRYOVER: "期初结转收入",
   DETAIL_DISCOUNT: "明细折扣率",

@@ -9,11 +9,20 @@
 .budget-status { max-width: 80ch; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.57143; overflow-wrap: anywhere; }
 .budget-status[role="alert"] { color: var(--budget-error); }
 .budget-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
+/* The column owns alignment, including editors. Never infer a role from column position. */
+table[data-budget-table] :is(th, td).budget-cell-text { text-align: left; }
+table[data-budget-table] :is(th, td).budget-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
+table[data-budget-table] :is(th, td).budget-cell-center { text-align: center; }
+table[data-budget-table] .budget-cell-number > .ny-field { margin-inline-start: auto; margin-inline-end: 0; }
+table[data-budget-table] .budget-cell-number :is(input[inputmode="decimal"], input[inputmode="numeric"], input[type="number"]) { text-align: right; font-variant-numeric: tabular-nums; }
+table[data-budget-table] .budget-cell-number :is(.rate-percent, .rate-range) { width: max-content; margin-inline-start: auto; margin-inline-end: 0; }
+table[data-budget-table] .budget-cell-center input[type="checkbox"] { margin-inline: 0; vertical-align: middle; }
+/* A second header row begins with a metric, not the frozen business column. */
+table[data-budget-table].ba-table thead th.budget-cell-number { left: auto; z-index: 4; }
 :is(.decision-shell, .budget-shell) :is(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
 :is(.decision-shell, .budget-shell) :is(input:not([type="checkbox"]), select, textarea) { color: var(--budget-text); border-color: var(--budget-control-border); border-radius: var(--budget-radius-control); font-size: var(--budget-body-size); }
 :is(.decision-shell, .budget-shell) :is(h1, h2, h3, button, input, select, textarea, th, td) { scroll-margin-top: calc(var(--budget-header-height, 0px) + var(--budget-page-nav-height, 0px) + 16px); scroll-margin-bottom: calc(var(--ny-action-bar-height, var(--forecast-action-height, 0px)) + 16px); }
 .ba-detail-table tbody th { white-space: normal; min-width: 15rem; max-width: 24rem; overflow-wrap: anywhere; }
-.ba-detail-table tbody :is(th,td):nth-child(-n+2) { text-align: left; }
 .ba-detail-table tbody :is(th,td):nth-child(-n+2) small { display: block; margin-top: .25rem; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); line-height: 1.5; }
 .ba-detail-table tbody th strong { font-weight: 600; }
 .ba-root .ba-panel > header h3, .ba-root .ba-view-manager h4 { font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }

@@ -218,3 +218,78 @@ async def test_postgresql_scheduled_version_replays_after_job_ack_crash_without_
         assert status["last_run"]["state"] == "SUCCEEDED"
         assert status["last_run"]["version_id"] == generated["version_id"]
         assert status["last_success_at"]
+
+
+async def test_postgresql_explicit_today_retry_preserves_failed_attempt_and_never_resets_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with isolated_store() as (_store, factory):
+        async with factory.begin() as session:
+            table = AsyncJob.__table__
+            assert isinstance(table, Table)
+            await session.run_sync(lambda sync: table.create(sync.connection()))
+        settings = configured()
+        now = daily.due_time(datetime.now(UTC)) + timedelta(seconds=1)
+        await daily.enqueue_due(settings, now=now, session_factory=factory)
+        async with factory.begin() as session:
+            job = await session.scalar(select(AsyncJob))
+            assert job is not None
+            identity = job.job_id
+            job.status, job.attempt_no = "FAILED", 1
+            job.last_error_code = "FORECAST_DAILY_FAILED"
+            job.finished_at = now
+        assert not await daily.retry_failed_today(
+            settings, job_id=identity, expected_code="DIFFERENT", now=now, session_factory=factory
+        )
+        assert not await daily.retry_failed_today(
+            settings,
+            job_id=identity,
+            expected_code="FORECAST_DAILY_FAILED",
+            now=now + timedelta(days=1),
+            session_factory=factory,
+        )
+        assert await daily.retry_failed_today(
+            settings,
+            job_id=identity,
+            expected_code="FORECAST_DAILY_FAILED",
+            now=now,
+            session_factory=factory,
+        )
+        repository = JobRepository("synthetic-repaired-worker")
+        repository.session_factory = factory
+        job = await repository.claim_next(job_id=identity)
+        assert job is not None and job.attempt_no == 2
+        assert job.result is not None
+        legacy = job.result["attempts"][0]
+        assert legacy == {
+            "attempt": 1,
+            "stage": "unknown",
+            "outcome": "FAILED",
+            "error_code": "FORECAST_DAILY_FAILED",
+            "retry": False,
+            "finished_at": now.astimezone(UTC).isoformat(),
+        }
+        assert "exception_type" not in legacy and "diagnostic_id" not in legacy
+
+        async def generate(*_args: Any) -> dict[str, Any]:
+            return {"version_id": "synthetic-existing-version", "sequence": 2}
+
+        monkeypatch.setattr(daily, "_generate", generate)
+        result = await daily.execute_job(job, repository, settings)
+        assert result["outcome"] == "SUCCEEDED"
+        async with factory() as session:
+            actual = await session.get(AsyncJob, identity)
+            assert actual is not None and actual.status == "SUCCEEDED"
+            assert actual.result is not None
+            assert actual.result["attempts"][0] == legacy
+            assert actual.result["attempts"][1]["outcome"] == "SUCCEEDED"
+            assert actual.result["attempts"][1]["attempt"] == 2
+        assert not await daily.retry_failed_today(
+            settings,
+            job_id=identity,
+            expected_code="FORECAST_DAILY_FAILED",
+            now=now,
+            session_factory=factory,
+        )
+        async with factory() as session:
+            assert await session.scalar(select(func.count()).select_from(AsyncJob)) == 1

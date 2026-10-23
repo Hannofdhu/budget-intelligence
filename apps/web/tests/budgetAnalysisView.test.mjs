@@ -358,7 +358,7 @@ test("student and renewal charts keep recorded zero and exclude half-missing qua
   assert.doesNotMatch(html, /NaN|Infinity/);
   const shared = fs.readFileSync(new URL("../src/BudgetAnalysisView.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(shared, /key: "(?:current|carryout)"|当季业务确认收入|当季业务结转收入|递延至下季收入/);
-  assert.match(shared, /key: "renewal", label: "预算续班率", format: "rate"/);
+  assert.match(shared, /key: "renewal", label: "续班率", format: "rate"/);
 });
 
 test("FY27 student board displays all saved quarterly rates from the correct transition bases", { skip: !fs.existsSync(sourcePath) }, () => {
@@ -480,6 +480,33 @@ function analysisHarness(initialProps) {
 
 const activeTabText = tree => nodeText(elements(tree).find(node => node.props?.role === "tab" && node.props["aria-selected"]));
 const detailDataset = tree => elements(tree).find(node => node.props?.className === "ba-table ba-detail-table")?.props.exportData;
+
+test("detail rate headings and full-scope copy use business names without changing rate values or pivot semantics", async () => {
+  const browser = hookBrowser("baView=detail&bf_season=" + encodeURIComponent("春季"));
+  const facts = Array.from({ length: 30 }, (_, index) => fact({ id: `spring-${index}`, season: "春季",
+    renewal: index === 0 ? 0 : index === 1 ? null : .765, detailDiscount: index === 0 ? 0 : index === 1 ? null : .914 }));
+  const before = JSON.stringify(facts);
+  try {
+    const h = analysisHarness({ facts }), tree = h.render();
+    const table = elements(tree).find(node => node.props?.className === "ba-table ba-detail-table");
+    const headers = elements(table).filter(node => node.type === "thead").flatMap(node => elements(node).filter(e => e.type === "th").map(nodeText));
+    assert.deepEqual(headers.slice(-2), ["续班率", "折扣率"]);
+    const data = table.props.exportData;
+    assert.equal(data.columns.find(c => c.key === "renewal").label, "续班率");
+    assert.equal(data.columns.find(c => c.key === "detailDiscount").label, "折扣率");
+    assert.ok(data.columns.filter(c => c.key === "renewal" || c.key === "detailDiscount").every(c => c.format === "rate"));
+    assert.deepEqual(data.rows.map(row => [row.renewal, row.detailDiscount]), facts.map(row => [row.renewal, row.detailDiscount]));
+    const child = h.child(table);
+    elements(child).find(node => node.type === "table").props.ref({ rows: [], tHead: { rows: [] } });
+    await findButton(child, "一键复制").props.onClick();
+    const copied = browser.clipboard.at(-1).split("\n");
+    assert.equal(copied.length, 31, "copy still includes all filtered rows, not just the visible 25");
+    assert.ok(copied[0].includes("续班率")); assert.ok(copied[0].includes("折扣率"));
+    assert.doesNotMatch(copied[0], /预算续班率|明细折扣/);
+    assert.equal(JSON.stringify(facts), before);
+    h.dispose();
+  } finally { browser.restore(); }
+});
 
 test("a supplied saved-version export identity labels details and inherited board transfers without changing amounts or scope", () => {
   const browser = hookBrowser("baView=detail");

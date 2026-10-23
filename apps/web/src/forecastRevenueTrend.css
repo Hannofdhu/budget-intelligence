@@ -8,17 +8,27 @@
 .forecast-trend-context { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 24px; margin: 8px 0; }
 .forecast-trend-periods { display: flex; flex-wrap: wrap; gap: 4px; }
 .forecast-shell .forecast-trend-periods button { min-height: 36px; padding: 6px 12px; border-color: transparent; background: transparent; }
-.forecast-shell .forecast-trend-periods button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); border-color: var(--budget-accent); font-weight: 600; }
+.forecast-shell .forecast-revenue-trend .forecast-trend-periods button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); border-color: var(--budget-accent); font-weight: 600; }
+.forecast-trend-modes { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--budget-divider); border-radius: 8px; background: var(--budget-surface); }
+.forecast-shell .forecast-trend-modes button { min-height: 36px; padding: 6px 12px; border-color: transparent; background: transparent; white-space: nowrap; }
+.forecast-shell .forecast-revenue-trend .forecast-trend-modes button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); border-color: var(--budget-accent); font-weight: 600; }
 .forecast-trend-legend { display: flex; flex-wrap: wrap; gap: 12px 20px; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); }
 .forecast-trend-legend span { display: inline-flex; align-items: center; gap: 8px; }
 .forecast-trend-legend span::before { content: ""; width: 24px; border-top: 2px solid var(--trend-actual); }
 .forecast-trend-legend .is-forecast::before { border-top-color: var(--trend-forecast); border-top-style: dashed; }
-.forecast-trend-refresh { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); overflow-wrap: anywhere; }
+.forecast-trend-refresh { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); overflow-wrap: anywhere; }
 .forecast-trend-warning { color: var(--budget-warning); }
+.forecast-trend-failure > summary { cursor: pointer; color: var(--budget-accent); min-height: 36px; align-content: center; }
+.forecast-trend-failure[open] { flex-basis: 100%; }
+.forecast-trend-failure p { margin: 4px 0 8px; }
+.forecast-trend-failure dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0 0 8px; color: var(--budget-text-secondary); }
+.forecast-trend-failure :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
 .forecast-trend-chart-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.forecast-trend-window { margin: 4px 0 0; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .forecast-trend-plot { min-width: 0; height: 230px; margin-top: 8px; }
 .forecast-trend-plot svg { display: block; width: 100%; height: 100%; overflow: visible; touch-action: pan-y; }
 .forecast-trend-grid line { stroke: var(--budget-divider); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.forecast-trend-zero { stroke: var(--budget-control-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .forecast-trend-grid text, .forecast-trend-date { fill: var(--budget-text-secondary); font-family: var(--budget-font-family); font-size: var(--budget-caption-size); font-variant-numeric: tabular-nums; }
 .forecast-trend-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .forecast-trend-line.is-forecast { stroke: var(--trend-forecast); stroke-dasharray: 6 5; }
@@ -34,6 +44,7 @@
 .forecast-trend-point-values { display: flex; flex-wrap: wrap; gap: 16px 32px; }
 .forecast-trend-point-values > span { display: flex; flex-direction: column; gap: 4px; color: var(--budget-text-secondary); font-size: var(--budget-label-size); }
 .forecast-trend-point-values strong { color: var(--budget-text); font-size: 1.25rem; line-height: 1.4; font-weight: 600; font-variant-numeric: tabular-nums; }
+.forecast-trend-comparison { color: var(--budget-text); font-size: var(--budget-caption-size); line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .forecast-trend-point-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .forecast-trend-point-source > span { grid-column: 1; overflow-wrap: anywhere; }
 .forecast-trend-point-source > button { grid-column: 2; grid-row: 1 / span 2; }
@@ -47,7 +58,6 @@
 .forecast-trend-table-wrap { max-width: 100%; overflow: auto; isolation: isolate; border: 1px solid var(--budget-divider); border-radius: 8px; }
 .forecast-trend-table-wrap table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: var(--budget-body-size); line-height: 1.42858; }
 .forecast-trend-table-wrap th, .forecast-trend-table-wrap td { padding: 12px 16px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--budget-divider); font-variant-numeric: tabular-nums; }
-.forecast-trend-table-wrap :is(th, td):nth-child(3), .forecast-trend-table-wrap :is(th, td):nth-child(4) { text-align: right; }
 .forecast-trend-table-wrap thead th { color: var(--budget-text-secondary); background: var(--budget-table-header-surface, #edf2ee); font-weight: 600; }
 .forecast-trend-table-wrap td { min-height: 48px; }
 .forecast-revenue-trend :is(button, input, select, summary):focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
@@ -56,7 +66,7 @@
   .forecast-trend-point-source { margin-top: 4px; }
 }
 @media (max-width: 600px) {
-  .forecast-trend-context { align-items: flex-start; flex-direction: column; }
+  .forecast-trend-context { align-items: flex-start; }
   .forecast-trend-plot { overflow: hidden; }
   .forecast-trend-plot svg { min-height: 0; }
   .forecast-trend-date-control > span { flex-basis: 100%; }
@@ -64,5 +74,5 @@
   .forecast-trend-point-source { display: flex; align-items: flex-start; flex-direction: column; }
 }
 @media (pointer: coarse) {
-  .forecast-shell .forecast-revenue-trend :is(button, select), .forecast-shell .forecast-trend-date-control input[type="range"], .forecast-trend-data > summary { min-height: 44px; }
+  .forecast-shell .forecast-revenue-trend :is(button, select), .forecast-shell .forecast-trend-date-control input[type="range"], .forecast-trend-data > summary, .forecast-trend-failure > summary { min-height: 44px; }
 }

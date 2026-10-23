@@ -72,7 +72,7 @@ def test_manual_new_students_uses_the_existing_lock_engine_and_retains_reason() 
         calculate_plan(inputs)
 
 
-def test_plan_class_size_is_not_the_existing_minimum_class_constraint() -> None:
+def test_class_average_is_the_single_basis_and_legacy_plan_size_is_ignored() -> None:
     original = _plan_inputs()
     before = calculate_plan(original)
     inputs = deepcopy(original)
@@ -81,9 +81,76 @@ def test_plan_class_size_is_not_the_existing_minimum_class_constraint() -> None:
     assert result["annual"]["revenue_yuan"] == before["annual"]["revenue_yuan"]
     assert inputs["class_sizes"][0]["minimum"] == 5
     assert result["issues"] == before["issues"]
-    assert all(row["class_count"] == (row["total_students"] + 11) // 12 for row in result["rows"])
+    assert all(row["class_average"] == 5 for row in result["rows"])
+    assert all(row["class_count"] == (row["total_students"] + 4) // 5 for row in result["rows"])
     assert result["annual"]["class_count"] == sum(row["class_count"] for row in result["rows"])
-    assert before["annual"]["class_count"] is None
+    assert result == before
+    assert result["rule_versions"]["class_count"] == "class-average-ceiling-v1"
+
+
+@pytest.mark.parametrize(
+    ("students", "expected_classes", "expected_status"),
+    [
+        (0, 0, "NO_PLANNED_CLASS"),
+        (23, 1, "BELOW_MINIMUM_CLASS_SIZE"),
+        (24, 1, "PASS"),
+        (25, 2, "PASS"),
+        (48, 2, "PASS"),
+        (333, 14, "PASS"),
+    ],
+)
+def test_one_class_average_drives_ceiling_count_and_gate_without_filling_students(
+    students: int, expected_classes: int, expected_status: str
+) -> None:
+    inputs = _plan_inputs()
+    inputs["entry_total"] = students
+    inputs["class_sizes"][0].update(minimum=24, planned_class_size=30)
+    before = fingerprint(inputs)
+    calculation = calculate_plan(inputs)
+    row = next(
+        row
+        for row in calculation["rows"]
+        if row["combination_id"] == inputs["combinations"][0]["id"] and row["season"] == "暑假"
+    )
+    assert row["total_students"] == students
+    assert row["class_average"] == 24
+    assert row["class_count"] == expected_classes
+    assert row["class_size_status"] == expected_status
+    assert "planned_class_size" not in row
+    for season in SEASONS:
+        quarter = next(q for q in calculation["quarters"] if q["season"] == season)
+        assert quarter["class_count"] == sum(
+            r["class_count"] for r in calculation["rows"] if r["season"] == season
+        )
+    assert calculation["annual"]["class_count"] == sum(r["class_count"] for r in calculation["rows"])
+    assert fingerprint(inputs) == before
+
+
+def test_class_average_changes_only_class_calculation_not_people_or_revenue() -> None:
+    inputs = _plan_inputs()
+    before = calculate_plan(inputs)
+    inputs["class_sizes"][0]["minimum"] = 24
+    after = calculate_plan(inputs)
+    for field in ("revenue_yuan", "old_students", "new_students", "total_students"):
+        assert before["annual"][field] == after["annual"][field]
+    assert before["annual"]["class_count"] != after["annual"]["class_count"]
+
+
+def test_class_rule_upgrade_keeps_frozen_results_and_suppresses_cross_rule_class_delta() -> None:
+    after = calculate_plan(_plan_inputs())
+    before = deepcopy(after)
+    before["rule_versions"].pop("class_count")
+    before["annual"]["class_count"] = 12
+    frozen = fingerprint(before)
+    comparison = compare_calculations(before, after)
+    assert comparison["annual"]["delta"]["class_count"] is None
+    assert comparison["annual"]["delta"]["revenue_yuan"] == "0.000000"
+    assert all(
+        item["delta"]["class_count"] is None
+        for name in ("quarters", "tracks", "campuses", "rows")
+        for item in comparison[name]
+    )
+    assert fingerprint(before) == frozen
 
 
 def _add_scope(inputs: dict[str, Any]) -> str:
@@ -168,7 +235,7 @@ def test_impact_delta_reconciles_to_each_aggregate_and_changed_rows() -> None:
     before = calculate_plan(inputs)
     changed = deepcopy(inputs)
     changed["entry_total"] = 30
-    changed["class_sizes"][0]["planned_class_size"] = 12
+    changed["class_sizes"][0]["minimum"] = 12
     after = calculate_plan(changed)
     immutable = fingerprint((before, after))
     diff = compare_calculations(before, after)
@@ -176,7 +243,10 @@ def test_impact_delta_reconciles_to_each_aggregate_and_changed_rows() -> None:
     assert total == Decimal(after["annual"]["revenue_yuan"]) - Decimal(before["annual"]["revenue_yuan"])
     assert total == sum(Decimal(row["delta"]["revenue_yuan"]) for row in diff["quarters"])
     assert total == sum(Decimal(row["delta"]["revenue_yuan"]) for row in diff["rows"])
-    assert diff["annual"]["delta"]["class_count"] is None
+    assert (
+        diff["annual"]["delta"]["class_count"]
+        == after["annual"]["class_count"] - before["annual"]["class_count"]
+    )
     assert fingerprint((before, after)) == immutable
 
 

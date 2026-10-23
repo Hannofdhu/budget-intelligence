@@ -72,7 +72,6 @@ export function summarizeNextYearChanges(baseline: NextYearInputs, staged: NextY
     const before = classAt(baseline, row);
     if (!before) return;
     add(["class", index], before.minimum, row.minimum);
-    add(["class-size", index], before.planned_class_size, row.planned_class_size);
   });
   for (const row of staged.plans) {
     if (!baselineCombos.has(row.combination_id)) continue;

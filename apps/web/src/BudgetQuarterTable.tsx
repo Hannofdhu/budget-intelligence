@@ -66,15 +66,15 @@ export function BudgetQuarterTable({ facts, unit, fiscalYear, rowDimensions, met
         scrollClassName="ba-table-wrap" scrollRef={observeBudgetTableHeader} scrollLabel={`${tableLabel}，可横向滚动`}
         exportData={{ columns: exportColumns, rows: exportRows, filename: `FY${String(fiscalYear).slice(-2)}-${title}` }}>
         <thead>
-          <tr>{rowDimensions.map(dimension => <th key={dimension} scope="col" rowSpan={2} className={`ba-${dimension}-label`}>{dimensionLabels[dimension]}</th>)}{periods.map(period => <th key={period} scope="colgroup" colSpan={metrics.length}>{period}</th>)}</tr>
-          <tr>{periods.map(period => <Fragment key={period}>{metrics.map(metric => <th scope="col" key={metric.key} title={metric.key === "revenue" ? "已保存预算中的季度结转收入" : undefined}>{heading(metric)}</th>)}</Fragment>)}</tr>
+          <tr>{rowDimensions.map(dimension => <th key={dimension} scope="col" rowSpan={2} className={`ba-${dimension}-label budget-cell-text`}>{dimensionLabels[dimension]}</th>)}{periods.map(period => <th key={period} scope="colgroup" className="budget-cell-center" colSpan={metrics.length}>{period}</th>)}</tr>
+          <tr>{periods.map(period => <Fragment key={period}>{metrics.map(metric => <th scope="col" className="budget-cell-number" key={metric.key} title={metric.key === "revenue" ? "已保存预算中的季度结转收入" : undefined}>{heading(metric)}</th>)}</Fragment>)}</tr>
         </thead>
         <tbody>{rows.map(row => <tr key={row.key}>
-          {rowDimensions.map(dimension => <th key={dimension} scope="row" className={`ba-${dimension}-label`}>{onRowSelect
+          {rowDimensions.map(dimension => <th key={dimension} scope="row" className={`ba-${dimension}-label budget-cell-text`}>{onRowSelect
             ? <button type="button" className="ba-text-button" onClick={() => onRowSelect(row.path)}>{row.path[dimension]}</button> : row.path[dimension]}</th>)}
-          {periods.map(period => <Fragment key={period}>{metrics.map(metric => <td key={metric.key}>{cell(row.path, period, metric, valueFor(row.cells, row.total, period, metric.key))}</td>)}</Fragment>)}
+          {periods.map(period => <Fragment key={period}>{metrics.map(metric => <td className="budget-cell-number" key={metric.key}>{cell(row.path, period, metric, valueFor(row.cells, row.total, period, metric.key))}</td>)}</Fragment>)}
         </tr>)}</tbody>
-        <tfoot><tr><th scope="row" colSpan={rowDimensions.length} className={`ba-${rowDimensions[0]}-label`}>合计</th>{periods.map(period => <Fragment key={period}>{metrics.map(metric => <td key={metric.key}>{cell({}, period, metric, valueFor(pivot.columnTotals, pivot.totals, period, metric.key))}</td>)}</Fragment>)}</tr></tfoot>
+        <tfoot><tr><th scope="row" colSpan={rowDimensions.length} className={`ba-${rowDimensions[0]}-label budget-cell-text`}>合计</th>{periods.map(period => <Fragment key={period}>{metrics.map(metric => <td className="budget-cell-number" key={metric.key}>{cell({}, period, metric, valueFor(pivot.columnTotals, pivot.totals, period, metric.key))}</td>)}</Fragment>)}</tr></tfoot>
       </ActionTable> : <div className="ba-empty">当前范围没有招生预算</div>}
   </section>;
 }

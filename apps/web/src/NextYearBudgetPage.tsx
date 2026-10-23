@@ -20,7 +20,7 @@ import { ActionTable } from "./ActionTable";
 import { copyTableText } from "./tableTransfer";
 import { skuText } from "./budgetDisplay";
 import type { BudgetFact, BudgetFilters } from "./budgetAnalysisTypes";
-import { allocateNextYearTrackTargets, applyNextYearEdits, getNextYearBudget, nextYearEditKey, nextYearRowTotal, nextYearSeasons,
+import { allocateNextYearTrackTargets, applyNextYearEdits, getNextYearBudget, nextYearEditKey, nextYearRowTotal, nextYearSeasons, nextYearUsesClassAverage,
   prepareNextYearBudget, previewNextYearBasis, previewNextYearBudget, reviseNextYearBudget, getNextYearCatalog, getNextYearVersion, restoreNextYearVersion, balanceNextYearBudget, checkNextYearClassReadiness, proposeNextYearClassRepair,
   type NextYearBasisPreview, type NextYearCalculation, type NextYearEdits, type NextYearEnvelope, type NextYearInputs, type NextYearNumber, type NextYearRate, type NextYearFinance, type NextYearRow, type NextYearCatalog, type NextYearCombination, type NextYearClassReadiness, type NextYearClassReadinessRow, type NextYearClassRepairResult, type NextYearEditSummary, type NextYearEditItem } from "./nextYearApi";
 import "./nextYear.css";
@@ -28,7 +28,7 @@ import { summarizeNextYearChanges, undoNextYearChange, nextYearEditTask } from "
 import { applyNextYearClassRepairSelection, nextYearActionKey, nextYearBalanceActions, assertNextYearSelectionPreview, type NextYearSelectableAction } from "./nextYearSelection";
 import { readNextYearFilters, persistNextYearFilters, writeNextYearFilters, validateNextYearFilters } from "./nextYearFilters";
 
-export const nextYearTasks = ["定目标和SKU", "入口新生定多少", "续班率、新生占比", "学费、折扣、班额", "看结果 / 对目标"] as const;
+export const nextYearTasks = ["定目标和SKU", "入口新生定多少", "续班率、新生占比", "学费、折扣、班均", "看结果 / 对目标"] as const;
 export const nextYearTaskShortLabels = ["目标", "新生", "续班", "学费", "结果"] as const;
 export const nextYearTaskPrompts = ["全年要做多少钱？哪些校区、产品参与？", "哪些年级是入口？各校区分到多少新生？", "老生留几成？新生占多大比例？", "每人收多少学费？多少人成班？", "结转收入够不够目标？哪里有差额？"] as const;
 type Task = 1 | 2 | 3 | 4 | 5;
@@ -52,6 +52,12 @@ export function nextYearDraftExportContext(draft: NextYearEnvelope["draft"] | un
 }
 const readYear = () => { const value = Number(new URLSearchParams(location.search).get("year")); return Number.isInteger(value) && value >= 2028 && value <= 2100 ? value : 2028; };
 export const effectiveNextYearEntry = (row: NextYearCombination) => row.entry_override ?? row.entry;
+/** Read the displayed calculation, never infer allocations from editable input or weights. */
+export function nextYearAllocatedEntryStudents(calculation: NextYearCalculation, combinationId: string) {
+  if (calculation.entry_details) return calculation.entry_details.find(row => row.combination_id === combinationId)?.students ?? null;
+  const summer = calculation.rows.find(row => row.combination_id === combinationId && row.season === "暑假");
+  return summer?.entry ? summer.new_students : null;
+}
 const readTask = (): Task => { const number = Number(new URLSearchParams(location.search).get("nyTask")); return number >= 1 && number <= 5 && Number.isInteger(number) ? number as Task : 5; };
 const readVersion = () => new URLSearchParams(location.search).get("nyVersion") || null;
 const assertReadVersion = (value: NextYearEnvelope, id: string, year: number) => {
@@ -110,7 +116,7 @@ export function nextYearClassIssueRows(calculation: NextYearCalculation, inputs:
 const classTreatment = (row: NextYearClassReadinessRow, checked: boolean) => row.bound_proof?.unreachable ? "当前范围无法成班" : Number(row.carryover_yuan) > 0 ? "有结转须保留" : row.lock_reasons.length ? "含锁定项" : row.closure_allowed ? "可考虑停开" : row.seed_plan ? "需核对计划人数" : checked ? "需调整人次或参数" : "检查后查看处理方式";
 const classExportColumns: ExportColumn[] = [
   ...["code", "campus", "track", "product", "grade", "subject", "season"].map((key, index) => ({ key, label: ["问题", "校区", "赛道", "产品", "年级", "科目", "季度"][index] })),
-  ...["current_students", "old_students", "new_students", "minimum", "gap"].map((key, index) => ({ key, label: ["总人次", "老生人次", "新生人次", "最低成班人数", "缺口"][index], format: "count" as const })),
+  ...["current_students", "old_students", "new_students", "minimum", "gap"].map((key, index) => ({ key, label: ["总人次", "老生人次", "新生人次", "班均", "缺口"][index], format: "count" as const })),
   { key: "carryover_yuan", label: "期初结转（元）", format: "money" }, { key: "treatment", label: "可处理方式" }, { key: "proof", label: "可调范围检查" },
 ];
 
@@ -132,7 +138,7 @@ export function NextYearClassReadinessPanel({ rows, report, scope, onScopeChange
       <label>校区<FilterSelect aria-label="成班校区筛选" value={scope.campus} disabled={busy} onChange={campus => onScopeChange({ ...scope, campus })} options={[...new Set(rows.map(row => row.campus))].sort((a, b) => a.localeCompare(b, "zh-CN"))}/></label>
       <label>分组<select aria-label="成班分组" value={scope.group} disabled={busy} onChange={event => onScopeChange({ ...scope, group: event.target.value as ClassCheckScope["group"] })}><option value="code">按问题</option><option value="campus">按校区</option><option value="track">按赛道</option></select></label>
       {[scope.code, scope.season, scope.campus].some(hasFilter) && <button disabled={busy} onClick={() => onScopeChange({ ...emptyClassCheckScope, group: scope.group })}>清除筛选</button>}</div>
-      <PagedTable rows={ordered} label="成班问题明细" exportColumns={classExportColumns} exportRow={row => ({ ...row, code: classIssueLabel(row.code), season: row.season ?? "全年 · 四季均零", treatment: classTreatment(row, checked), proof: skuText(row.bound_proof?.message ?? "未检查") })} headers={["分组", "问题", ...skuIdentityHeaders, "季度", "总人次", "最低成班人数", "缺口", "期初结转（元）", "可处理方式"]} render={row => <><th>{groupName(row)}</th><td>{classIssueLabel(row.code)}</td>{skuIdentityCells(row)}<td>{row.season ?? "全年 · 四季均零"}</td><td>{format(row.current_students)}</td><td>{format(row.minimum)}</td><td>{format(row.gap)}</td><td>{format(row.carryover_yuan, 2)}</td><td><div className="ny-class-actions"><strong>{classTreatment(row, checked)}</strong>
+      <PagedTable rows={ordered} label="成班问题明细" exportColumns={classExportColumns} exportRow={row => ({ ...row, code: classIssueLabel(row.code), season: row.season ?? "全年 · 四季均零", treatment: classTreatment(row, checked), proof: skuText(row.bound_proof?.message ?? "未检查") })} headers={["分组", "问题", ...skuIdentityHeaders, "季度", "总人次", "班均", "缺口", "期初结转（元）", "可处理方式"]} render={row => <><th>{groupName(row)}</th><td>{classIssueLabel(row.code)}</td>{skuIdentityCells(row)}<td>{row.season ?? "全年 · 四季均零"}</td><td>{format(row.current_students)}</td><td>{format(row.minimum)}</td><td>{format(row.gap)}</td><td>{format(row.carryover_yuan, 2)}</td><td><div className="ny-class-actions"><strong>{classTreatment(row, checked)}</strong>
         <details><summary>查看说明与可调范围</summary>{row.bound_proof && <p>{skuText(row.bound_proof.message)}</p>}{row.actions.filter(action => !action.includes("经营目标")).map((action, index) => <p key={index}>{skuText(action)}</p>)}{row.lock_reasons.length > 0 && <p>已有用户锁定，不会自动修改</p>}{row.closure_allowed === false && Number(row.carryover_yuan) > 0 && <p>有期初结转，不能直接关闭</p>}{row.rate_parameters.map(parameter => <p key={parameter.rate_id}>{parameter.season}：续班率 {format(parameter.renewal.lower_bound_ppm / 10000, 2)}%—{format(parameter.renewal.upper_bound_ppm / 10000, 2)}%{parameter.renewal.locked ? "（已锁定）" : ""}；新生占比 {format(parameter.share.lower_bound_ppm / 10000, 2)}%—{format(parameter.share.upper_bound_ppm / 10000, 2)}%{parameter.share.locked ? "（已锁定）" : ""}</p>)}</details>
         {!readOnly && <div><button disabled={busy} onClick={() => onNavigate(row, "manual")}>{row.plan_locked || row.entry_locked ? "查看锁定人次" : "调整人次"}</button><button disabled={busy} onClick={() => onNavigate(row, "rates")}>{row.rate_locked ? "查看锁定参数" : "调整参数"}</button><button disabled={busy} onClick={() => onNavigate(row, "range")}>{row.closure_allowed ? "核对是否关闭" : "查看SKU"}</button></div>}</div></td></>}/>
     </>}
@@ -144,7 +150,7 @@ const repairFieldLabel = (field: string) => ({ entry_students: "入口人次", s
 const repairValue = (value: NextYearNumber, field: string) => `${format(field.endsWith("_ppm") ? forecastNumber(value) === null ? null : Number(value) / 10000 : value, field.endsWith("_ppm") ? 2 : 0)}${field.endsWith("_ppm") ? "%" : ""}`;
 const repairActionColumns: ExportColumn[] = [
   ...["campus", "track", "product", "grade", "subject", "season", "field_label"].map((key, index) => ({ key, label: ["校区", "赛道", "产品", "年级", "科目", "季度", "调整项"][index] })),
-  { key: "unit", label: "单位" }, { key: "before_value", label: "原计算值 / 参数值" }, { key: "after_value", label: "建议值" }, { key: "before_input", label: "原录入计划 / 入口人次", format: "count" }, { key: "before_total_students", label: "原总人次", format: "count" }, { key: "after_total_students", label: "建议总人次", format: "count" }, { key: "minimum", label: "最低成班人数", format: "count" }, { key: "stable_old_floor", label: "比例范围内老生下限", format: "count" }, { key: "stability_reserve_students", label: "调平预留人次", format: "count" }, { key: "reason", label: "原因" },
+  { key: "unit", label: "单位" }, { key: "before_value", label: "原计算值 / 参数值" }, { key: "after_value", label: "建议值" }, { key: "before_input", label: "原录入计划 / 入口人次", format: "count" }, { key: "before_total_students", label: "原总人次", format: "count" }, { key: "after_total_students", label: "建议总人次", format: "count" }, { key: "minimum", label: "班均", format: "count" }, { key: "stable_old_floor", label: "比例范围内老生下限", format: "count" }, { key: "stability_reserve_students", label: "调平预留人次", format: "count" }, { key: "reason", label: "原因" },
 ];
 
 export function NextYearClassRepairPanel({ result, originalInputs, busy, onApply, onCancel, beforeIdentity, afterIdentity }: { result: NextYearClassRepairResult; originalInputs?: NextYearInputs; busy: boolean; onApply: (keys?: Set<string>) => void; onCancel: () => void; beforeIdentity?: VersionExportContext; afterIdentity?: VersionExportContext }) {
@@ -152,7 +158,7 @@ export function NextYearClassRepairPanel({ result, originalInputs, busy, onApply
   const problems = [...result.lock_conflicts.map(row => ({ ...row, kind: "锁定冲突" })), ...result.unresolved.map(row => ({ ...row, kind: "尚待处理" })), ...(result.stability_unresolved ?? []).map(row => ({ ...row, kind: "预留范围提示" }))];
   return <section className="ny-class-proposal" aria-labelledby="ny-class-proposal-title"><div className="ny-section-heading"><div><h2 className="budget-section-title" id="ny-class-proposal-title" tabIndex={-1}>成班方案</h2><span>建议预览 · 未应用 · 未保存</span></div><button disabled={busy} onClick={onCancel}>取消方案</button></div>
     <div className="ny-proposal-outcome"><div><span>成班问题</span><strong>{format(result.issue_count.before)} <span>→</span> {format(result.issue_count.after)}</strong></div><p>{skuText(result.message)}</p></div>
-    <p className="ny-range-note">{classRepairConstraints.every(key => result.constraints[key] === true) ? "保留全部业务、入口总量、最低成班人数和已锁定项。" : "方案尚未满足全部保留条件，暂不能应用。"}新增人次是招生目标，不是实际招生。</p>
+    <p className="ny-range-note">{classRepairConstraints.every(key => result.constraints[key] === true) ? "保留全部业务、入口总量、班均和已锁定项。" : "方案尚未满足全部保留条件，暂不能应用。"}新增人次是招生目标，不是实际招生。</p>
     <div className="ny-class-check-summary"><span>入口重分配 <strong>{format(result.summary.entry_reallocated_students)}</strong></span><span>新生目标 <strong>{format(result.summary.new_target_count)} 项</strong></span><span>新增招生目标 <strong>{format(result.summary.additional_new_students)} 人次</strong>{result.summary.stability_reserve_students !== undefined && <small>含调平预留 {format(result.summary.stability_reserve_students)} 人次</small>}</span><span>边界调整 <strong>{format(result.summary.changed_rate_bound_count)} 项</strong></span></div>
     {result.adjustable_range_class_safe === false ? <p className="ny-range-note" role="status">当前已成班；锁定项无法保证整个可调范围内持续成班，后续调平仍逐项校验。</p> : result.stability_scope && <p className="ny-range-note">预留适用：入口分配不变、建议比例范围内。不保证任意经营目标可达。</p>}
     <ImpactComparison before={result.before_calculation} after={result.calculation} beforeIdentity={beforeIdentity} afterIdentity={afterIdentity}/>
@@ -170,7 +176,7 @@ export const nextYearExportColumns: ExportColumn[] = [
   { key: "price_yuan", label: "学费（元）", format: "money" }, { key: "discount", label: "明细折扣", format: "rate" },
   { key: "renewal", label: "续班率", format: "rate" }, { key: "share", label: "新生占比", format: "rate" },
   { key: "class_size_status", label: "开班状态" },
-  { key: "class_count", label: "班量", format: "count" }, { key: "planned_class_size", label: "计划班额", format: "count" },
+  { key: "class_count", label: "班量", format: "count" }, { key: "class_average", label: "班均（人/班）", format: "count" },
 ];
 export const nextYearExportRows = (rows: NextYearRow[]) => rows.map(row => ({ ...row,
   discount: row.discount_ppm === null ? null : row.discount_ppm / 1000000,
@@ -205,7 +211,7 @@ export function nextYearImpactRows(before: NextYearCalculation, after: NextYearC
     const delta = (field: "revenue_yuan" | "total_students" | "class_count") => { const a = first ? forecastNumber(first[field]) : 0, b = next ? forecastNumber(next[field]) : 0; return a === null || b === null ? null : b - a; };
     const identity = next ?? first!;
     return [{ key, name: textDimensions(identity), campus: identity.campus, track: identity.track, product: identity.product, grade: identity.grade, subject: identity.subject, season: identity.season, before: first?.revenue_yuan ?? 0, after: next?.revenue_yuan ?? 0,
-      revenue_delta: delta("revenue_yuan"), student_delta: delta("total_students"), class_delta: delta("class_count") }];
+      revenue_delta: delta("revenue_yuan"), student_delta: delta("total_students"), class_delta: before.rule_versions.class_count === after.rule_versions.class_count ? delta("class_count") : null }];
   });
 }
 
@@ -227,7 +233,8 @@ export function nextYearComparisonProvenance(beforeIdentity?: VersionExportConte
     filename: `${beforeIdentity ? versionFileStem(beforeIdentity) : "原结果身份未记录"}-对比-${afterIdentity ? versionFileStem(afterIdentity) : "新结果身份未记录"}-预算修改影响明细` };
 }
 function ImpactComparison({ before, after, beforeIdentity, afterIdentity }: { before: NextYearCalculation; after: NextYearCalculation; beforeIdentity?: VersionExportContext; afterIdentity?: VersionExportContext }) {
-  const rows = nextYearImpactRows(before, after), delta = (field: keyof typeof before.annual) => { const first = forecastNumber(before.annual[field]), next = forecastNumber(after.annual[field]); return first === null || next === null ? null : next - first; };
+  const sameClassRule = before.rule_versions.class_count === after.rule_versions.class_count;
+  const rows = nextYearImpactRows(before, after), delta = (field: keyof typeof before.annual) => { const first = forecastNumber(before.annual[field]), next = forecastNumber(after.annual[field]); return (field === "class_count" && !sameClassRule) || first === null || next === null ? null : next - first; };
   const sign = (value: number | null, isMoney = false) => value === null ? "—" : `${value > 0 ? "+" : ""}${isMoney ? money(value) : format(value)}`;
   const headers = [...skuIdentityHeaders, "季度", "原结转收入（万元）", "新结转收入（万元）", "结转收入变化（万元）", "人次变化", "班量变化"];
   const renderRow = (row: typeof rows[number]) => <>{skuIdentityCells(row)}<td>{row.season}</td><td>{money(row.before)}</td><td>{money(row.after)}</td><td>{sign(row.revenue_delta, true)}</td><td>{sign(row.student_delta)}</td><td>{sign(row.class_delta)}</td></>;
@@ -236,22 +243,47 @@ function ImpactComparison({ before, after, beforeIdentity, afterIdentity }: { be
   // Comparison exports own both identities; never inherit one saved version from the page.
   return <section className="ny-impact" data-budget-export-context=""><div className="ny-section-heading"><h2 className="budget-section-title">修改影响对比</h2><span>{rows.length} 条结果变化</span></div>
     <p className="ny-range-note">原结果：{identityText(beforeIdentity)} → 新结果：{identityText(afterIdentity)}</p>
+    {!sameClassRule && <p className="ny-range-note" role="status">班量计算口径发生变化，新结果按“人次÷班均，向上取整”计算；班量不直接计算跨口径增减，人次和收入仍按原口径比较。</p>}
     <div className="ny-impact-metrics"><div><span>结转收入变化（万元）</span><strong>{sign(delta("revenue_yuan"), true)}</strong><small>{money(before.annual.revenue_yuan)} → {money(after.annual.revenue_yuan)}</small></div>{([["old_students", "老生变化"], ["new_students", "新生变化"], ["total_students", "总人次变化"], ["class_count", "班量变化"]] as const).map(([field, label]) => <div key={field}><span>{label}</span><strong>{sign(delta(field))}</strong><small>{format(before.annual[field])} → {format(after.annual[field])}</small></div>)}</div>
-    <details><summary>查看变化明细</summary><PagedTable rows={rows} label="预算修改影响明细" filename={provenance.filename} headers={headers} exportColumns={[...headers.map((label, index) => ({ key: `c${index}`, label })), ...provenance.columns]} exportRow={row => ({ ...nextYearTableData([row], headers, renderRow)[0], ...provenance.values })} render={renderRow}/></details>
+    <details><summary>查看变化明细</summary><PagedTable rows={rows} label="预算修改影响明细" filename={provenance.filename} headers={headers} exportColumns={[...headers.map((label, index) => ({ key: `c${index}`, label })), ...provenance.columns, { key: "_comparison_class_rule", label: "班量对比口径" }]} exportRow={row => ({ ...nextYearTableData([row], headers, renderRow)[0], ...provenance.values, _comparison_class_rule: sameClassRule ? "同口径比较" : "口径变化，不直接比较班量增减" })} render={renderRow}/></details>
   </section>;
 }
 
+const parameterDimensions = ["campus", "track", "product", "grade", "season"] as const;
+const parameterPasteHeaders = ["校区", "赛道", "产品", "年级", "季度", "续班率（%）", "新生占比（%）"];
+export function nextYearParameterTemplate(rows: NextYearRate[]): string[][] {
+  return [[...parameterPasteHeaders], ...rows.map(row => [...parameterDimensions.map(key => row[key]), String(row.renewal_ppm / 10000), String(row.share_ppm / 10000)])];
+}
+
 export function parseNextYearParameterPaste(text: string, rows: NextYearRate[]): NextYearEdits {
-  const edits: NextYearEdits = {}, lines = text.trim().split(/\r?\n/).filter(line => line.trim());
+  // Do not trim the whole TSV: trailing tabs are intentionally blank parameter cells.
+  const edits: NextYearEdits = {}, lines = text.split(/\r?\n/).filter(line => line.trim());
   if (!lines.length) throw new Error("先粘贴参数");
-  const seen = new Set<string>();
+  const seen = new Set<string>(), byDimensions = new Map<string, NextYearRate[]>();
+  for (const row of rows) {
+    const key = JSON.stringify(parameterDimensions.map(dimension => row[dimension]));
+    byDimensions.set(key, [...(byDimensions.get(key) ?? []), row]);
+  }
+  // Previously copied three-column templates remain readable; new copies never expose IDs.
+  const legacy = lines[0].split("\t").length === 3;
+  const normalizeHeader = (value: string) => value.replace(/[（(][%％][）)]$/, "");
   for (const [index, line] of lines.entries()) {
-    const cells = line.split("\t").map(value => value.trim()), id = cells[0];
-    if (index === 0 && ["参数ID", "ID", "id"].includes(id)) continue;
-    if (cells.length !== 3) throw new Error(`第 ${index + 1} 行须为参数ID、续班率、新生占比三列`);
-    if (!rows.some(row => row.id === id)) throw new Error(`第 ${index + 1} 行参数不在当前筛选范围`);
-    if (seen.has(id)) throw new Error(`第 ${index + 1} 行参数ID重复`); seen.add(id);
-    for (const [column, field] of [[1, "renewal_ppm"], [2, "share_ppm"]] as const) if (cells[column] !== "") edits[nextYearEditKey("rates", id, field)] = cells[column].replace(/%$/, "");
+    const cells = line.split("\t").map(value => value.trim());
+    if (cells.length !== (legacy ? 3 : 7)) throw new Error(`第 ${index + 1} 行列数不正确；请使用新模板的七列，或原模板的三列`);
+    if (index === 0 && (legacy ? ["参数ID", "ID", "id"].includes(cells[0]) : cells[0] === "校区")) {
+      const headers = legacy ? [cells[0], "续班率", "新生占比"] : parameterPasteHeaders;
+      if (!cells.every((cell, column) => normalizeHeader(cell) === normalizeHeader(headers[column]))) throw new Error("表头或列顺序不正确，请重新复制粘贴模板，保留原有列顺序");
+      continue;
+    }
+    const matches = legacy ? rows.filter(row => row.id === cells[0]) : byDimensions.get(JSON.stringify(cells.slice(0, 5))) ?? [];
+    if (!matches.length) throw new Error(`第 ${index + 1} 行业务不在当前筛选范围，请核对校区、赛道、产品、年级和季度`);
+    if (matches.length !== 1) throw new Error(`第 ${index + 1} 行业务存在多条同维度参数，无法唯一匹配，未暂存本次粘贴`);
+    const id = matches[0].id;
+    if (seen.has(id)) throw new Error(`第 ${index + 1} 行业务重复，请每组业务只保留一行`); seen.add(id);
+    for (const [offset, field] of [[0, "renewal_ppm"], [1, "share_ppm"]] as const) {
+      const value = cells[(legacy ? 1 : 5) + offset];
+      if (value !== "") edits[nextYearEditKey("rates", id, field)] = value.replace(/[%％]$/, "");
+    }
   }
   if (!Object.keys(edits).length) throw new Error("没有可修改的参数");
   return edits;
@@ -315,7 +347,11 @@ export function NextYearSidePanel({ title, expanded, onClose, children, versionE
   title: string; expanded: boolean; onClose: () => void; children: ReactNode; versionExportContext?: VersionExportContext;
 }) {
   const titleRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => { if (expanded) titleRef.current?.focus({ preventScroll: true }); }, [expanded, title]);
+  useEffect(() => {
+    if (!expanded) return;
+    titleRef.current?.focus({ preventScroll: true });
+    if (typeof window !== "undefined" && window.matchMedia?.("(width < 1440px)").matches) titleRef.current?.scrollIntoView({ block: "start" });
+  }, [expanded, title]);
   if (!expanded) return null;
   return <aside className="ny-context-panel is-open" id="ny-context-panel" aria-labelledby="ny-context-title" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
     <div className="ny-context-heading"><h2 className="budget-section-title" id="ny-context-title" ref={titleRef} tabIndex={-1}>{title}</h2><button aria-label={`关闭${title}`} onClick={onClose}>关闭</button></div>
@@ -348,11 +384,14 @@ function nextYearTableCells(node: ReactNode): ReactNode[] {
 const nextYearNumericHeaders = new Set([
   "全年结转收入（元）", "原入口人次", "建议入口人次", "历史参考范围", "超出人次", "原值", "建议值", "调平预留人次",
   "总人次", "人次", "老生", "新生", "当前新生人次", "指定新生人次", "计划新生人次", "分配人次", "参考入口人次",
-  "最低成班人数", "缺口", "期初结转（元）", "指定入口人次", "已计算入口人次", "入口业务数", "指定人次", "计划班额", "班量",
+  "班均", "班均（人/班）", "历史班量基准（人/班）", "缺口", "期初结转（元）", "指定入口人次", "入口SKU数", "指定人次", "已分配人次", "班量",
   "学费（元）", "折扣（%）", "当季结转（%）", "续班率（%）", "新生占比（%）", "结转收入（元）",
   "续班率下限（%）", "续班率上限（%）", "新生占比下限（%）", "新生占比上限（%）",
   "原结转收入（万元）", "新结转收入（万元）", "结转收入变化（万元）", "人次变化", "班量变化",
 ]);
+const nextYearCenteredHeaders = new Set(["选择", "入口", "参与预算", "调平锁定"]);
+const nextYearColumnClass = (header: string) => nextYearNumericHeaders.has(header) ? "budget-cell-number"
+  : nextYearCenteredHeaders.has(header) ? "budget-cell-center" : "budget-cell-text";
 
 function PagedTable<T>({ rows, headers, render, label, filename, invalidPath, editPath, exportColumns, exportRow, section }: { rows: T[]; headers: string[]; render: (row: T, index: number) => ReactNode; label: string; filename?: string; invalidPath?: string; editPath?: (row: T, index: number) => (string | number)[]; exportColumns?: ExportColumn[]; exportRow?: (row: T) => Record<string, unknown>;
   section?: { id: string; title: string; actions?: ReactNode } }) {
@@ -364,13 +403,13 @@ function PagedTable<T>({ rows, headers, render, label, filename, invalidPath, ed
   const columns = exportColumns ?? headers.map((header, index) => ({ key: `c${index}`, label: header }));
   const values = exportRow ? filtered.map(({ row }) => exportRow(row)) : nextYearTableData(filtered.map(item => item.row), headers, (row, index) => render(row, filtered[index].index));
   const displayCells = (row: T, index: number) => nextYearTableCells(render(row, index)).map((cell, column) =>
-    isValidElement<{ className?: string }>(cell) && nextYearNumericHeaders.has(headers[column])
-      ? cloneElement(cell, { className: [cell.props.className, "budget-cell-number"].filter(Boolean).join(" ") }) : cell);
+    isValidElement<{ className?: string }>(cell)
+      ? cloneElement(cell, { className: [cell.props.className, nextYearColumnClass(headers[column])].filter(Boolean).join(" ") }) : cell);
   const search = <input aria-label={`筛选${label}`} value={query} placeholder="筛选明细" onChange={event => { setQuery(event.target.value); setPage(0); }}/>;
   const table = <ActionTable keyboardNavigation tableLabel={label} aria-label={`${label}明细表`}
     toolbarStart={<label><span>{section ? "筛选 SKU" : `筛选明细 · ${filtered.length.toLocaleString("zh-CN")} 条`}</span>{search}</label>} scrollClassName="budget-data-section__scroll"
     copyRows={[columns.map(column => column.label), ...values.map(row => columns.map(column => String(row[column.key] ?? "")))]} exportData={{ columns, rows: values, filename: filename ?? label }}>
-    <thead><tr>{headers.map((header, index) => <th key={`${header}-${index}`} scope="col" className={nextYearNumericHeaders.has(header) ? "budget-cell-number" : undefined}>{header}</th>)}</tr></thead><tbody>{filtered.slice(safePage * 25, safePage * 25 + 25).map(({ row, index }) => <tr key={index}>{displayCells(row, index)}</tr>)}</tbody>
+    <thead><tr>{headers.map((header, index) => <th key={`${header}-${index}`} scope="col" className={nextYearColumnClass(header)}>{header}</th>)}</tr></thead><tbody>{filtered.slice(safePage * 25, safePage * 25 + 25).map(({ row, index }) => <tr key={index}>{displayCells(row, index)}</tr>)}</tbody>
   </ActionTable>;
   const content = <>{table}
     {!filtered.length && <p className="ny-empty">当前范围没有明细</p>}<div className="budget-data-section__pagination"><button disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>上一页</button><span>{filtered.length ? safePage + 1 : 0} / {Math.ceil(filtered.length / 25)}</span><button disabled={(safePage + 1) * 25 >= filtered.length} onClick={() => setPage(safePage + 1)}>下一页</button></div>
@@ -508,8 +547,16 @@ export function NextYearBudgetPage() {
   const inputChanged = editSummary.totalCount > 0;
   const pendingBusiness = Object.entries(newBusiness).some(([key, value]) => value !== emptyNewBusiness[key as keyof typeof emptyNewBusiness]);
   const pendingTools = !historical && (pendingBusiness || Boolean(paste.trim()));
-  const unsaved = inputChanged || Boolean(reason.trim()) || pendingTools, canEdit = !historical && Boolean(identity?.roles.includes("DATA_MAINTAINER") || identity?.roles.includes("DEPARTMENT_BUDGET_OWNER"));
+  const classRuleUpgrade = !historical && Boolean(draft && !nextYearUsesClassAverage(draft.calculation));
+  const calculationChanged = inputChanged || classRuleUpgrade;
+  const unsaved = inputChanged || Boolean(reason.trim()) || pendingTools || (classRuleUpgrade && Boolean(preview)), canEdit = !historical && Boolean(identity?.roles.includes("DATA_MAINTAINER") || identity?.roles.includes("DEPARTMENT_BUDGET_OWNER"));
   const calculation = historical?.draft?.calculation ?? preview ?? draft?.calculation;
+  // Entry edits redistribute a shared total, so every coupled allocation must wait for a fresh preview.
+  const entryAllocationStale = !historical && !preview && editSummary.groups.some(group => group.items.some(item =>
+    item.category === "entry_total" || item.category === "entry_detail" || item.key.startsWith('["enabled",') || item.key.startsWith('["business",')));
+  const entryAllocationText = (value: NextYearNumber | undefined, affected = true) => entryAllocationStale && affected ? "待重算" : format(value);
+  const classResultStale = !historical && !preview && (classRuleUpgrade || entryAllocationStale || editSummary.groups.some(group => group.category === "class_size"));
+  const classResultText = (value: NextYearNumber | undefined) => classResultStale ? "待重算" : format(value);
   const shownDraft = historical?.draft ?? draft;
   const comparisonKey = `${identity?.userId}:${identity?.departmentId}:${fiscalYear}:${shownDraft?.parent_id ?? ""}`;
   const previousVersion = comparison?.key === comparisonKey ? comparison.envelope?.draft : undefined;
@@ -598,7 +645,7 @@ export function NextYearBudgetPage() {
   }
   async function run(mode: "prepare" | "preview" | "save", forecastId = selectedSourceId || data?.source?.id) {
     if (!identity || !canEdit || inFlight.current) return;
-    if (pendingTools) { changeTask(pendingBusiness ? 1 : 3); openTools(pendingBusiness ? "business" : "paste"); setError(pendingBusiness ? "还有新业务未加入预算，请先加入或清空表单" : "粘贴参数尚未暂存，请先校验暂存或清空"); return; }
+    if (pendingTools) { changeTask(pendingBusiness ? 1 : 3); openTools(pendingBusiness ? "business" : "paste"); setError(pendingBusiness ? "还有新业务未加入预算，请先加入或清空表单" : "分别设值的表格尚未应用，请先校验并应用或清空表格"); return; }
     if (mode === "prepare" && (!forecastId || unsaved)) return;
     if (mode === "prepare" && draft && (!currentBasisPreview || forecastId !== currentBasisPreview.source_id)) { setError("先预览基准变化，再确认生成新草稿"); return; }
     const prepared = mode === "prepare" ? null : inputs ? applyNextYearEdits(inputs, edits) : null;
@@ -614,7 +661,7 @@ export function NextYearBudgetPage() {
     try {
       if (mode === "prepare") { accept(await prepareNextYearBudget(identity, forecastId!, draft?.id ?? null, fiscalYear)); changeTask(5); setNotice(`${fy(fiscalYear)} 新草稿已生成，原版本已保留`); }
       else if (mode === "preview") { const result = await previewNextYearBudget(identity, draft!.id, prepared!.inputs!); setPreview(result.calculation); setSideExpanded(false); requestAnimationFrame(() => { if (typeof document !== "undefined") { const impact = document.getElementById("ny-impact-preview"); impact?.focus({ preventScroll: true }); impact?.scrollIntoView({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); } }); }
-      else { accept(await reviseNextYearBudget(identity, draft!.id, prepared!.inputs!, reason.trim() || (balanceMessage ? "采用自动调平建议" : "调整预算参数"))); setNotice("已保存为新版本"); }
+      else { accept(await reviseNextYearBudget(identity, draft!.id, prepared!.inputs!, reason.trim() || (balanceMessage ? "采用自动调平建议" : classRuleUpgrade ? "统一班均口径并重新计算班量" : "调整预算参数"))); setNotice("已保存为新版本"); }
     } catch (failure) { setError(failure instanceof Error ? failure.message : "操作未完成"); }
     finally { inFlight.current = false; setBusy(""); }
   }
@@ -646,8 +693,10 @@ export function NextYearBudgetPage() {
     } catch (failure) { setError(failure instanceof Error ? failure.message : "目标分配未完成"); }
   }
   async function download() {
+    if (entryAllocationStale) { setError("入口分配待重算，请先点击底部“查看影响”，更新结果后再导出。"); return; }
+    if (classResultStale) { setError("班量待按班均重算，请先点击“查看影响”，更新结果后再导出。"); return; }
     if (!calculation || exporting) return; setExporting(true); setError("");
-    try { const rows = calculation.rows.filter(row => matches(row, filters)), exported = withVersionExportContext({ columns: nextYearExportColumns, rows: nextYearExportRows(rows), filename: `${versionFileStem(versionExportContext)}-预算明细` }, versionExportContext); await downloadBudgetWorkbook(exported.columns, exported.rows, exported.filename); if (inputChanged && !preview && !historical) setNotice("已导出原已保存结果，未保存修改尚未计入。"); }
+    try { const rows = calculation.rows.filter(row => matches(row, filters)), columns = nextYearUsesClassAverage(calculation) ? nextYearExportColumns : nextYearExportColumns.map(column => column.key === "class_average" ? { ...column, key: "planned_class_size", label: "历史班量基准（人/班）" } : column), exported = withVersionExportContext({ columns, rows: nextYearExportRows(rows), filename: `${versionFileStem(versionExportContext)}-预算明细` }, versionExportContext); await downloadBudgetWorkbook(exported.columns, exported.rows, exported.filename); if (inputChanged && !preview && !historical) setNotice("已导出原已保存结果，未保存修改尚未计入。"); }
     catch (failure) { setError(failure instanceof Error ? failure.message : "导出失败"); } finally { setExporting(false); }
   }
   function stage(next: NextYearInputs, message: string, discard: (path: (string | number)[]) => boolean = () => false) { const remaining = Object.fromEntries(Object.entries(edits).filter(([key]) => { try { return !discard(JSON.parse(key)); } catch { return true; } })); const prepared = applyNextYearEdits(next, remaining); if (!prepared.inputs) { setFieldErrors(prepared.errors); setError(Object.values(prepared.errors)[0]); return; } setInputs(prepared.inputs); setEdits({}); setPreview(null); setFieldErrors({}); setError(""); setNotice(message); setBalanceMessage(""); setBalanceIssues([]); }
@@ -655,19 +704,25 @@ export function NextYearBudgetPage() {
     if (!inputs || !canEdit || busy) return false;
     const merged = { ...edits, ...next }, checked = applyNextYearEdits(inputs, merged);
     if (!checked.inputs) { setFieldErrors(checked.errors); setError(Object.values(checked.errors)[0]); return false; }
-    setEdits(merged); setPreview(null); setNotice(`已暂存 ${Object.keys(next).length} 项修改，预览后保存`); setError(""); return true;
+    setEdits(merged); setPreview(null); setFieldErrors({}); setNotice(`已暂存 ${Object.keys(next).length} 项修改，预览后保存`); setError(""); return true;
   }
   function bulkApply() {
     if (!inputs || !bulkValue.trim()) { setError("先填写批量修改值"); return; }
     const changes = Object.fromEntries(inputs.rates.filter(row => matches(row, filters) && nextYearRateUsage(inputs, row)[bulkField === "renewal_ppm" ? "renewal" : "share"]).map(row => [nextYearEditKey("rates", row.id, bulkField), bulkValue]));
     if (!Object.keys(changes).length) { setError("当前范围没有适用参数"); return; } stageEdits(changes);
   }
-  function pasteParameters() { try { if (inputs && stageEdits(parseNextYearParameterPaste(paste, inputs.rates.filter(row => matches(row, filters))))) setPaste(""); } catch (failure) { setError(failure instanceof Error ? failure.message : "粘贴失败"); } }
+  function pasteParameters() {
+    try {
+      if (inputs && stageEdits(parseNextYearParameterPaste(paste, inputs.rates.filter(row => matches(row, filters))))) {
+        setPaste(""); setNotice("表格修改已应用到改动清单，请在底部核对实际改动，预览后再保存");
+      }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "粘贴失败"); }
+  }
   async function copyParameters() {
     try { if (!inputs) return;
       const current = applyNextYearEdits(inputs, edits); if (!current.inputs) throw new Error(Object.values(current.errors)[0]);
       const rows = current.inputs.rates.filter(row => matches(row, filters));
-      await copyTableText([["参数ID", "续班率", "新生占比"], ...rows.map(row => [row.id, row.renewal_ppm / 10000, row.share_ppm / 10000])].map(row => row.map(String))); setNotice(`已复制 ${rows.length} 行，可在 Excel 编辑后粘贴回来`);
+      await copyTableText(nextYearParameterTemplate(rows)); setNotice(`已复制 ${rows.length} 行业务参数，仅编辑最后两列后粘贴回来`);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "复制失败"); }
   }
   function addBusiness() {
@@ -676,7 +731,9 @@ export function NextYearBudgetPage() {
     const dims = Object.fromEntries((["campus", "track", "product", "grade", "subject"] as const).map(key => [key, newBusiness[key].trim()])) as Pick<NextYearCombination, "campus" | "track" | "product" | "grade" | "subject">;
     const price = forecastNumber(newBusiness.price), size = forecastNumber(newBusiness.classSize);
     if (Object.values(dims).some(value => !value) || !newBusiness.reason.trim()) { setError("填写新业务的五个维度和新增原因"); return; }
-    if (price === null || price < 0 || price > 1000000000 || size === null || !Number.isInteger(size) || size < 1 || size > 10000) { setError("填写有效学费和计划班额"); return; }
+    if (price === null || price < 0 || price > 1000000000 || size === null || !Number.isInteger(size) || size < 1 || size > 10000) { setError("填写有效学费和班均"); return; }
+    const sharedClass = parsed.inputs.class_sizes.find(row => row.track === dims.track && row.product === dims.product);
+    if (sharedClass && sharedClass.minimum !== size) { setError(`该赛道、产品已共用班均 ${sharedClass.minimum} 人，请保持一致；如需修改，请到第4步调整班均。`); return; }
     if (inputs.combinations.some(row => Object.entries(dims).every(([key, value]) => row[key as keyof typeof dims] === value))) { setError("该业务组合已存在，请直接编辑"); return; }
     const id = `added-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`, next = parsed.inputs;
     next.combinations.push({ id, ...dims, entry: false, entry_override: false, enabled: true, source_entry_weight: 0,
@@ -690,10 +747,9 @@ export function NextYearBudgetPage() {
       next.plans.push({ combination_id: id, season, students: 0, locked: true, reason: newBusiness.reason.trim() });
     }
     const classSetting = next.class_sizes.find(row => row.track === dims.track && row.product === dims.product);
-    if (classSetting) classSetting.planned_class_size = size;
-    else next.class_sizes.push({ track: dims.track, product: dims.product, minimum: 1, planned_class_size: size });
+    if (!classSetting) next.class_sizes.push({ track: dims.track, product: dims.product, minimum: size });
     if (!Object.hasOwn(next.track_targets, dims.track)) next.track_targets[dims.track] = Object.values(next.track_targets).some(value => value !== null) ? "0" : null;
-    stage(next, `新业务已加入；${dims.product}共用计划班额 ${size} 人。填写入口或计划新生后预览`); setNewBusiness({ ...emptyNewBusiness }); setManualOpen(true);
+    stage(next, `新业务已加入；${dims.product}共用班均 ${size} 人。填写入口或计划新生后预览`); setNewBusiness({ ...emptyNewBusiness }); setManualOpen(true);
   }
   async function balance() {
     if (!identity || !inputs || !draft || !canEdit || inFlight.current) return;
@@ -819,6 +875,11 @@ export function NextYearBudgetPage() {
   const sourcePicker = canEdit && sourceOptions.length > 0 && <div className="ny-source-picker"><label className="ny-field"><span>编制基准预测</span><select aria-label="基准预测版本" value={selectedSourceId || selectedSource?.id || ""} disabled={Boolean(busy) || unsaved} onChange={event => { setSelectedSourceId(event.target.value); setBasisPreview(null); }}>{sourceOptions.map(item => <option key={item.id} value={item.id}>{nextYearForecastBasisLabel(item)} · 已确认 · 数据截至 {item.as_of} · {money(item.forecast_revenue)} 万元</option>)}</select></label>{draft && <button disabled={Boolean(busy) || unsaved || !selectedSource} onClick={() => void previewBasis()}>{busy === "basis-preview" ? "正在预览基准…" : "预览基准变化"}</button>}</div>;
   const scopeBar = (keys: Dimension[], count?: number, label = "当前SKU", selectLabelPrefix = "筛选", countLabel = "条 SKU") => <BudgetScopeBar filters={filters} dimensions={keys.map(key => ({ key, label: dimensionLabels[key], options: key === "season" ? [...nextYearSeasons] : [...new Set(combinations.map(row => row[key]))].sort((a, b) => dimensionSort(key, a, b)) }))} onChange={setFilters} label={label} count={count} countLabel={countLabel} disabled={Boolean(busy)} selectLabelPrefix={selectLabelPrefix}/>;
   const entryState = visibleInputs ? applyNextYearEdits(visibleInputs, edits).inputs ?? visibleInputs : null;
+  const entryGrades = [...new Set([
+    ...combinations.filter(row => row.enabled && effectiveNextYearEntry(row)).map(row => row.grade),
+    ...(entryAllocationStale ? calculation?.entry_details?.map(row => row.grade)
+      ?? calculation?.rows.filter(row => row.season === "暑假" && row.entry).map(row => row.grade) ?? [] : []),
+  ])].sort((a, b) => dimensionSort("grade", a, b));
   useEffect(() => {
     if (!focusPath || typeof document === "undefined") return;
     let cancelled = false;
@@ -922,14 +983,36 @@ export function NextYearBudgetPage() {
     setBalanceProposal(null); setSelectionReview(null); setNewBusiness({ ...emptyNewBusiness }); setPaste(""); setBulkValue("");
   }
   function openContext(tab: SideTab) { if (typeof document !== "undefined" && typeof HTMLElement !== "undefined" && document.activeElement instanceof HTMLElement) contextLauncher.current = document.activeElement; setVersionsOpen(false); setClassCheckOpen(false); setSideTab(tab); setSideExpanded(true); }
-  function closeContext() { setSideExpanded(false); if (contextLauncher.current?.isConnected) contextLauncher.current.focus({ preventScroll: true }); }
+  function closeContext() {
+    setSideExpanded(false);
+    if (!contextLauncher.current?.isConnected) return;
+    contextLauncher.current.focus({ preventScroll: true });
+    if (window.matchMedia?.("(width < 1440px)").matches) contextLauncher.current.scrollIntoView({ block: "center" });
+  }
   function openTools(mode: typeof toolMode) { setToolMode(mode); openContext("tools"); }
   const applicableRates = inputs?.rates.filter(row => matches(row, filters) && nextYearRateUsage(inputs, row)[bulkField === "renewal_ppm" ? "renewal" : "share"]).length ?? 0;
-  const toolTitle = { bulk: "批量修改", paste: "粘贴表格", bounds: "自动调平范围", plans: "计划新生", business: "新增校区 / 产品" }[toolMode];
+  const batchMode = toolMode === "bulk" || toolMode === "paste";
+  const toolTitle = { bulk: "批量修改", paste: "批量修改", bounds: "自动调平范围", plans: "计划新生", business: "新增校区 / 产品" }[toolMode];
   const toolsContent = sideExpanded && sideTab === "tools" && visibleInputs ? <div className="ny-tools-panel">
-    {toolMode === "business" && canEdit && <section className="ny-add-business"><div className="ny-form-grid">{(["campus", "track", "product", "grade", "subject", "price", "classSize", "reason"] as const).map(key => <label className="ny-field" key={key}><span>{{ campus: "校区", track: "赛道", product: "产品", grade: "年级", subject: "科目", price: "学费（元）", classSize: "产品计划班额（共用）", reason: "新增原因" }[key]}</span><input value={newBusiness[key]} disabled={Boolean(busy)} onChange={event => setNewBusiness({ ...newBusiness, [key]: event.target.value })}/></label>)}</div><button disabled={Boolean(busy)} onClick={addBusiness}>加入预算范围</button></section>}
-    {canEdit && toolMode === "bulk" && <section className="ny-bulk-panel"><p className="ny-tool-scope">当前筛选 · {applicableRates} 条适用参数</p><div className="ny-bulk-toolbar"><label>修改字段<select aria-label="批量修改字段" value={bulkField} disabled={Boolean(busy)} onChange={event => setBulkField(event.target.value)}><option value="renewal_ppm">续班率</option><option value="share_ppm">新生占比</option></select></label><label>设为（%）<input aria-label="批量修改比例" value={bulkValue} inputMode="decimal" disabled={Boolean(busy)} onChange={event => setBulkValue(event.target.value)}/></label><button disabled={Boolean(busy) || !bulkValue.trim() || !applicableRates} onClick={bulkApply}>应用到当前筛选</button></div></section>}
-    {canEdit && toolMode === "paste" && <section className="ny-paste-panel"><p className="ny-tool-scope">当前筛选 · {visibleInputs.rates.filter(row => matches(row, filters)).length} 条参数</p><button disabled={Boolean(busy)} onClick={() => void copyParameters()}>复制粘贴模板</button><label className="ny-field"><span>参数ID、续班率、新生占比（三列，Tab 分隔）</span><textarea aria-label="粘贴招生参数表格" rows={7} value={paste} disabled={Boolean(busy)} onChange={event => setPaste(event.target.value)}/></label><div className="ny-tool-entries"><button disabled={Boolean(busy) || !paste.trim()} onClick={pasteParameters}>校验并暂存</button>{paste && <button disabled={Boolean(busy)} onClick={() => setPaste("")}>清空粘贴</button>}</div></section>}
+    {toolMode === "business" && canEdit && <section className="ny-add-business"><div className="ny-form-grid">{(["campus", "track", "product", "grade", "subject", "price", "classSize", "reason"] as const).map(key => <label className="ny-field" key={key}><span>{{ campus: "校区", track: "赛道", product: "产品", grade: "年级", subject: "科目", price: "学费（元）", classSize: "班均（赛道、产品共用）", reason: "新增原因" }[key]}</span><input value={newBusiness[key]} disabled={Boolean(busy)} onChange={event => setNewBusiness({ ...newBusiness, [key]: event.target.value })}/></label>)}</div><button disabled={Boolean(busy)} onClick={addBusiness}>加入预算范围</button></section>}
+    {canEdit && batchMode && <>
+      <p className="ny-tool-scope">当前筛选 · {visibleInputs.rates.filter(row => matches(row, filters)).length} 条参数</p>
+      <div className="ny-tool-modes" role="group" aria-label="批量修改方式">
+        <button type="button" aria-pressed={toolMode === "bulk"} disabled={Boolean(busy)} onClick={() => setToolMode("bulk")}>统一设值</button>
+        <button type="button" aria-pressed={toolMode === "paste"} disabled={Boolean(busy)} onClick={() => setToolMode("paste")}>分别设值</button>
+      </div>
+    </>}
+    {canEdit && toolMode === "bulk" && <section className="ny-bulk-panel"><p>将所选字段统一设为一个值 · {applicableRates} 条适用参数</p><div className="ny-bulk-toolbar"><label>修改字段<select aria-label="批量修改字段" value={bulkField} disabled={Boolean(busy)} onChange={event => setBulkField(event.target.value)}><option value="renewal_ppm">续班率</option><option value="share_ppm">新生占比</option></select></label><label>设为（%）<input aria-label="批量修改比例" value={bulkValue} inputMode="decimal" disabled={Boolean(busy)} onChange={event => setBulkValue(event.target.value)}/></label><button disabled={Boolean(busy) || !bulkValue.trim() || !applicableRates} onClick={bulkApply}>应用到当前筛选</button></div></section>}
+    {canEdit && toolMode === "paste" && <section className="ny-paste-panel">
+      <p>在 Excel 中逐行填写不同数值，再粘贴回来。</p>
+      <div className="ny-tool-entries"><button disabled={Boolean(busy)} onClick={() => void copyParameters()}>复制编辑模板</button></div>
+      <p id="ny-paste-help">前五列为校区、赛道、产品、年级、季度，用于匹配业务，请勿修改。只编辑最后两列：续班率（%）、新生占比（%）；例如 8 表示 8%，留空保持不变。</p>
+      <p>每行适用于该组业务的全部科目。可调整行顺序，仅匹配当前筛选范围；校验通过后加入改动清单，不会直接保存预算。</p>
+      <label className="ny-field"><span>粘贴 Excel 表格（七列，可含表头）</span><textarea aria-label="粘贴招生参数表格" aria-describedby="ny-paste-help" rows={7} value={paste} disabled={Boolean(busy)} onChange={event => setPaste(event.target.value)}/></label>
+      {error && <p role="alert">{skuText(error)}</p>}
+      <div className="ny-tool-entries"><button disabled={Boolean(busy) || !paste.trim()} onClick={pasteParameters}>校验并应用</button>{paste && <button disabled={Boolean(busy)} onClick={() => setPaste("")}>清空表格</button>}</div>
+    </section>}
+    {canEdit && batchMode && <p className="ny-range-note">应用后统一进入改动清单，使用底部“查看影响”和“保存新版本”。切换方式不会自动应用，未提交内容会保留。</p>}
     {toolMode === "bounds" && <section className="ny-bounds"><h3 className="budget-subsection-title">自动调平范围</h3><p className="ny-range-note">未设范围：当前值 ±5 个百分点；留空恢复默认</p><PagedTable rows={visibleInputs.rates.filter(row => matches(row, filters))} label="自动调平参数范围" headers={["校区 / 业务", "季度", "续班率下限（%）", "续班率上限（%）", "新生占比下限（%）", "新生占比上限（%）"]} render={row => <><th>{textDimensions(row)}</th><td>{row.season}</td>{(["renewal_lower_ppm", "renewal_upper_ppm", "share_lower_ppm", "share_upper_ppm"] as const).map((key, index) => {
             const current = forecastNumber(edits[nextYearEditKey("rates", row.id, key.startsWith("share") ? "share_ppm" : "renewal_ppm")]) ?? row[key.startsWith("share") ? "share_ppm" : "renewal_ppm"] / 10000;
             const fallback = index % 2 ? Math.min(key.startsWith("share") ? 99.99 : 100, current + 5) : Math.max(0, current - 5);
@@ -973,9 +1056,10 @@ export function NextYearBudgetPage() {
     <FY27Header active="next-year" fiscalYear={fiscalYear} sourceVersion={shownDraft ? { id: shownDraft.id, label: `N${shownDraft.sequence}` } : null} onBeforeLeave={beforeLeave}><div className="decision-version"><span className="status-dot"/><span>草稿{historical ? " · 历史只读" : ""}</span>{shownDraft && <small>{versionLabel(shownDraft.sequence)}</small>}</div></FY27Header>
     <main className="decision-workspace" id="next-year-content">
       {draft && <NextYearTaskNavigation task={task} onChange={changeTask} fiscalYear={fiscalYear}/>}
-      <header className="ny-heading"><div><h1 className="budget-page-title" ref={heading} tabIndex={-1}>{draft ? nextYearTasks[task - 1] : budgetModuleName("next-year", fiscalYear)}</h1>{source && <span className="ny-source-label">编制基准：{nextYearForecastBasisLabel(source)}</span>}</div>{draft && <div className="ny-heading-actions"><button aria-expanded={classCheckOpen} disabled={Boolean(busy)} onClick={openProblems}>待处理{blockers.length > 0 && <span className="ny-problem-count">{blockers.length}</span>}{warnings.length > 0 && <small>提醒 {warnings.length}</small>}</button><button aria-expanded={versionsOpen} disabled={Boolean(busy)} onClick={openVersions}>版本记录{!historical && newerConfirmedSource && <span className="ny-version-dot" aria-label="有新的已确认预测可选"/>}</button><button disabled={Boolean(busy) || exporting || !calculation?.rows.length} onClick={() => void download()}>{exporting ? "正在导出…" : "导出明细"}</button></div>}</header>
+      <header className="ny-heading"><div><h1 className="budget-page-title" ref={heading} tabIndex={-1}>{draft ? nextYearTasks[task - 1] : budgetModuleName("next-year", fiscalYear)}</h1>{source && <span className="ny-source-label">编制基准：{nextYearForecastBasisLabel(source)}</span>}</div>{draft && <div className="ny-heading-actions"><button aria-expanded={classCheckOpen} disabled={Boolean(busy)} onClick={openProblems}>待处理{blockers.length > 0 && <span className="ny-problem-count">{blockers.length}</span>}{warnings.length > 0 && <small>提醒 {warnings.length}</small>}</button><button aria-expanded={versionsOpen} disabled={Boolean(busy)} onClick={openVersions}>版本记录{!historical && newerConfirmedSource && <span className="ny-version-dot" aria-label="有新的已确认预测可选"/>}</button><button disabled={Boolean(busy) || exporting || entryAllocationStale || classResultStale || !calculation?.rows.length} aria-describedby={entryAllocationStale ? "ny-entry-pending" : classResultStale ? "ny-class-pending" : undefined} onClick={() => void download()}>{exporting ? "正在导出…" : "导出明细"}</button></div>}</header>
       {historical?.draft && <div className="ny-history-banner"><strong>正在查看历史版本 · {versionLabel(historical.draft.sequence)} · 草稿 · 只读</strong><button disabled={Boolean(busy)} onClick={returnToCurrent}>返回当前版本</button></div>}
-      {shownDraft && calculation && <NextYearTopMetrics calculation={calculation} status={resultStatus} onSetTarget={() => changeTask(1)} compact={task !== 5}/>}
+      {classResultStale && task !== 4 && <p className="ny-range-note" id="ny-class-pending" role="status">班量待按班均重算；已保存的人次和收入未改变。{canEdit ? "请点击底部“查看影响”，预览后保存新版本。" : "请由预算维护人员重新计算。"}</p>}
+      {shownDraft && calculation && (entryAllocationStale ? <div id="ny-entry-pending" className="ny-message" role="status">入口设置已修改，分配及预算结果待重算。请点击底部“查看影响”，更新结果后再查看或导出预算结果。</div> : <NextYearTopMetrics calculation={calculation} status={resultStatus} onSetTarget={() => changeTask(1)} compact={task !== 5}/>)}
       {error && <div className="ny-message is-error" role="alert"><span>{skuText(error)}</span>{!data && <button disabled={Boolean(busy)} onClick={() => void load()}>重新读取</button>}<button aria-label="关闭错误" onClick={() => setError("")}>关闭</button></div>}
       {currentBalanceProposal && <section className="ny-class-proposal" aria-label="调平建议预览" {...budgetVersionExportAttributes(proposalExportContext)}><div className="ny-section-heading"><h2 className="budget-section-title">调平建议 · 未应用</h2><button disabled={Boolean(busy)} onClick={() => { setBalanceProposal(null); setSelectionReview(null); }}>取消建议</button></div><p>以下是全部建议的结果。取消任意项后，会重新检查所选组合。</p><ImpactComparison before={currentBalanceProposal.before} after={currentBalanceProposal.result.calculation} beforeIdentity={proposalBeforeIdentity} afterIdentity={proposalExportContext}/><NextYearActionSelection actions={currentBalanceProposal.actions} originalInputs={currentBalanceProposal.original} proposedInputs={currentBalanceProposal.result.proposed_inputs} busy={Boolean(busy)} ready onApply={keys => void applyBalanceSelection(keys)}/></section>}
       {selectionReview && currentBalanceProposal && <section aria-label="上次勾选检查结果"><h2 className="budget-section-title">上次勾选检查结果</h2><ImpactComparison before={currentBalanceProposal.before} after={selectionReview} beforeIdentity={proposalBeforeIdentity} afterIdentity={proposalExportContext}/></section>}
@@ -990,16 +1074,21 @@ export function NextYearBudgetPage() {
             section={{ id: "next-year-sku", title: "SKU", actions: canEdit && <button className="ny-tool-entry" disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "business"} aria-controls="ny-context-panel" onClick={() => openTools("business")}>新增校区 / 产品</button> }}
             headers={[...skuIdentityHeaders, "入口", "参与预算"]} render={row => <>{skuIdentityCells(row, row.added && <small>新业务</small>)}<td>{effectiveNextYearEntry(row) ? "是" : "否"}</td><td><label className="ny-checkbox-target"><input type="checkbox" aria-label={`${textDimensions(row)}参与预算`} checked={row.enabled} disabled={Boolean(busy) || !canEdit} onChange={event => { setInputs({ ...inputs, combinations: inputs.combinations.map(item => item.id === row.id ? { ...item, enabled: event.target.checked } : item) }); setPreview(null); setNotice(""); setBalanceIssues([]); }}/></label></td></>}/>
         </>}
-        {task === 2 && <BudgetDataSection id="ny-entry" title="入口新生分配" className="ny-section"><div className="ny-global-fields"><div className="ny-form-grid">{field(["entry"], visibleInputs.entry_total, "年度入口人次", false, undefined, "年度入口人次 · 全部业务")}</div></div>{scopeBar(["track", "campus", "product", "grade", "subject"], combinations.filter(row => matches(row, filters)).length)}<h3 className="budget-subsection-title">入口年级 · 当前SKU</h3><div className="ny-grade-picks">{[...new Set(combinations.filter(row => matches(row, filters)).map(row => row.grade))].sort((a, b) => dimensionSort("grade", a, b)).map(grade => { const rows = combinations.filter(row => row.grade === grade && matches(row, filters)), selected = rows.every(effectiveNextYearEntry); return <button key={grade} aria-pressed={selected} disabled={!canEdit || Boolean(busy)} onClick={() => stage({ ...inputs, combinations: inputs.combinations.map(row => row.grade === grade && matches(row, filters) ? { ...row, entry_override: !selected, ...(!selected ? {} : { entry_students: null, entry_locked: false }) } : row) }, `${grade}入口范围已调整`, path => selected && (path[0] === "entry-grade" && path[1] === grade || path[0] === "entry-count" && rows.some(row => row.id === path[1])))}>{grade}{selected ? " ✓" : ""}</button>; })}</div>
-          <h3 className="budget-subsection-title">年级入口人次 · 全部校区</h3><div className="ny-entry-status" role="status"><span>年度入口 {format(entryState?.entry_total)}</span><span>已指定 {format(specifiedEntry)}</span><span>{specifiedEntry > (entryState?.entry_total ?? 0) ? `超出 ${format(specifiedEntry - (entryState?.entry_total ?? 0))}，请减少指定人数` : automaticEntryCount ? `余下 ${format((entryState?.entry_total ?? 0) - specifiedEntry)} 自动分配` : specifiedEntry !== entryState?.entry_total ? "指定人数尚未等于年度入口" : "人数已分配完整"}</span>{inputChanged && !preview && <span>已计算列为上次结果，预览后更新</span>}</div>
-          <PagedTable rows={[...new Set(combinations.filter(row => row.enabled && effectiveNextYearEntry(row)).map(row => row.grade))].sort((a, b) => dimensionSort("grade", a, b))} label="年级入口分配" headers={["年级", "指定入口人次", "已计算入口人次", "入口业务数"]} render={grade => { const members = combinations.filter(row => row.enabled && effectiveNextYearEntry(row) && row.grade === grade), assigned = members.every(row => row.entry_students !== null && row.entry_students !== undefined) ? members.reduce((sum, row) => sum + (row.entry_students ?? 0), 0) : null;
+        {task === 2 && <><BudgetDataSection id="ny-entry" title="部门入口人次" description="部门全部业务、全部校区，不受下方SKU筛选影响。" className="ny-section"><div className="ny-global-fields"><div className="ny-form-grid">{field(["entry"], visibleInputs.entry_total, "年度入口人次", false, undefined, "年度入口人次 · 部门全部业务")}</div></div>
+          <h3 className="budget-subsection-title">按年级分配入口人次<small className="ny-entry-scope">全部校区</small></h3><div className="ny-entry-status" role="status"><span>年度入口 {format(entryState?.entry_total)}</span><span>已指定 {format(specifiedEntry)}</span><span>{specifiedEntry > (entryState?.entry_total ?? 0) ? `超出 ${format(specifiedEntry - (entryState?.entry_total ?? 0))}，请减少指定人数` : automaticEntryCount ? `余下 ${format((entryState?.entry_total ?? 0) - specifiedEntry)} ${entryAllocationStale ? "待自动分配" : "自动分配"}` : specifiedEntry !== entryState?.entry_total ? "指定人数尚未等于年度入口" : "人数已分配完整"}</span>{entryAllocationStale && <span>分配结果待重算，请点击“查看影响”</span>}</div>
+          <PagedTable rows={entryGrades} label="年级入口分配" headers={["年级", "指定入口人次", "已分配人次", "入口SKU数"]} render={grade => { const members = combinations.filter(row => row.enabled && effectiveNextYearEntry(row) && row.grade === grade), assigned = members.length && members.every(row => row.entry_students !== null && row.entry_students !== undefined) ? members.reduce((sum, row) => sum + (row.entry_students ?? 0), 0) : null;
             const calculated = calculation.entry_details ? calculation.entry_details.filter(row => row.grade === grade).reduce((sum, row) => sum + row.students, 0) : calculation.rows.filter(row => row.season === "暑假" && row.entry && row.grade === grade).reduce((sum, row) => sum + (row.new_students ?? 0), 0);
-            return <><th>{grade}</th><td>{field(["entry-grade", grade], assigned, `${grade}入口人次`, false, "自动分配")}</td><td>{format(calculated)}</td><td>{members.length}</td></>; }}/>
-          <details><summary>按具体业务调整</summary><PagedTable rows={combinations.filter(row => matches(row, filters))} label="入口分配明细" headers={[...skuIdentityHeaders, "入口", "指定人次", "分配方式"]} render={row => <>{skuIdentityCells(row)}<td><label className="ny-checkbox-target"><input type="checkbox" checked={effectiveNextYearEntry(row)} aria-label={`${textDimensions(row)}设为入口`} disabled={!canEdit || Boolean(busy)} onChange={event => stage({ ...inputs, combinations: inputs.combinations.map(item => item.id === row.id ? { ...item, entry_override: event.target.checked, ...(!event.target.checked ? { entry_students: null, entry_locked: false } : {}) } : item) }, "入口范围已调整", path => !event.target.checked && (path[0] === "entry-count" && path[1] === row.id || path[0] === "entry-grade" && path[1] === row.grade))}/></label></td><td>{effectiveNextYearEntry(row) ? field(["entry-count", row.id], row.entry_students ?? null, `${textDimensions(row)}入口人次（留空自动分配）`) : "—"}</td><td>{edits[nextYearEditKey("entry-count", row.id)]?.trim() || row.entry_locked ? "已锁定" : row.source_entry_weight ? "自动分配" : "需指定人次"}</td></>}/></details>
-          <h3 className="budget-subsection-title">校区入口 · 仅按校区</h3><PagedTable rows={calculation.entry_allocations.filter(row => matchesFilter(row.campus, filters.campus))} label="FY28 校区入口" headers={["校区", "分配人次", "参考入口人次"]} render={row => <><th>{row.campus}</th><td>{format(row.students)}</td><td>{format(row.source_weight)}</td></>}/><div className="ny-opening"><span>春季预测可续人次 <strong>{format(calculation.opening.eligible_students)}</strong></span><span>暑假期初老生 <strong>{format(calculation.opening.summer_old_students)}</strong></span></div></BudgetDataSection>}
+            return <><th>{grade}</th><td>{members.length ? field(["entry-grade", grade], assigned, `${grade}入口人次`, false, "自动分配") : "—"}</td><td>{entryAllocationText(calculated)}</td><td>{members.length}</td></>; }}/>
+          <div className="ny-opening"><span>春季预测可续人次 <strong>{format(calculation.opening.eligible_students)}</strong></span><span>暑假期初老生 <strong>{entryAllocationText(calculation.opening.summer_old_students)}</strong></span></div>
+        </BudgetDataSection>
+        <BudgetDataSection id="ny-entry-details" title="当前SKU明细" description="按当前筛选展示SKU入口设置与分配。筛选不影响上方部门总量和年级分配的展示范围。" className="ny-section">
+          {scopeBar(["track", "campus", "product", "grade", "subject"], combinations.filter(row => matches(row, filters)).length)}
+          <details><summary>SKU入口设置与分配<small className="ny-entry-scope">当前筛选</small></summary><p className="ny-range-note">已分配人次为暑假入口计算结果；入口修改后显示“待重算”，查看影响后更新。</p><PagedTable rows={combinations.filter(row => matches(row, filters))} label="入口分配明细" headers={[...skuIdentityHeaders, "入口", "指定人次", "已分配人次", "分配方式"]} render={row => { const allocated = nextYearAllocatedEntryStudents(calculation, row.id); return <>{skuIdentityCells(row)}<td><label className="ny-checkbox-target"><input type="checkbox" checked={effectiveNextYearEntry(row)} aria-label={`${textDimensions(row)}设为入口`} disabled={!canEdit || Boolean(busy)} onChange={event => stage({ ...inputs, combinations: inputs.combinations.map(item => item.id === row.id ? { ...item, entry_override: event.target.checked, ...(!event.target.checked ? { entry_students: null, entry_locked: false } : {}) } : item) }, "入口范围已调整", path => !event.target.checked && (path[0] === "entry-count" && path[1] === row.id || path[0] === "entry-grade" && path[1] === row.grade))}/></label></td><td>{effectiveNextYearEntry(row) ? field(["entry-count", row.id], row.entry_students ?? null, `${textDimensions(row)}入口人次（留空自动分配）`) : "—"}</td><td>{entryAllocationText(allocated, effectiveNextYearEntry(row) || allocated !== null)}</td><td>{edits[nextYearEditKey("entry-count", row.id)]?.trim() || row.entry_locked ? "已锁定" : row.source_entry_weight ? "自动分配" : "需指定人次"}</td></>; }}/></details>
+        </BudgetDataSection>
+        <BudgetDataSection id="ny-entry-campuses" title="按校区汇总入口人次" description="仅受校区筛选影响" className="ny-section"><PagedTable rows={calculation.entry_allocations.filter(row => matchesFilter(row.campus, filters.campus))} label="FY28 校区入口" headers={["校区", "分配人次", "参考入口人次"]} render={row => <><th>{row.campus}</th><td>{entryAllocationText(row.students)}</td><td>{entryAllocationText(row.source_weight)}</td></>}/></BudgetDataSection></>}
         {task === 3 && <BudgetDataSection id="ny-recruitment" title="招生参数" className="ny-section">{scopeBar(["season", "track", "campus", "product", "grade"], visibleInputs.rates.filter(row => matches(row, filters)).length, "当前SKU", "筛选", "条参数")}
           <div className="ny-quarter-toolbar"><NextYearQuarterLayoutSwitch label="招生参数阅读方式" value={rateLayout} onChange={setRateLayout} readOnly={!canEdit} busy={Boolean(busy)}/>
-          <div className="ny-tool-entries">{canEdit && <><button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "bulk"} aria-controls="ny-context-panel" onClick={() => openTools("bulk")}>批量修改</button><button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "paste"} aria-controls="ny-context-panel" onClick={() => openTools("paste")}>粘贴表格</button></>}<button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "bounds"} aria-controls="ny-context-panel" onClick={() => openTools("bounds")}>调平范围</button><button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "plans"} aria-controls="ny-context-panel" onClick={() => openTools("plans")}>计划新生</button></div>
+          <div className="ny-tool-entries">{canEdit && <button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && batchMode} aria-controls="ny-context-panel" onClick={() => openTools(toolMode === "paste" ? "paste" : "bulk")}>批量修改</button>}<button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "bounds"} aria-controls="ny-context-panel" onClick={() => openTools("bounds")}>调平范围</button><button disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "plans"} aria-controls="ny-context-panel" onClick={() => openTools("plans")}>计划新生</button></div>
           </div>{rateLayout === "quarters" && rateQuarterly}
           <div className="ny-quarter-editor" hidden={rateLayout !== "details"}><PagedTable rows={visibleInputs.rates.filter(row => matches(row, filters))} label={`${fy(fiscalYear)}招生参数`} invalidPath={invalidPath("rates")} editPath={row => ["rates", row.id]} headers={["校区 / 业务", "季度", "续班率（%）", "新生占比（%）", "调平锁定"]} render={row => { const usage = nextYearRateUsage(visibleInputs, row); return <><th>{textDimensions(row)}</th><td>{row.season}</td><td>{usage.renewal ? field(["rates", row.id, "renewal_ppm"], row.renewal_ppm, `${row.season} ${textDimensions(row)}续班率（%）`, true) : "—"}</td><td>{usage.share ? field(["rates", row.id, "share_ppm"], row.share_ppm, `${row.season} ${textDimensions(row)}新生占比（%）`, true) : "入口分配"}</td><td><label className="ny-checkbox-target"><input type="checkbox" aria-label={`${row.season}${textDimensions(row)}调平锁定`} checked={Boolean(row.locked)} disabled={!canEdit || Boolean(busy)} onChange={event => { setInputs({ ...inputs, rates: inputs.rates.map(item => item.id === row.id ? { ...item, locked: event.target.checked } : item) }); setPreview(null); setBalanceIssues([]); }}/></label></td></>; }}/></div>
 
@@ -1009,15 +1098,22 @@ export function NextYearBudgetPage() {
           <NextYearQuarterLayoutSwitch label="财务参数阅读方式" value={financeLayout} onChange={setFinanceLayout} readOnly={!canEdit} busy={Boolean(busy)}/>
           {financeLayout === "quarters" && financeQuarterly}
           <div className="ny-quarter-editor" hidden={financeLayout !== "details"}><PagedTable rows={visibleInputs.finance.filter(row => matches({ ...comboById.get(row.combination_id), season: row.season }, filters))} label="FY28 财务参数" invalidPath={invalidPath("finance")} editPath={row => ["finance", row.id]} headers={[...skuIdentityHeaders, "季度", "学费（元）", "折扣（%）", "当季结转（%）"]} render={row => { const combo = comboById.get(row.combination_id), title = textDimensions(combo ?? {}); return <>{combo ? skuIdentityCells(combo) : <><th>未对应 SKU</th><td>—</td></>}<td>{row.season}</td><td>{field(["finance", row.id, "price_yuan"], row.price_yuan, `${row.season} ${title}学费（元）`)}</td><td>{field(["finance", row.id, "discount_ppm"], row.discount_ppm, `${row.season} ${title}折扣（%）`, true)}</td><td>{field(["finance", row.id, "recognition_ppm"], row.recognition_ppm, `${row.season} ${title}当季结转（%）`, true)}</td></>; }}/></div>
-          <h3 className="budget-subsection-title">班量与班额 · 按赛道、产品</h3><PagedTable rows={visibleInputs.class_sizes.map((row, index) => ({ ...row, index })).filter(row => matches(row, filters))} label="班量参数" invalidPath={invalidPath("class")} editPath={row => ["class", row.index]} headers={["赛道 / 产品", "最低成班人数", "计划班额"]} render={row => <><th>{row.track} / {row.product}</th><td>{field(["class", row.index], row.minimum, `${row.track} ${row.product}最低成班人数`)}</td><td>{field(["class-size", row.index], row.planned_class_size ?? null, `${row.track} ${row.product}计划班额`)}</td></>}/><div aria-label="季度班量结果" {...budgetVersionExportAttributes(versionExportContext)}><h3 className="budget-subsection-title">季度班量</h3><PagedTable rows={calculation.rows.filter(row => matches(row, filters))} label="班量计算明细" headers={[...skuIdentityHeaders, "季度", "人次", "计划班额", "班量", "开班状态"]} render={row => <>{skuIdentityCells(row)}<td>{row.season}</td><td>{format(row.total_students)}</td><td>{format(row.planned_class_size)}</td><td>{format(row.class_count)}</td><td>{nextYearClassStatus(row.class_size_status)}</td></>}/></div></BudgetDataSection>}
-        {task === 5 && <>{Object.values(filters).some(hasFilter) && <NextYearOverview calculation={calculation} filters={filters} summaryOnly/>}<div className="ny-class-summary"><span>全年班量 · 全部业务 <strong>{format(calculation.annual.class_count)}</strong></span>{calculation.annual.class_count === null || calculation.annual.class_count === undefined ? <button onClick={() => changeTask(4)}>设置计划班额</button> : <button onClick={() => changeTask(4)}>查看班量</button>}</div><BudgetAnalysisView key={`${historical?.draft?.id ?? draft.id}-${preview ? "preview" : "saved"}`} facts={nextYearAnalysisFacts(calculation, preview && !historical ? visibleInputs : shownDraft?.inputs)} contextKey={`next-year:${historical?.draft?.id ?? draft.id}:${preview ? "preview" : "saved"}`} fiscalYear={fiscalYear} versionExportContext={versionExportContext} annualTarget={forecastNumber(calculation.annual.target_revenue_yuan)} controlledFilters={filters} onFiltersChange={setFilters} hideFilters hideSummary hideScopeSummary/></>}
+          <h3 className="budget-subsection-title">班均 · 按赛道、产品</h3>
+          <p className="ny-range-note">同一赛道、产品的全部校区、年级、科目和季度共用班均。预算班量＝人次÷班均，向上取整；大于0且低于班均时标记“未达班均”，0人次表示未计划开班。</p>
+          <PagedTable rows={visibleInputs.class_sizes.map((row, index) => ({ ...row, index })).filter(row => matches(row, filters))} label="班均参数" invalidPath={invalidPath("class")} editPath={row => ["class", row.index]} headers={["赛道 / 产品", "班均（人/班）"]} render={row => <><th>{row.track} / {row.product}</th><td>{field(["class", row.index], row.minimum, `${row.track} ${row.product}班均`)}</td></>}/>
+          <div aria-label="季度班量结果" {...budgetVersionExportAttributes(versionExportContext)}><h3 className="budget-subsection-title">季度班量</h3>
+            {classResultStale && <p className="ny-range-note" id="ny-class-pending" role="status">{classRuleUpgrade ? "班量口径已统一为班均，当前保存版本仍为旧口径。" : "班均或人次已修改。"}班量与开班状态待重算，{canEdit ? "请点击“查看影响”" : "请由预算维护人员重新计算"}；未保存前，原版本保持不变。</p>}
+            {historical && !nextYearUsesClassAverage(calculation) && <p className="ny-range-note">历史版本按当时的班量口径展示，原始结果未重新计算。</p>}
+            <PagedTable rows={calculation.rows.filter(row => matches(row, filters))} label="班量计算明细" headers={[...skuIdentityHeaders, "季度", "人次", historical && !nextYearUsesClassAverage(calculation) ? "历史班量基准（人/班）" : "班均（人/班）", "班量", "开班状态"]} render={row => <>{skuIdentityCells(row)}<td>{row.season}</td><td>{entryAllocationText(row.total_students)}</td><td>{classResultText(nextYearUsesClassAverage(calculation) ? row.class_average : row.planned_class_size)}</td><td>{classResultText(row.class_count)}</td><td>{classResultStale ? "待重算" : nextYearClassStatus(row.class_size_status)}</td></>}/>
+          </div></BudgetDataSection>}
+        {task === 5 && !entryAllocationStale && <>{Object.values(filters).some(hasFilter) && <NextYearOverview calculation={calculation} filters={filters} summaryOnly/>}<div className="ny-class-summary"><span>全年班量 · 全部业务 <strong>{classResultText(calculation.annual.class_count)}</strong></span><button onClick={() => changeTask(4)}>{classResultStale ? "查看班均并重算" : "查看班量"}</button></div><BudgetAnalysisView key={`${historical?.draft?.id ?? draft.id}-${preview ? "preview" : "saved"}`} facts={nextYearAnalysisFacts(calculation, preview && !historical ? visibleInputs : shownDraft?.inputs)} contextKey={`next-year:${historical?.draft?.id ?? draft.id}:${preview ? "preview" : "saved"}`} fiscalYear={fiscalYear} versionExportContext={versionExportContext} annualTarget={forecastNumber(calculation.annual.target_revenue_yuan)} controlledFilters={filters} onFiltersChange={setFilters} hideFilters hideSummary hideScopeSummary/></>}
         </div>
         {!historical && canEdit && <BudgetDataSection id="ny-adjustment" title="预算调节" className="ny-adjustment" {...budgetVersionExportAttributes(inputExportContext)} actions={<div className="ny-heading-actions"><button aria-expanded={manualOpen} disabled={Boolean(busy)} onClick={() => setManualOpen(!manualOpen)}>手动调节</button><button disabled={Boolean(busy)} onClick={() => void balance()}>{busy === "balance" ? "正在计算…" : "按经营目标自动调平"}</button></div>}>
-          {manualOpen && <>{scopeBar(["season", "track", "campus", "product", "grade", "subject"], manualRows.filter(row => matches(row, filters)).length, "手动调节范围", "手动调节筛选", "条明细")}<PagedTable rows={manualRows.filter(row => matches(row, filters))} label="预算手动调节明细" headers={[...skuIdentityHeaders, "季度", "当前新生人次", "指定新生人次", "锁定"]} render={row => { const plan = visibleInputs.plans.find(item => item.combination_id === row.combination_id && item.season === row.season), pending = edits[nextYearEditKey("manual", row.combination_id, row.season)] !== undefined; return <>{skuIdentityCells(row)}<td>{row.season}</td><td>{format(row.new_students)}</td><td>{field(["manual", row.combination_id, row.season], plan?.locked ? plan.students : null, `${row.season}${textDimensions(row)}指定新生人次`)}</td><td><label className="ny-checkbox-target"><input type="checkbox" checked={pending || Boolean(plan?.locked)} disabled={Boolean(busy)} aria-label={`${row.season}${textDimensions(row)}手动人数锁定`} onChange={event => { if (!event.target.checked) stage({ ...inputs, plans: inputs.plans.map(item => item.combination_id === row.combination_id && item.season === row.season ? { ...item, locked: false } : item) }, "已解除手动锁定", path => path[0] === "manual" && path[1] === row.combination_id && path[2] === row.season); else stageEdits({ [nextYearEditKey("manual", row.combination_id, row.season)]: String(row.new_students ?? 0) }); }}/></label></td></>; }}/></>}</BudgetDataSection>}
+          {manualOpen && <>{scopeBar(["season", "track", "campus", "product", "grade", "subject"], manualRows.filter(row => matches(row, filters)).length, "手动调节范围", "手动调节筛选", "条明细")}<PagedTable rows={manualRows.filter(row => matches(row, filters))} label="预算手动调节明细" headers={[...skuIdentityHeaders, "季度", "当前新生人次", "指定新生人次", "锁定"]} render={row => { const plan = visibleInputs.plans.find(item => item.combination_id === row.combination_id && item.season === row.season), pending = edits[nextYearEditKey("manual", row.combination_id, row.season)] !== undefined; return <>{skuIdentityCells(row)}<td>{row.season}</td><td>{entryAllocationText(row.new_students)}</td><td>{field(["manual", row.combination_id, row.season], plan?.locked ? plan.students : null, `${row.season}${textDimensions(row)}指定新生人次`)}</td><td><label className="ny-checkbox-target"><input type="checkbox" checked={pending || Boolean(plan?.locked)} disabled={Boolean(busy)} aria-label={`${row.season}${textDimensions(row)}手动人数锁定`} onChange={event => { if (!event.target.checked) stage({ ...inputs, plans: inputs.plans.map(item => item.combination_id === row.combination_id && item.season === row.season ? { ...item, locked: false } : item) }, "已解除手动锁定", path => path[0] === "manual" && path[1] === row.combination_id && path[2] === row.season); else stageEdits({ [nextYearEditKey("manual", row.combination_id, row.season)]: String(row.new_students ?? 0) }); }}/></label></td></>; }}/></>}</BudgetDataSection>}
         {preview && !historical && <div className="ny-impact-preview" id="ny-impact-preview" tabIndex={-1}><ImpactComparison before={draft.calculation} after={preview} beforeIdentity={nextYearDraftExportContext(draft, fiscalYear)} afterIdentity={proposalExportContext}/></div>}
         {historical?.draft && <ImpactComparison before={historical.draft.calculation} after={draft.calculation} beforeIdentity={nextYearDraftExportContext(historical.draft, fiscalYear)} afterIdentity={nextYearDraftExportContext(draft, fiscalYear)}/>}
-        <footer ref={actionBarRef} className="ny-action-bar" aria-label="预算保存操作"><div className="ny-action-status">{historical ? <span>历史版本 {versionLabel(historical.draft?.sequence)} · 草稿 · 只读</span> : <><button className={inputChanged ? "ny-edit-state" : ""} disabled={!inputChanged || Boolean(busy)} aria-expanded={sideExpanded && sideTab === "changes"} aria-controls="ny-context-panel" onClick={() => openContext("changes")}>改动 {editSummary.totalCount} 项</button>{pendingTools && <span>有内容待暂存</span>}{!unsaved && <span>{versionLabel(draft.sequence)} · 已保存 · 草稿</span>}{unsaved && <button disabled={Boolean(busy)} onClick={undoAllDiff}>放弃修改</button>}</>}</div>{canEdit && <div className="ny-action-buttons"><label className="ny-field"><span>调整备注（选填）</span><input value={reason} placeholder="调整备注（选填）" maxLength={1000} disabled={Boolean(busy)} onChange={event => setReason(event.target.value)}/></label><button disabled={Boolean(busy) || !inputChanged} onClick={() => void run("preview")}>{busy === "preview" ? "正在预览…" : "查看影响"}</button><button className="decision-primary" disabled={Boolean(busy) || !inputChanged} onClick={() => void run("save")}>{busy === "save" ? "正在保存…" : "保存新版本"}</button></div>}</footer>
-        <details className="ny-how"><summary>拆解怎么算</summary><dl><div><dt>入口</dt><dd>指定入口优先，其余按参考人次分配，合计保持不变</dd></div><div><dt>期初老生</dt><dd>{typeof source?.fiscal_year === "number" ? fy(source.fiscal_year) : "来源财年未记录"} 春季预测升年级续入暑假</dd></div><div><dt>后续季度</dt><dd>按续班率、新生占比推算；手动锁定的新生按指定值计算</dd></div><div><dt>班量</dt><dd>人次除以计划班额，向上取整；最低成班人数单独校验</dd></div><div><dt>结转收入</dt><dd>按学费、折扣、结转比例和税务系数计算</dd></div><div><dt>调平</dt><dd>保留锁定项，不改学费与折扣，不强行放宽调整范围</dd></div><div><dt>状态</dt><dd>{fy(fiscalYear)} 试算草稿，不发布定版</dd></div></dl>{[...new Set(visibleInputs.notes.map(note => note.message).filter((message): message is string => typeof message === "string" && Boolean(message)))].map(message => <p key={message}>{skuText(message)}</p>)}</details>
+        <footer ref={actionBarRef} className="ny-action-bar" aria-label="预算保存操作"><div className="ny-action-status">{historical ? <span>历史版本 {versionLabel(historical.draft?.sequence)} · 草稿 · 只读</span> : <><button className={inputChanged ? "ny-edit-state" : ""} disabled={!inputChanged || Boolean(busy)} aria-expanded={sideExpanded && sideTab === "changes"} aria-controls="ny-context-panel" onClick={() => openContext("changes")}>改动 {editSummary.totalCount} 项</button>{pendingTools && <span>有内容待暂存</span>}{classRuleUpgrade && <span>{preview ? "班均口径已预览，待保存" : "班量口径待更新"}</span>}{!unsaved && <span>{versionLabel(draft.sequence)} · 已保存 · 草稿</span>}{unsaved && <button disabled={Boolean(busy)} onClick={undoAllDiff}>放弃修改</button>}</>}</div>{canEdit && <div className="ny-action-buttons"><label className="ny-field"><span>调整备注（选填）</span><input value={reason} placeholder="调整备注（选填）" maxLength={1000} disabled={Boolean(busy)} onChange={event => setReason(event.target.value)}/></label><button disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("preview")}>{busy === "preview" ? "正在预览…" : "查看影响"}</button><button className="decision-primary" disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("save")}>{busy === "save" ? "正在保存…" : "保存新版本"}</button></div>}</footer>
+        <details className="ny-how"><summary>拆解怎么算</summary><dl><div><dt>入口</dt><dd>指定入口优先，其余按参考人次分配，合计保持不变</dd></div><div><dt>期初老生</dt><dd>{typeof source?.fiscal_year === "number" ? fy(source.fiscal_year) : "来源财年未记录"} 春季预测升年级续入暑假</dd></div><div><dt>后续季度</dt><dd>按续班率、新生占比推算；手动锁定的新生按指定值计算</dd></div><div><dt>班量</dt><dd>人次除以班均，向上取整；同一班均同时检查开班门槛，不自动补人</dd></div><div><dt>结转收入</dt><dd>按学费、折扣、结转比例和税务系数计算</dd></div><div><dt>调平</dt><dd>保留锁定项，不改学费与折扣，不强行放宽调整范围</dd></div><div><dt>状态</dt><dd>{fy(fiscalYear)} 试算草稿，不发布定版</dd></div></dl>{[...new Set(visibleInputs.notes.map(note => note.message).filter((message): message is string => typeof message === "string" && Boolean(message)))].map(message => <p key={message}>{skuText(message)}</p>)}</details>
       </>}
     </main>
     {versionsOpen && data && draft && shownDraft && <BudgetUtilityPanel open title="版本记录" busy={Boolean(busy)} onClose={() => setVersionsOpen(false)}>

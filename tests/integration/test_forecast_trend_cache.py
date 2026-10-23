@@ -76,6 +76,8 @@ async def test_hot_ranges_and_historical_cutoff_reuse_one_validated_projection(
 
         recent = await store.trend(department, baseline_hash=BASELINE_HASH, days="30")
         assert [point["sequence"] for point in recent["points"]] == [2]
+        assert recent["points"][0]["previous_version"]["version_id"] == first["version"]["id"]
+        assert recent["points"][0]["previous_version"]["periods"]["全年"]["forecast_revenue"] == "100.125"
         assert reads == [department]
         older_range = await store.trend(department, baseline_hash=BASELINE_HASH, days="90")
         assert [point["sequence"] for point in older_range["points"]] == [1, 2]
@@ -88,6 +90,7 @@ async def test_hot_ranges_and_historical_cutoff_reuse_one_validated_projection(
         assert [point["version_id"] for point in historical["points"]] == [first["version"]["id"]]
         assert historical["points"][0]["date"] == "2026-09-01"
         assert second["version"]["id"] not in str(historical)
+        assert historical["points"][0]["previous_version"] is None
         assert reads == [department], "changing only range/cutoff must not reread full BI snapshots"
 
 
@@ -130,6 +133,7 @@ async def test_new_versions_and_confirmation_events_invalidate_without_losing_ex
         before_new_trend = len(reads)  # Appending itself validates the ledger too.
         current = await store.trend(department, baseline_hash=BASELINE_HASH)
         assert current["points"][-1]["version_id"] == second["version"]["id"]
+        assert current["points"][-1]["previous_version"]["version_id"] == first["version"]["id"]
         assert current["points"][-1]["status"] == "DRAFT"
         assert len(reads) == before_new_trend + 1
         before_cutoff = len(reads)

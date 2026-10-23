@@ -92,3 +92,30 @@ async def test_daily_consumer_runs_while_general_job_is_waiting_for_io(
     async with asyncio.timeout(1):
         await worker.worker_loop(once=False)
     assert order == ["general-start", "daily", "general-end"]
+
+
+async def test_daily_job_acknowledgement_error_is_safe_and_never_logged_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from structlog.testing import capture_logs
+
+    job = SimpleNamespace(job_id="synthetic", job_type=JOB_TYPE, attempt_no=1)
+
+    class Repository:
+        async def claim_next(self, **_filters: Any) -> Any:
+            return job
+
+        async def mark_failed(self, *_args: Any) -> None:
+            raise AssertionError("uncertain acknowledgement must leave the recoverable lease untouched")
+
+    async def fail(*_args: Any) -> None:
+        raise SQLAlchemyError("raw SQL token=credential-secret")
+
+    monkeypatch.setattr(worker, "execute_daily_forecast_job", fail)
+    monkeypatch.setattr(worker, "get_settings", configured)
+    with capture_logs() as logs:
+        assert await worker.handle_one(Repository()) is True  # type: ignore[arg-type]
+    assert logs[-1]["event"] == "forecast_daily_acknowledgement_unavailable"
+    assert logs[-1]["exception_type"] == "SQLAlchemyError" and logs[-1]["outcome"] == "FAILED"
+    assert "credential-secret" not in repr(logs)
+    assert not any(entry["event"] in {"job_succeeded", "forecast_daily_attempt_finished"} for entry in logs)

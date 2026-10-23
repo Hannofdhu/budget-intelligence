@@ -84,6 +84,13 @@ async def test_trend_is_read_only_compact_exact_and_does_not_query_sources(
     assert "must-not-be-in-trend" not in str(result)
     assert "created_by" not in result["points"][0]
     assert "snapshot" not in result["points"][0]
+    assert result["points"][0]["previous_version"] is None
+    current_trend = await route.revenue_trend(request, actor, days="all")
+    previous = current_trend["points"][-1]["previous_version"]
+    assert previous["version_id"] == first["id"]
+    assert previous["sequence"] == first["sequence"]
+    assert "snapshot" not in previous
+    assert "must-not-be-in-trend" not in str(previous)
     assert ledger.current(actor.department_id)["version"]["id"] == latest["id"]
     assert ledger._events(actor.department_id) == before
 

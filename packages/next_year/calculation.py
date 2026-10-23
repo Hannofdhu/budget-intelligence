@@ -99,6 +99,7 @@ class ClassSize(StrictModel):
     track: StrictStr
     product: StrictStr
     minimum: StrictInt = Field(ge=1, le=10000)
+    # Retained only to read frozen legacy inputs; new calculations use minimum (班均).
     planned_class_size: StrictInt | None = Field(default=None, ge=1, le=10000)
 
 
@@ -857,9 +858,7 @@ def _calculate_plan(inputs: Json) -> Json:
     class_index = {
         (r.headcount.combination_stable_key, r.headcount.fiscal_season): r for r in class_sizes.rows
     }
-    planned_class_sizes = {
-        (r["track"], r["product"]): r.get("planned_class_size") for r in inputs["class_sizes"]
-    }
+    class_averages = {(r["track"], r["product"]): r["minimum"] for r in inputs["class_sizes"]}
     manual_locks = {(r["combination_id"], r["season"]) for r in inputs["plans"] if r.get("locked")}
     rows: list[Json] = []
     for row in revenue.rows:
@@ -868,10 +867,10 @@ def _calculate_plan(inputs: Json) -> Json:
         head = headcount_index[combo["id"], fiscal_season]
         season = SEASONS[fiscal_season % 10 - 1]
         rate = rates[season, combo["track"], combo["product"], combo["grade"], combo["campus"]]
-        planned_size = planned_class_sizes[combo["track"], combo["product"]]
+        class_average = class_averages[combo["track"], combo["product"]]
         class_count = (
-            (head.integer_total_students + planned_size - 1) // planned_size
-            if planned_size and head.integer_total_students is not None
+            (head.integer_total_students + class_average - 1) // class_average
+            if head.integer_total_students is not None
             else None
         )
         rows.append(
@@ -891,7 +890,7 @@ def _calculate_plan(inputs: Json) -> Json:
                 "renewal_ppm": rate["renewal_ppm"],
                 "share_ppm": head.realized_new_student_share_ppm,
                 "class_size_status": class_index[combo["id"], fiscal_season].status,
-                "planned_class_size": planned_size,
+                "class_average": class_average,
                 "class_count": class_count,
                 "manual_locked": (combo["id"], season) in manual_locks,
                 "planned_new_applied": (fiscal_season, combo["id"]) in planned,
@@ -976,6 +975,7 @@ def _calculate_plan(inputs: Json) -> Json:
             "opening": prepared.rule_version,
             "revenue": "phase1-revenue-v1",
             "class_size": "phase1-class-size-v1",
+            "class_count": "class-average-ceiling-v1",
             "target": "phase1-target-closure-v1",
         },
         "annual": annual,

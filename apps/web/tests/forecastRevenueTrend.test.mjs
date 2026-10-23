@@ -17,7 +17,7 @@ function load(react) {
   new Function("require", "module", "exports", compiled.outputFiles[0].text)(name => name === "react" && react ? react : require(name), module, module.exports);
   return module.exports;
 }
-const { ForecastRevenueTrendView, forecastTrendGeometry, forecastTrendTransfer } = load();
+const { ForecastRevenueTrendView, forecastTrendGeometry, forecastTrendTransfer, forecastTrendDifference, forecastTrendComparison } = load();
 const periods = ["全年", "暑假", "秋季", "寒假", "春季"];
 function point(date, sequence, overrides = {}) {
   return { date, sequence, version_id: `version-${sequence}`, status: "DRAFT", created_at: `${date}T01:30:00Z`, as_of: "2026-10-01", generation: "MANUAL",
@@ -53,6 +53,95 @@ test("trend reuses the current data section with explicit units, range, series d
   assert.match(html, /class="forecast-trend-line is-forecast"/); assert.match(html, /class="forecast-trend-line is-actual"/);
   assert.match(html, /type="range"/); assert.match(html, /aria-valuetext="2026-10-16，第3版，数据截至2026-10-01"/);
   assert.match(html, /数据截至 2026-10-01/); assert.match(html, /保存于 2026-10-16 09:30/);
+  assert.match(html, /aria-label="趋势显示方式"/); assert.match(html, /aria-pressed="true">看变化/);
+  assert.match(html, /较 2026-10-01 保存值增减/); assert.match(html, /各自保存值为基准/);
+});
+
+test("change geometry uses the first saved day of the current window and each series' own baseline", () => {
+  const fixture = data();
+  fixture.points[0].periods["全年"] = { forecast_revenue: "107244100", actual_revenue: "71799900", actual_status: "AVAILABLE" };
+  fixture.points[1].periods["全年"] = { forecast_revenue: "107142900", actual_revenue: "71672000", actual_status: "AVAILABLE" };
+  fixture.points[2].periods["全年"] = { forecast_revenue: "107300000", actual_revenue: "72000000", actual_status: "AVAILABLE" };
+  const source = JSON.stringify(fixture), geometry = forecastTrendGeometry(fixture.points, "全年", 900, "change");
+  assert.equal(geometry.valueAt(0, "forecast_revenue"), 0); assert.equal(geometry.valueAt(0, "actual_revenue"), 0);
+  assert.equal(geometry.valueAt(1, "forecast_revenue"), -10.12); assert.equal(geometry.valueAt(1, "actual_revenue"), -12.79);
+  assert.ok(geometry.min < -12.79); assert.ok(geometry.max > 20.01);
+  const total = forecastTrendGeometry(fixture.points, "全年", 900, "total");
+  assert.equal(total.min, 0); assert.equal(total.valueAt(1, "forecast_revenue"), 10714.29);
+  const narrowed = forecastTrendGeometry(fixture.points.slice(1), "全年", 900, "change");
+  assert.equal(narrowed.valueAt(0, "forecast_revenue"), 0); assert.equal(narrowed.valueAt(1, "forecast_revenue"), 15.71);
+  assert.equal(JSON.stringify(fixture), source);
+});
+
+test("change mode never invents a missing baseline, interpolate gaps, or substitute a later actual", () => {
+  const fixture = data(); fixture.points[0].periods["全年"].actual_revenue = null;
+  fixture.points[1].periods["全年"].forecast_revenue = null;
+  const geometry = forecastTrendGeometry(fixture.points, "全年", 240, "change");
+  assert.equal(geometry.series("actual_revenue"), ""); assert.equal(geometry.valueAt(2, "actual_revenue"), null);
+  assert.equal((geometry.series("forecast_revenue").match(/M/g) ?? []).length, 2);
+  assert.doesNotMatch(geometry.series("forecast_revenue"), /NaN|Infinity/); assert.ok(geometry.x(2) <= 240);
+  assert.match(render({ data: fixture }), /首个保存日未提供实际结转收入/);
+  fixture.points[0].periods["全年"].forecast_revenue = null;
+  const app = harness({ data: fixture }); let tree = app.render();
+  assert.equal(descendants(tree, node => node.type === "svg").length, 0);
+  assert.match(nodeText(tree), /首个保存日缺少基准值/);
+  descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
+  assert.equal(descendants(tree, node => node.type === "svg").length, 1, "available later observations remain reachable in total mode");
+});
+
+test("single and unchanged change-mode observations stay on zero with a non-degenerate axis", () => {
+  const fixture = data(); fixture.points = fixture.points.map(item => ({ ...item, periods: fixture.points[0].periods }));
+  for (const points of [fixture.points, fixture.points.slice(0, 1)]) {
+    const geometry = forecastTrendGeometry(points, "全年", 240, "change");
+    assert.equal(geometry.min, -1); assert.equal(geometry.max, 1);
+    assert.equal(geometry.y(0), (geometry.top + geometry.bottom) / 2);
+    assert.doesNotMatch(geometry.series("actual_revenue"), /NaN|Infinity/);
+    points.forEach((_, index) => assert.equal(geometry.valueAt(index, "actual_revenue"), 0));
+  }
+});
+
+test("display switching is local, preserves exact selection and never starts another read or save", () => {
+  const callbacks = [], fixture = data(), before = JSON.stringify(fixture);
+  const app = harness({ data: fixture, onVersion: () => callbacks.push("version"), onDays: () => callbacks.push("days"), onRetry: () => callbacks.push("retry") });
+  let tree = app.render(); descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.onChange({ target: { value: "1" } });
+  tree = app.render(); descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
+  assert.equal(descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props["aria-pressed"], true);
+  assert.match(nodeText(tree), /绝对金额，纵轴含 0/);
+  assert.equal(descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.value, 1);
+  descendants(tree, node => node.type === "button" && nodeText(node) === "看变化")[0].props.onClick(); tree = app.render();
+  assert.match(nodeText(tree), /较 2026-10-01 保存值增减/); assert.deepEqual(callbacks, []);
+  assert.equal(descendants(tree, node => node.type === "svg").length, 1); assert.equal(JSON.stringify(fixture), before);
+});
+
+test("selected amounts compare to the ledger's direct previous version, including an earlier same-day version", () => {
+  const fixture = data(), selected = fixture.points[2];
+  selected.sequence = 8; selected.version_id = "version-8";
+  selected.periods["全年"] = { forecast_revenue: "107142900.001", actual_revenue: "71672000", actual_status: "AVAILABLE" };
+  selected.previous_version = { version_id: "version-7-same-day", sequence: 7, created_at: "2026-10-16T01:00:00Z", as_of: "2026-10-14", periods: { ...selected.periods, "全年": { forecast_revenue: "107244100.004", actual_revenue: "71672000", actual_status: "AVAILABLE" } } };
+  assert.equal(forecastTrendDifference("107244100.004", "107142900.001"), 10.1200003);
+  assert.equal(forecastTrendComparison(selected, "全年", "forecast_revenue").delta, -10.1200003);
+  assert.equal(forecastTrendComparison(selected, "全年", "forecast_revenue").text, "比上版（第7版） 减少 10.12 万元");
+  assert.equal(forecastTrendComparison(selected, "全年", "actual_revenue").text, "比上版（第7版） 持平 0 万元");
+  const html = render({ data: fixture, versionId: "version-8" }); assert.match(html, /比上版（第7版） 减少 10.12 万元/); assert.doesNotMatch(html, /比上版（第2版）/);
+  const exported = forecastTrendTransfer(fixture, "全年");
+  assert.equal(exported.rows[2].previous_version_id, "version-7-same-day"); assert.equal(exported.rows[2].forecast_change, -10.1200003);
+  const tiny = { ...selected, periods: { ...selected.periods, "全年": { forecast_revenue: "107244100.005", actual_revenue: "71672000", actual_status: "AVAILABLE" } } };
+  assert.match(forecastTrendComparison(tiny, "全年", "forecast_revenue").text, /增加 不足 0.01 万元/);
+});
+
+test("first, omitted, incomplete and missing previous values stay distinct without daily-point fallback", () => {
+  const fixture = data(), selected = fixture.points[2]; selected.previous_version = null;
+  assert.match(forecastTrendComparison(selected, "全年", "forecast_revenue").text, /上版信息未提供/);
+  assert.equal(forecastTrendComparison({ ...selected, sequence: 1 }, "全年", "forecast_revenue").text, "首版，无上版");
+  delete selected.previous_version;
+  assert.match(forecastTrendComparison(selected, "全年", "forecast_revenue").text, /上版信息未提供/);
+  selected.previous_version = { version_id: "missing-periods", sequence: 2, created_at: "2026-10-16T01:00:00Z", as_of: "2026-10-01", periods: null };
+  assert.equal(forecastTrendComparison(selected, "全年", "forecast_revenue").delta, null);
+  assert.match(forecastTrendComparison(selected, "全年", "forecast_revenue").text, /数据未完整/);
+  selected.previous_version.periods = { ...selected.periods, "全年": { ...selected.periods["全年"], actual_revenue: null } };
+  assert.equal(forecastTrendComparison(selected, "全年", "forecast_revenue").delta, 0);
+  assert.equal(forecastTrendComparison(selected, "全年", "actual_revenue").delta, null);
+  assert.equal(forecastTrendDifference("0", null), null); assert.equal(forecastTrendDifference("-12.50", "-13.00"), .00005);
 });
 
 test("geometry preserves real date distances and signed values rather than evenly spacing absent days", () => {
@@ -142,8 +231,12 @@ test("empty, loading and failed reads never show invented zeros or claim data lo
 
 test("schedule failure uses actual backend state and error, without fabricating success or refreshing", () => {
   const config = defaults().schedule;
-  const html = render({ schedule: { ...config, last_run: { state: "FAILED", finished_at: "2026-10-16T01:30:00Z", error: { code: "UPSTREAM_TIMEOUT", message: "来源读取超时" } } } });
-  assert.match(html, /最近自动更新未完成，已保留上次预测/); assert.match(html, /来源读取超时/);
+  const html = render({ schedule: { ...config, last_run: { state: "FAILED", finished_at: "2026-10-16T01:30:00Z", error: { code: "UPSTREAM_TIMEOUT", message: "来源读取超时", stage: "SOURCE_QUERY", diagnostic_id: "diagnostic-1", exception_type: "TimeoutError" } } } });
+  assert.match(html, /自动更新失败，已保留上次预测/); assert.equal((html.match(/已保留上次预测/g) ?? []).length, 1);
+  assert.match(html, /<details class="forecast-trend-failure"><summary>查看原因/); assert.match(html, /来源读取超时/);
+  assert.match(html, /SOURCE_QUERY/); assert.match(html, /diagnostic-1/); assert.match(html, /TimeoutError/); assert.match(html, /错误代码/);
+  assert.doesNotMatch(html, /重试自动更新|重新执行/);
+  assert.match(render({ schedule: { ...config, last_run: { state: "RUNNING" } } }), /正在自动更新，当前显示上次预测/);
   assert.match(render({ schedule: null, scheduleError: true }), /自动更新时间暂未读取，已保存预测不受影响/);
   assert.match(render({ schedule: { ...config, last_success_at: null } }), /尚无自动更新成功记录/);
   assert.match(render({ schedule: { ...config, enabled: false } }), /自动更新未启用/);
@@ -154,11 +247,25 @@ test("collapsed trend data has copy and typed export for exactly the same period
   assert.match(html, /<details class="forecast-trend-data"><summary>/); assert.match(html, /一键复制/); assert.match(html, /导出趋势数据/);
   assert.equal(transfer.rows.length, 3); assert.equal(transfer.rows[0].period, "秋季"); assert.equal(transfer.rows[0].forecast_revenue, 120.0001);
   assert.equal(transfer.rows[0].version_id, "version-1"); assert.equal(transfer.rows[0].as_of, "2026-10-01"); assert.equal(transfer.rows[0].created_at, "2026-10-01 09:30");
-  const copied = tableCopyRows(transfer.columns, transfer.rows); assert.equal(copied.length, 4); assert.equal(copied[0].length, 11); assert.equal(copied[1][2], "120.0001");
+  const copied = tableCopyRows(transfer.columns, transfer.rows); assert.equal(copied.length, 4); assert.equal(copied[0].length, 17); assert.equal(copied[1][2], "120.0001");
   const workbook = await budgetWorkbook(transfer.columns, transfer.rows, "趋势数据");
-  assert.equal(workbook.worksheets[0].rowCount, 4); assert.equal(workbook.worksheets[0].columnCount, 11);
+  assert.equal(workbook.worksheets[0].rowCount, 4); assert.equal(workbook.worksheets[0].columnCount, 17);
   assert.equal(workbook.worksheets[0].getCell("C2").value, 120.0001); assert.equal(workbook.worksheets[0].getCell("D2").value, 30.0001);
   assert.equal(JSON.stringify(fixture), original);
+});
+
+test("queued retries remain visible as unfinished while first queueing and active retries have distinct states", () => {
+  const config = defaults().schedule, lastError = { code: "SOURCE_TIMEOUT", message: "来源读取超时", diagnostic_id: "retry-diagnostic" };
+  let html = render({ schedule: { ...config, last_run: { state: "QUEUED", error: lastError } } });
+  assert.match(html, /本次自动更新未完成，等待重试，当前保留上次预测/);
+  assert.match(html, /forecast-trend-warning/); assert.match(html, /<details class="forecast-trend-failure"><summary>查看原因/); assert.match(html, /retry-diagnostic/);
+  assert.doesNotMatch(html, /自动更新失败，已保留/);
+  html = render({ schedule: { ...config, last_run: { state: "QUEUED", error: null } } });
+  assert.match(html, /等待自动更新/); assert.doesNotMatch(html, /forecast-trend-failure|forecast-trend-warning|未完成，等待重试/);
+  html = render({ schedule: { ...config, last_run: { state: "RUNNING", error: lastError } } });
+  assert.match(html, /正在重试，保留上次预测/); assert.doesNotMatch(html, /forecast-trend-failure|forecast-trend-warning|自动更新失败|等待重试/);
+  html = render({ schedule: { ...config, last_run: { state: "RUNNING", error: null } } });
+  assert.match(html, /正在自动更新，当前显示上次预测/); assert.doesNotMatch(html, /正在重试/);
 });
 
 test("trend and schedule requests are authenticated GETs, encode exact version, pass cancellation, and never call refresh", async () => {

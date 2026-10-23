@@ -45,7 +45,8 @@ test("only the fixed save bar submits preview and revise; geometry follows measu
   assert.ok(footer); assert.equal((source.match(/className="ny-action-bar"/g) ?? []).length, 1);
   assert.equal((source.match(/onClick=\{\(\) => void run\("save"\)\}/g) ?? []).length, 1);
   assert.equal((source.match(/onClick=\{\(\) => void run\("preview"\)\}/g) ?? []).length, 1);
-  assert.match(footer, /disabled=\{Boolean\(busy\) \|\| !inputChanged\}/);
+  assert.match(footer, /disabled=\{Boolean\(busy\) \|\| !calculationChanged\}/);
+  assert.match(source, /const calculationChanged = inputChanged \|\| classRuleUpgrade/);
   assert.match(footer, /\{canEdit &&/); assert.match(footer, /历史版本/);
   assert.match(source, /Math\.ceil\(bar\.getBoundingClientRect\(\)\.height\)/);
   assert.match(source, /observer\?\.observe\(bar\)/); assert.match(source, /observer\?\.disconnect\(\)/);
@@ -60,6 +61,7 @@ test("fixed action bar resets inherited form spacing and reserves its measured h
   assert.match(css, /\.next-year-shell \.ny-action-bar button \{ margin: 0; \}/);
   assert.match(css, /\.next-year-shell \.ny-action-bar \.ny-field input \{ margin: 0; min-height: 36px;/);
   assert.match(css, /padding-bottom: calc\(var\(--ny-action-bar-height\) \+ 32px\)/);
-  assert.match(css, /bottom: calc\(var\(--ny-action-bar-height\) \+ 8px\)/);
+  const tools = fs.readFileSync(new URL("../src/budgetUtility.css", import.meta.url), "utf8");
+  assert.match(tools, /--budget-tool-bottom: calc\(var\(--ny-action-bar-height, var\(--forecast-action-height, 112px\)\) \+ 12px\)/);
   assert.doesNotMatch(css, /:has\(\.ny-side-panel\)/);
 });

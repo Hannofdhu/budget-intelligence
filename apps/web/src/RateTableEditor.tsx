@@ -75,10 +75,10 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <button type="button" disabled={disabled || (!batchCurrent && !batchLower && !batchUpper)} onClick={applyBatch}>应用到选中项</button>
     </section>}
     <ActionTable className="rate-table" tableLabel="比例参数" aria-label="比例参数明细表" toolbarStart={toolbar} scrollClassName="rate-table-wrap" scrollLabel="比例参数明细表，可横向滚动"><thead><tr>
-      <th><input type="checkbox" aria-label="选择当前筛选结果" checked={allVisibleSelected} onChange={() => setSelected(current => { const next = new Set(current); for (const row of filtered) allVisibleSelected ? next.delete(row.key) : next.add(row.key); return next; })} /></th>
+      <th scope="col" className="budget-cell-center"><input type="checkbox" aria-label="选择当前筛选结果" checked={allVisibleSelected} onChange={() => setSelected(current => { const next = new Set(current); for (const row of filtered) allVisibleSelected ? next.delete(row.key) : next.add(row.key); return next; })} /></th>
       <th scope="col">季节</th><th scope="col">校区与业务</th><th scope="col">年级</th><th scope="col">指标</th><th scope="col" className="budget-cell-number">历史参考</th><th scope="col" className="budget-cell-number">当前值</th><th scope="col" className="budget-cell-number">允许范围</th><th scope="col">调整依据</th><th scope="col">状态</th>
     </tr></thead><tbody>{filtered.map(({ item, index, key, meta }) => <tr key={key}>
-      <td><input type="checkbox" aria-label={`选择${meta.quarter_name ?? "该"}比例`} checked={selected.has(key)} onChange={() => setSelected(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; })} /></td>
+      <td className="budget-cell-center"><input type="checkbox" aria-label={`选择${meta.quarter_name ?? "该"}比例`} checked={selected.has(key)} onChange={() => setSelected(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; })} /></td>
       <td><strong>{String(meta.quarter_name ?? meta.target_fiscal_season ?? "—")}</strong><small>FY{String(meta.fiscal_year ?? "").slice(-2)}</small></td>
       <td><strong>{String(meta.campus ?? "—")}</strong><small>{[meta.track, meta.product].filter(Boolean).join(" · ")}</small></td>
       <td>{String(meta.grade ?? "—")}</td><td>{meanings[String(meta.rate_type)] ?? String(meta.rate_type ?? "—")}</td>
