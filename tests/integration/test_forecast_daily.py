@@ -5,8 +5,8 @@ No existing budget, archive, forecast or worker job is changed; no BI is queried
 
 import asyncio
 import os
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Any, Self, cast
 
 import pytest
 from sqlalchemy import Table, func, select, update
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from apps.api.routes import forecast as route
 from packages.forecast import daily, refresh_lock
 from packages.forecast.store import fingerprint
+from packages.persistence import jobs
 from packages.persistence.jobs import JobRepository
 from packages.persistence.models import AsyncJob
 from packages.source_snapshot.adapter import SourceAdapterError
@@ -25,6 +26,22 @@ from tests.unit.test_forecast_daily import configured
 pytestmark = pytest.mark.skipif(
     os.getenv("BUDGET_RUN_DB_TESTS") != "1", reason="requires isolated PostgreSQL"
 )
+
+
+@pytest.fixture
+def scheduled_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    # Enqueue, claim and execute must share one clock, including when CI runs
+    # before 09:30 Shanghai time. Never enqueue a future job against a real clock.
+    now = datetime(2026, 10, 16, 1, 30, 1, tzinfo=UTC)
+
+    class ScheduledClock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls.fromtimestamp(now.timestamp(), tz)
+
+    monkeypatch.setattr(daily, "datetime", ScheduledClock)
+    monkeypatch.setattr(jobs, "datetime", ScheduledClock)
+    return now
 
 
 async def test_postgresql_daily_enqueue_concurrent_dedupe_leases_and_read_only_status() -> None:
@@ -153,6 +170,7 @@ async def test_postgresql_consumer_filters_reserve_daily_queue_without_changing_
 
 async def test_postgresql_scheduled_version_replays_after_job_ack_crash_without_querying_bi(
     monkeypatch: pytest.MonkeyPatch,
+    scheduled_now: datetime,
 ) -> None:
     async with isolated_store() as (store, factory):
         async with factory.begin() as session:
@@ -200,7 +218,7 @@ async def test_postgresql_scheduled_version_replays_after_job_ack_crash_without_
             return view
 
         monkeypatch.setattr(route, "_current", current)
-        now = daily.due_time(datetime.now(UTC)) + timedelta(seconds=1)
+        now = scheduled_now
         await daily.enqueue_due(settings, now=now, session_factory=factory)
         repository = JobRepository("isolated-daily-worker")
         repository.session_factory = factory
@@ -222,6 +240,7 @@ async def test_postgresql_scheduled_version_replays_after_job_ack_crash_without_
 
 async def test_postgresql_explicit_today_retry_preserves_failed_attempt_and_never_resets_success(
     monkeypatch: pytest.MonkeyPatch,
+    scheduled_now: datetime,
 ) -> None:
     async with isolated_store() as (_store, factory):
         async with factory.begin() as session:
@@ -229,7 +248,7 @@ async def test_postgresql_explicit_today_retry_preserves_failed_attempt_and_neve
             assert isinstance(table, Table)
             await session.run_sync(lambda sync: table.create(sync.connection()))
         settings = configured()
-        now = daily.due_time(datetime.now(UTC)) + timedelta(seconds=1)
+        now = scheduled_now
         await daily.enqueue_due(settings, now=now, session_factory=factory)
         async with factory.begin() as session:
             job = await session.scalar(select(AsyncJob))

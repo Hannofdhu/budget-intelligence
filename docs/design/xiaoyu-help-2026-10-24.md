@@ -51,10 +51,12 @@
 3. 在对应位置放置 `XiaoyuHelp`，通过 `getContext` 提供 `aiBudgetHref` 生成的精确版本链接、财年、页面状态、编制基准和带业务标签的修改摘要。入口独立于业务按钮，不借讲解触发业务动作。
 4. 内容规则变更时更新说明版本；验证卡片、来源绑定、未保存状态、键盘／窄屏及AI接续，不让新逻辑混用旧说明。
 
-## 截图
+## 本机验收截图
 
-- [桌面讲解卡片](../../output/playwright/xiaoyu-help/card-desktop.jpg)
-- [手机讲解卡片](../../output/playwright/xiaoyu-help/card-mobile.jpg)
-- [320px窄屏卡片](../../output/playwright/xiaoyu-help/card-narrow.jpg)
-- [自动预填与可读上下文](../../output/playwright/xiaoyu-help/ai-prefilled.jpg)
-- [真实AI已完成回答](../../output/playwright/xiaoyu-help/ai-answer.jpg)
+以下证据保存在本机 `output/`，可能包含真实业务信息，不随公开仓库发布；克隆仓库后不会自动获得这些截图。
+
+- 桌面讲解卡片：`output/playwright/xiaoyu-help/card-desktop.jpg`
+- 手机讲解卡片：`output/playwright/xiaoyu-help/card-mobile.jpg`
+- 320px窄屏卡片：`output/playwright/xiaoyu-help/card-narrow.jpg`
+- 自动预填与可读上下文：`output/playwright/xiaoyu-help/ai-prefilled.jpg`
+- 真实AI已完成回答：`output/playwright/xiaoyu-help/ai-answer.jpg`

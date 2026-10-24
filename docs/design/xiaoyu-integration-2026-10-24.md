@@ -28,16 +28,18 @@ AI 同一视图只突出一个小予：连接问题优先，其次后台结果�
 - 没有执行预算预览、重算、保存、预测确认、恢复版本或AI发送。保存成功插图已接入对应成功分支，未通过真实写入预算来触发验收。无来源预测入口、全年预测失败／保存反馈未做实时业务操作验收。
 - 所有临时接口拦截已清除，模拟标签页关闭；无后端规则或接口改动。本次未发布生产环境。
 
-## 页面截图
+## 本机验收截图
 
 以下欢迎页与预算正常页面是真实读取结果；文件名含 `fixture` 的为真实组件配合模拟GET状态，不能作为实际任务或预算保存成功的证明。
 
-- [桌面欢迎页](../../output/playwright/xiaoyu-integration/ai-welcome-desktop.jpg)
-- [手机欢迎页](../../output/playwright/xiaoyu-integration/ai-welcome-mobile.jpg)
-- [分析等待（模拟）](../../output/playwright/xiaoyu-integration/ai-waiting-fixture.jpg)
-- [后台结果到达（模拟）](../../output/playwright/xiaoyu-integration/ai-completed-mobile-fixture.jpg)
-- [手机连接失败（模拟）](../../output/playwright/xiaoyu-integration/ai-error-mobile-fixture.jpg)
-- [真实FY28正常看板](../../output/playwright/xiaoyu-integration/fy28-unchanged.jpg)
-- [预算读取失败（模拟）](../../output/playwright/xiaoyu-integration/fy28-error-fixture.jpg)
+以下证据保存在本机 `output/`，可能包含真实业务信息，不随公开仓库发布；克隆仓库后不会自动获得这些截图。
+
+- 桌面欢迎页：`output/playwright/xiaoyu-integration/ai-welcome-desktop.jpg`
+- 手机欢迎页：`output/playwright/xiaoyu-integration/ai-welcome-mobile.jpg`
+- 分析等待（模拟）：`output/playwright/xiaoyu-integration/ai-waiting-fixture.jpg`
+- 后台结果到达（模拟）：`output/playwright/xiaoyu-integration/ai-completed-mobile-fixture.jpg`
+- 手机连接失败（模拟）：`output/playwright/xiaoyu-integration/ai-error-mobile-fixture.jpg`
+- 真实FY28正常看板：`output/playwright/xiaoyu-integration/fy28-unchanged.jpg`
+- 预算读取失败（模拟）：`output/playwright/xiaoyu-integration/fy28-error-fixture.jpg`
 
 实现：`Xiaoyu.tsx`、`xiaoyu.css`、`public/mascot/`，接入 `AiChatPage`、`AiChatMessage`、`NextYearBudgetPage`、`ForecastPage`。规范已同步 `DESIGN.md` 第4.2.2节。
