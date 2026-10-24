@@ -12,9 +12,9 @@
 .history-budget .history-detail-table { min-width: 40rem; }
 .history-budget .history-target-table { min-width: 36rem; }
 .history-budget .history-empty { padding: 16px 0; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.57143; }
-.history-budget .history-quarter-layout { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--budget-divider); border-radius: 8px; background: #edf2ee; }
+.history-budget .history-quarter-layout { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--budget-divider); border-radius: 8px; background: var(--budget-selection-surface); }
 .history-budget .history-quarter-layout button { min-height: 36px; padding: 8px 12px; border: 0; background: transparent; }
-.history-budget .history-quarter-layout button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); }
+.history-budget .history-quarter-layout button[aria-pressed="true"] { color: var(--budget-selected-text); background: var(--budget-text); }
 @media (max-width: 767px) {
   .history-budget .history-heading h1 { font-size: 1.625rem; line-height: 1.3077; }
   .history-budget .history-metrics strong { font-size: 1.5rem; line-height: 1.3334; }

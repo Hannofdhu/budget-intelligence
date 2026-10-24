@@ -357,11 +357,15 @@ def restart_api() -> None:
     if state.get("database") != DATABASE:
         raise RuntimeError("运行记录不匹配")
     process = next(p for p in state["processes"] if p["name"] == "api")
-    if not process_matches(process):
+    matches = process_matches(process)
+    if not matches and process_exists(int(process["pid"])):
         raise RuntimeError("API 进程身份不匹配，拒绝重启")
+    if not matches and not free_port(8018):
+        raise RuntimeError("API 端口被未知进程占用，拒绝启动")
     env = environment()
     env["BUDGET_LOCAL_TRIAL_DEPARTMENT_ID"] = json.loads(FIXTURE.read_text())["department_id"]
-    os.kill(int(process["pid"]), signal.SIGTERM)
+    if matches:
+        os.kill(int(process["pid"]), signal.SIGTERM)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and not free_port(8018):
         time.sleep(0.1)

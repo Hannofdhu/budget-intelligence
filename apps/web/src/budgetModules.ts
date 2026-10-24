@@ -3,6 +3,7 @@ export type BudgetModuleYears = Record<BudgetModule, number>;
 
 // These are the existing data destinations, not new fiscal-year routing.
 export const budgetModules = [
+  { key: "cockpit", href: "/budget/cockpit" },
   { key: "budget", href: "/budget/workspace?archive=fy27&step=5" },
   { key: "forecast", href: "/budget/forecast?archive=fy27" },
   { key: "next-year", href: "/budget/next-year" },
@@ -15,7 +16,7 @@ const archiveYear = (href: string) => {
   if (!digits) throw new Error("归档预算入口缺少财年");
   return digits.length === 2 ? 2000 + Number(digits) : Number(digits);
 };
-const archivedYear = archiveYear(budgetModules[0].href), forecastYear = archiveYear(budgetModules[1].href);
+const archivedYear = archiveYear(budgetModules.find(module => module.key === "budget")!.href), forecastYear = archiveYear(budgetModules.find(module => module.key === "forecast")!.href);
 export const defaultBudgetModuleYears: Readonly<BudgetModuleYears> = {
   budget: archivedYear, forecast: forecastYear, "next-year": forecastYear + 1,
 };

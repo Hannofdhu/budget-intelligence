@@ -1,3 +1,4 @@
+import { BudgetBrand } from "./BudgetBrand";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BusinessForm, ReadTable, meanings, type Schema, type Value } from "./BusinessForm";
 import { identityHeaders, newRequestId, parseResponse, fetchJob, fetchRevision, fetchAuditEvents, type ApiIdentity, type RevisionResponse } from "./api";
@@ -340,7 +341,7 @@ export function WorkspacePage() {
 
   return <div className="budget-shell decision-shell budget-auxiliary"><a className="skip-link" href="#workspace-content">跳到主要内容</a>
     <header className="decision-topbar">
-      <button className="decision-brand" onClick={() => changeSection("home")}><span aria-hidden="true">智</span><strong>预算智解</strong></button>
+      <button className="decision-brand" onClick={() => changeSection("home")}><BudgetBrand /></button>
       <label className="decision-budget-select"><span className="sr-only">年度预算</span><select disabled={busy} value={workspace?.fiscal_year ?? ""} onChange={event => { if (event.target.value === "archive-fy27") { if (dirty && !window.confirm("放弃尚未保存的修改？")) return; location.assign("/budget/workspace?archive=fy27&step=5"); return; } const budget = budgets.find(item => item.fiscal_year === Number(event.target.value)); const id = budget && initialBudgetRevision(budget); if (id) switchBudgetMode(id); }}><option value="">选择预算</option><option value="archive-fy27">FY27 学校版 · 已定版</option>{budgets.map(budget => <option value={budget.fiscal_year} key={budget.annual_budget_id}>FY{String(budget.fiscal_year).slice(-2)} 学校版</option>)}</select></label>
       {workspace && <div className="decision-version"><span className={`status-dot ${workspace.is_published ? "is-published" : ""}`} /><span>{workspace.is_published ? "已定版" : "草稿"}</span><small>{versionLabel(workspace.revision_no)}</small></div>}
     </header>

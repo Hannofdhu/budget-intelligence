@@ -1,3 +1,4 @@
+import { BudgetBrand } from "./BudgetBrand";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -649,9 +650,9 @@ export function VersionAuditPage() {
   };
 
   if (!budget || !selectedRevision) {
-    if (revisionInput && !error) return <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
+    if (revisionInput && !error) return <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取变化记录…</p></main></div>;
     return (
-      <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1 className="budget-page-title">{error ? "变化记录读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
+      <div className="audit-app decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 变化记录</p><h1 className="budget-page-title">{error ? "变化记录读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void openWorkspace(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 

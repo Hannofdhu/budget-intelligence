@@ -1,6 +1,13 @@
+import { Xiaoyu } from "./Xiaoyu";
+import { XiaoyuHelp } from "./XiaoyuHelp";
+import { type XiaoyuHelpSnapshot } from "./xiaoyuHelpTopics";
+import { aiBudgetHref } from "./aiBudgetContext";
 import { Children, Fragment, cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { parseResponse, type ApiIdentity } from "./api";
+import { type ApiIdentity } from "./api";
 import { FY27Header } from "./FY27Header";
+import { getBudgetSession, peekBudgetSession } from "./budgetReadCache";
+import { useBudgetModuleHistoryProtection } from "./budgetNavigation";
+import { peekNextYearBudget } from "./nextYearApi";
 import { budgetModuleName, defaultBudgetModuleYears } from "./budgetModules";
 import { BudgetPageNavigation, useBudgetPagePosition } from "./BudgetPageNavigation";
 import { BudgetScopeBar } from "./BudgetScopeBar";
@@ -506,9 +513,9 @@ export function NextYearOverview({ calculation, filters, onSetTarget, summaryOnl
 }
 
 export function NextYearBudgetPage() {
-  const [identity, setIdentity] = useState<ApiIdentity | null>(null), [data, setData] = useState<NextYearEnvelope | null>(null);
-  const [inputs, setInputs] = useState<NextYearInputs | null>(null), [edits, setEdits] = useState<NextYearEdits>({});
-  const [busy, setBusy] = useState("load"), [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const [identity, setIdentity] = useState<ApiIdentity | null>(peekBudgetSession), [data, setData] = useState<NextYearEnvelope | null>(() => { const actor = peekBudgetSession(); return actor && !readVersion() ? peekNextYearBudget(actor, readYear()) : null; });
+  const [inputs, setInputs] = useState<NextYearInputs | null>(() => data?.draft ? structuredClone(data.draft.inputs) : null), [edits, setEdits] = useState<NextYearEdits>({});
+  const [busy, setBusy] = useState(() => data && !readVersion() ? "" : "load"), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<NextYearCalculation | null>(null), [reason, setReason] = useState("");
   const [task, setTask] = useState<Task>(readTask), [filters, setFilters] = useState<Filters>(() => readNextYearFilters(readYear(), location.search));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({}), [pendingNavigation, setPendingNavigation] = useState("");
@@ -550,6 +557,9 @@ export function NextYearBudgetPage() {
   const classRuleUpgrade = !historical && Boolean(draft && !nextYearUsesClassAverage(draft.calculation));
   const calculationChanged = inputChanged || classRuleUpgrade;
   const unsaved = inputChanged || Boolean(reason.trim()) || pendingTools || (classRuleUpgrade && Boolean(preview)), canEdit = !historical && Boolean(identity?.roles.includes("DATA_MAINTAINER") || identity?.roles.includes("DEPARTMENT_BUDGET_OWNER"));
+  const pendingRef = useRef(unsaved);
+  pendingRef.current = unsaved;
+  useBudgetModuleHistoryProtection(unsaved || Boolean(busy && !["load", "version"].includes(busy)), () => setNotice("先完成或放弃本页修改，再切换模块。"));
   const calculation = historical?.draft?.calculation ?? preview ?? draft?.calculation;
   // Entry edits redistribute a shared total, so every coupled allocation must wait for a fresh preview.
   const entryAllocationStale = !historical && !preview && editSummary.groups.some(group => group.items.some(item =>
@@ -581,23 +591,26 @@ export function NextYearBudgetPage() {
     observer?.observe(bar); window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); shell.style.removeProperty("--ny-action-bar-height"); };
   }, [Boolean(draft), Boolean(visibleInputs), Boolean(calculation)]);
-  function accept(next: NextYearEnvelope) { setData(next); setInputs(next.draft ? structuredClone(next.draft.inputs) : null); setEdits({}); setPreview(null); setReason(""); setFieldErrors({}); setHistorical(null); setBalanceMessage(""); setBalanceIssues([]); setClassReadiness(null); setClassRepair(null); setClassCheckOpen(false); setClassCheckScope({ ...emptyClassCheckScope }); setSelectedSourceId(next.draft?.source.id ?? next.source?.id ?? ""); setSideExpanded(false); setBasisPreview(null); setVersionsOpen(false); }
+  function accept(next: NextYearEnvelope, fromRead = false) { if (!fromRead) ++loadGeneration.current; setData(next); setInputs(next.draft ? structuredClone(next.draft.inputs) : null); setEdits({}); setPreview(null); setReason(""); setFieldErrors({}); setHistorical(null); setBalanceMessage(""); setBalanceIssues([]); setClassReadiness(null); setClassRepair(null); setClassCheckOpen(false); setClassCheckScope({ ...emptyClassCheckScope }); setSelectedSourceId(next.draft?.source.id ?? next.source?.id ?? ""); setSideExpanded(false); setBasisPreview(null); setVersionsOpen(false); }
   async function load(signal?: AbortSignal, year = fiscalYear, version = readVersion()) {
     const generation = ++loadGeneration.current;
     loadingContext.current = { year, version };
-    setBusy("load"); setError("");
-    try { const who = await parseResponse<ApiIdentity>(await fetch("/api/v1/local-trial/session", { signal })); const next = await getNextYearBudget(who, signal, year);
+    if (!data || year !== fiscalYear || version) setBusy("load"); setError("");
+    try { const who = await getBudgetSession(signal);
+      void getNextYearCatalog(who, signal).then(available => { if (!signal?.aborted && generation === loadGeneration.current && Array.isArray(available.sources) && Array.isArray(available.fiscal_years)) setCatalog(available); }).catch(() => { /* Catalog failure never blocks viewing the saved budget. */ });
+      const [next, viewed] = await Promise.all([getNextYearBudget(who, signal, year), version ? getNextYearVersion(who, version, year, signal).then(value => assertReadVersion(value, version, year)) : Promise.resolve(null)]);
       if (signal?.aborted || generation !== loadGeneration.current) return false;
-      const viewed = version ? assertReadVersion(await getNextYearVersion(who, version, year), version, year) : null;
-      if (signal?.aborted || generation !== loadGeneration.current) return false;
-      setIdentity(who); accept(next); setFiscalYear(year);
+      if (pendingRef.current || inFlight.current) return false;
+      setIdentity(who);
+      if (year === fiscalYear && data?.draft?.id && data.draft.id === next.draft?.id) setData(next);
+      else accept(next, true);
+      setFiscalYear(year);
       setHistorical(viewed);
-      try { const available = await getNextYearCatalog(who, signal); if (!signal?.aborted && generation === loadGeneration.current) setCatalog(available); } catch { /* Budget reading remains available if the catalog cannot load. */ }
       return !signal?.aborted && generation === loadGeneration.current;
-    } catch (failure) { if (!signal?.aborted && generation === loadGeneration.current) setError(failure instanceof Error ? failure.message : "读取失败"); return false; }
-    finally { if (!signal?.aborted && generation === loadGeneration.current) setBusy(""); }
+    } catch (failure) { if (!signal?.aborted && generation === loadGeneration.current) { setError(failure instanceof Error ? failure.message : "读取失败"); if ([401, 403].includes((failure as { status?: number })?.status ?? 0)) { setData(null); setInputs(null); setHistorical(null); setIdentity(null); } } return false; }
+    finally { if (!signal?.aborted && generation === loadGeneration.current && !inFlight.current) setBusy(""); }
   }
-  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, []);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => { ++loadGeneration.current; ++navigationGeneration.current; controller.abort(); }; }, []);
   useEffect(() => { const restore = async () => {
     const navigation = ++navigationGeneration.current, search = location.search;
     const year = readYear(), nextTask = readTask(), version = readVersion();
@@ -632,7 +645,7 @@ export function NextYearBudgetPage() {
   function changeTask(next: Task) { if (next === task) return; preparePageNavigation(); setTask(next); setSideExpanded(false); const url = new URL(location.href); url.searchParams.set("nyTask", String(next)); history.pushState({}, "", url); }
   function versionUrl(id: string | null, mode: "pushState" | "replaceState" = "pushState", nextTask = task) { const url = new URL(location.href); url.searchParams.set("year", String(fiscalYear)); url.searchParams.set("nyTask", String(nextTask)); if (id) url.searchParams.set("nyVersion", id); else url.searchParams.delete("nyVersion"); history[mode]({}, "", url); }
   function returnToCurrent() { if (busy) return; setHistorical(null); setVersionsOpen(false); setClassCheckOpen(false); versionUrl(null); }
-  function beforeLeave(event: MouseEvent<HTMLAnchorElement>) { if (!unsaved || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.currentTarget.target === "_blank") return; event.preventDefault(); if (!busy) setPendingNavigation(event.currentTarget.href); }
+  function beforeLeave(event: MouseEvent<HTMLAnchorElement>) { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.currentTarget.target === "_blank") return; if (busy && !["load", "version"].includes(busy)) { event.preventDefault(); setNotice("当前操作完成后再切换"); return; } if (unsaved) { event.preventDefault(); setPendingNavigation(event.currentTarget.href); } }
   function edit(path: (string | number)[], value: string) { const key = nextYearEditKey(...path); setEdits(previous => ({ ...previous, [key]: value, ...(path[0] === "target" && !value.trim() ? Object.fromEntries(Object.keys(inputs?.track_targets ?? {}).map(track => [nextYearEditKey("track-target", track), ""])) : {}) })); setFieldErrors(previous => { const next = { ...previous }; delete next[key]; return next; }); setPreview(null); setNotice(""); setBalanceIssues([]); }
   const invalidPath = (section: string) => {
     for (const key of [...Object.keys(fieldErrors), ...(focusPath ? [focusPath] : [])]) { try { const path = JSON.parse(key); const owner = path[0] === "class-size" ? "class" : path[0] === "rate-lock" ? "rates" : path[0]; if (owner === section) return owner === path[0] ? key : nextYearEditKey(owner, path[1]); } catch { /* invalid raw keys stay in the change list */ } }
@@ -855,6 +868,7 @@ export function NextYearBudgetPage() {
   }));
   const blockers = calculation?.issues.filter(issue => issue.severity === "BLOCKING") ?? [], warnings = calculation?.issues.filter(issue => issue.severity === "WARNING") ?? [];
   const sourceOptions = catalog?.sources.filter(item => item.status === "CONFIRMED" && (item.fiscal_year ?? catalog.source_fiscal_year) === fiscalYear - 1).map(item => ({ ...item, fiscal_year: item.fiscal_year ?? catalog.source_fiscal_year })) ?? (data?.source?.status === "CONFIRMED" ? [data.source] : []);
+  const latestDraftSource = catalog?.latest_draft?.status === "DRAFT" && catalog.latest_draft.fiscal_year === fiscalYear - 1 && sourceOptions.every(item => catalog.latest_draft!.sequence > item.sequence) ? catalog.latest_draft : null;
   const newerConfirmedSource = data?.source_changed && data.source?.status === "CONFIRMED" && data.source.id !== draft?.source.id && data.source.sequence > (draft?.source.sequence ?? 0) && sourceOptions.some(item => item.id === data.source?.id && item.status === "CONFIRMED") ? data.source : null;
   const selectedSource = sourceOptions.find(item => item.id === selectedSourceId) ?? source ?? data?.source;
   const basisPreviewKey = JSON.stringify({ parent: draft?.id ?? null, source: selectedSource?.id, snapshot: selectedSource?.snapshot_hash, calculation: selectedSource?.calculation_hash, year: fiscalYear });
@@ -872,7 +886,7 @@ export function NextYearBudgetPage() {
   }
   function openVersions() { if (busy) return; setSideExpanded(false); setClassCheckOpen(false); setVersionsOpen(true); }
   function openProblems() { if (busy) return; setSideExpanded(false); setVersionsOpen(false); setClassCheckOpen(true); }
-  const sourcePicker = canEdit && sourceOptions.length > 0 && <div className="ny-source-picker"><label className="ny-field"><span>编制基准预测</span><select aria-label="基准预测版本" value={selectedSourceId || selectedSource?.id || ""} disabled={Boolean(busy) || unsaved} onChange={event => { setSelectedSourceId(event.target.value); setBasisPreview(null); }}>{sourceOptions.map(item => <option key={item.id} value={item.id}>{nextYearForecastBasisLabel(item)} · 已确认 · 数据截至 {item.as_of} · {money(item.forecast_revenue)} 万元</option>)}</select></label>{draft && <button disabled={Boolean(busy) || unsaved || !selectedSource} onClick={() => void previewBasis()}>{busy === "basis-preview" ? "正在预览基准…" : "预览基准变化"}</button>}</div>;
+  const sourcePicker = canEdit && <>{sourceOptions.length > 0 && <div className="ny-source-picker"><label className="ny-field"><span>已确认的预测基准</span><select aria-label="已确认的预测基准" aria-describedby={latestDraftSource ? "ny-source-draft-note" : undefined} value={selectedSourceId || selectedSource?.id || ""} disabled={Boolean(busy) || unsaved} onChange={event => { setSelectedSourceId(event.target.value); setBasisPreview(null); }}>{sourceOptions.map(item => <option key={item.id} value={item.id}>{nextYearForecastBasisLabel(item)} · 已确认 · 数据截至 {item.as_of} · {money(item.forecast_revenue)} 万元</option>)}</select></label>{draft && <button disabled={Boolean(busy) || unsaved || !selectedSource} onClick={() => void previewBasis()}>{busy === "basis-preview" ? "正在预览基准…" : "预览基准变化"}</button>}</div>}{latestDraftSource && <p className="ny-range-note" id="ny-source-draft-note">最新草稿：{nextYearForecastBasisLabel(latestDraftSource)}，尚未确认。核对并确认后可在此选择；不会自动更换当前基准。</p>}</>;
   const scopeBar = (keys: Dimension[], count?: number, label = "当前SKU", selectLabelPrefix = "筛选", countLabel = "条 SKU") => <BudgetScopeBar filters={filters} dimensions={keys.map(key => ({ key, label: dimensionLabels[key], options: key === "season" ? [...nextYearSeasons] : [...new Set(combinations.map(row => row[key]))].sort((a, b) => dimensionSort(key, a, b)) }))} onChange={setFilters} label={label} count={count} countLabel={countLabel} disabled={Boolean(busy)} selectLabelPrefix={selectLabelPrefix}/>;
   const entryState = visibleInputs ? applyNextYearEdits(visibleInputs, edits).inputs ?? visibleInputs : null;
   const entryGrades = [...new Set([
@@ -1050,6 +1064,25 @@ export function NextYearBudgetPage() {
         render: (row: NextYearFinance) => { const raw = edits[nextYearEditKey("finance", row.id, key)]; return raw !== undefined ? raw.trim() ? `${raw}%` : "未填写" : `${String(row[key] / 10000)}%`; } })),
     ]} tableLabel={`${fy(fiscalYear)}财务参数季度对照`} filename={`${fy(fiscalYear)}-财务参数季度对照`}
     onCellAction={canEdit && !busy ? locateQuarterFinance : undefined} canCellAction={row => comboById.has(row.combination_id)} actionLabel="转到逐季编辑"/>;
+  function getHelpContext(withTrackAllocation = false) {
+    const viewed = shownDraft;
+    if (!viewed || !visibleInputs) throw new Error("预算版本尚未读取");
+    const link = new URL(location.href); link.searchParams.set("year", String(fiscalYear));
+    const snapshot: XiaoyuHelpSnapshot = {
+      state: historical ? "saved" : preview ? "preview" : calculationChanged ? "edited" : "saved",
+      changeCount: editSummary.totalCount, changes: editSummary.groups.flatMap(group => group.items).slice(0, 20).map(item => ({
+        label: skuText(item.label).slice(0, 160), before: String(item.beforeDisplay ?? "未设置").slice(0, 80), after: String(item.afterDisplay ?? "未设置").slice(0, 80) })),
+      pendingTools, validationErrors: Object.keys(fieldErrors).length > 0, classRuleUpgrade, operationBusy: Boolean(busy),
+      basisLabel: source ? nextYearForecastBasisLabel(source) : "编制基准待核对", basisAsOf: source?.as_of || "",
+    };
+    if (withTrackAllocation) snapshot.trackTargetAllocation = {
+      annualTargetYuan: String((historical ? visibleInputs.target_revenue_yuan : edits[nextYearEditKey("target")] ?? visibleInputs.target_revenue_yuan) ?? ""),
+      weightVersionId: viewed.id, weightVersionLabel: `${fy(fiscalYear)}预算 · ${versionLabel(viewed.sequence)}`,
+      weights: viewed.calculation.tracks.map(row => ({ track: row.track, revenueYuan: String(Math.max(0, forecastNumber(row.revenue_yuan) ?? 0)) })),
+    };
+    return { source: aiBudgetHref(`${link.pathname}${link.search}`, { id: viewed.id, label: `N${viewed.sequence}` }),
+      fiscalYear, versionLabel: versionLabel(viewed.sequence), snapshot };
+  }
   const specifiedEntry = entryState?.combinations.filter(row => row.enabled && effectiveNextYearEntry(row) && row.entry_students !== null && row.entry_students !== undefined).reduce((sum, row) => sum + (row.entry_students ?? 0), 0) ?? 0;
   const automaticEntryCount = entryState?.combinations.filter(row => row.enabled && effectiveNextYearEntry(row) && (row.entry_students === null || row.entry_students === undefined)).length ?? 0;
   return <div ref={shellRef} className={`budget-shell decision-shell next-year-shell${sideExpanded ? " ny-context-open" : ""}`}><a className="skip-link" href="#next-year-content">跳到主要内容</a>
@@ -1060,16 +1093,16 @@ export function NextYearBudgetPage() {
       {historical?.draft && <div className="ny-history-banner"><strong>正在查看历史版本 · {versionLabel(historical.draft.sequence)} · 草稿 · 只读</strong><button disabled={Boolean(busy)} onClick={returnToCurrent}>返回当前版本</button></div>}
       {classResultStale && task !== 4 && <p className="ny-range-note" id="ny-class-pending" role="status">班量待按班均重算；已保存的人次和收入未改变。{canEdit ? "请点击底部“查看影响”，预览后保存新版本。" : "请由预算维护人员重新计算。"}</p>}
       {shownDraft && calculation && (entryAllocationStale ? <div id="ny-entry-pending" className="ny-message" role="status">入口设置已修改，分配及预算结果待重算。请点击底部“查看影响”，更新结果后再查看或导出预算结果。</div> : <NextYearTopMetrics calculation={calculation} status={resultStatus} onSetTarget={() => changeTask(1)} compact={task !== 5}/>)}
-      {error && <div className="ny-message is-error" role="alert"><span>{skuText(error)}</span>{!data && <button disabled={Boolean(busy)} onClick={() => void load()}>重新读取</button>}<button aria-label="关闭错误" onClick={() => setError("")}>关闭</button></div>}
+      {error && <div className="ny-message is-error xiaoyu-feedback" role="alert"><Xiaoyu pose="notice"/><span>{skuText(error)}</span>{!data && <button disabled={Boolean(busy)} onClick={() => void load()}>重新读取</button>}<button aria-label="关闭错误" onClick={() => setError("")}>关闭</button></div>}
       {currentBalanceProposal && <section className="ny-class-proposal" aria-label="调平建议预览" {...budgetVersionExportAttributes(proposalExportContext)}><div className="ny-section-heading"><h2 className="budget-section-title">调平建议 · 未应用</h2><button disabled={Boolean(busy)} onClick={() => { setBalanceProposal(null); setSelectionReview(null); }}>取消建议</button></div><p>以下是全部建议的结果。取消任意项后，会重新检查所选组合。</p><ImpactComparison before={currentBalanceProposal.before} after={currentBalanceProposal.result.calculation} beforeIdentity={proposalBeforeIdentity} afterIdentity={proposalExportContext}/><NextYearActionSelection actions={currentBalanceProposal.actions} originalInputs={currentBalanceProposal.original} proposedInputs={currentBalanceProposal.result.proposed_inputs} busy={Boolean(busy)} ready onApply={keys => void applyBalanceSelection(keys)}/></section>}
       {selectionReview && currentBalanceProposal && <section aria-label="上次勾选检查结果"><h2 className="budget-section-title">上次勾选检查结果</h2><ImpactComparison before={currentBalanceProposal.before} after={selectionReview} beforeIdentity={proposalBeforeIdentity} afterIdentity={proposalExportContext}/></section>}
-      {notice && <div className="ny-message is-success" role="status"><span>{skuText(notice)}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
-      {busy === "load" && <div className="ny-loading" aria-busy="true"><div/><div/><p role="status">正在读取 {budgetModuleName("next-year", fiscalYear)}…</p></div>}
-      {!busy && data && !draft && <section className="ny-start">{data.source ? <>{sourcePicker}<div className="ny-metrics"><div className="ny-metric-primary"><span>来源预计结转收入（万元）</span><strong>{money(selectedSource?.forecast_revenue)}</strong></div><div><span>来源预计人次</span><strong>{format(selectedSource?.forecast_total)}</strong></div></div><button className="decision-primary" disabled={!canEdit} onClick={() => void run("prepare")}>生成 {fy(fiscalYear)} 草稿</button></> : <div className="ny-empty"><h2 className="budget-section-title">先确认全年预测</h2><a className="decision-primary" href="/budget/forecast?archive=fy27">前往{budgetModuleName("forecast", defaultBudgetModuleYears.forecast)}</a></div>}</section>}
+      {notice && <div className="ny-message is-success xiaoyu-feedback" role="status">{notice === "已保存为新版本" && <Xiaoyu pose="done"/>}<span>{skuText(notice)}</span><button aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button></div>}
+      {busy === "load" && !data && <div className="ny-loading" aria-label="预算结果占位" aria-busy="true"><div/><div/></div>}
+      {!busy && data && !draft && <section className="ny-start">{data.source ? <>{sourcePicker}<div className="ny-metrics"><div className="ny-metric-primary"><span>来源预计结转收入（万元）</span><strong>{money(selectedSource?.forecast_revenue)}</strong></div><div><span>来源预计人次</span><strong>{format(selectedSource?.forecast_total)}</strong></div></div><button className="decision-primary" disabled={!canEdit} onClick={() => void run("prepare")}>生成 {fy(fiscalYear)} 草稿</button></> : <div className="ny-empty"><Xiaoyu pose="focus" size="empty"/><h2 className="budget-section-title">先确认全年预测</h2>{sourcePicker}<a className="decision-primary" href="/budget/forecast?archive=fy27">前往{budgetModuleName("forecast", defaultBudgetModuleYears.forecast)}</a></div>}</section>}
       {busy === "prepare" && !draft && <p role="status">正在生成 {fy(fiscalYear)} 草稿…</p>}
       {draft && inputs && visibleInputs && calculation && <>
         <div className="ny-task-content" {...budgetVersionExportAttributes(task === 5 ? versionExportContext : inputExportContext)}>
-        {task === 1 && <><BudgetDataSection id="ny-goals" title="全年目标 · 全部业务" className="ny-section"><div className="ny-global-fields" aria-label="全年目标 · 全部业务"><div className="ny-form-grid">{field(["target"], visibleInputs.target_revenue_yuan, "全年经营目标（元）")}{Object.entries(visibleInputs.track_targets).map(([track, amount]) => <div key={track}>{field(["track-target", track], amount, `${track}目标（元）`)}</div>)}</div><button disabled={Boolean(busy) || !canEdit || forecastNumber(edits[nextYearEditKey("target")] ?? inputs.target_revenue_yuan) === null} onClick={distributeTargets}>按预算结转收入分配赛道目标</button></div></BudgetDataSection>{scopeBar(["track", "campus", "product", "grade", "subject"], combinations.filter(row => matches(row, filters)).length)}
+        {task === 1 && <><BudgetDataSection id="ny-goals" title="全年目标 · 全部业务" className="ny-section"><div className="ny-global-fields" aria-label="全年目标 · 全部业务"><div className="ny-form-grid">{field(["target"], visibleInputs.target_revenue_yuan, "全年经营目标（元）")}{Object.entries(visibleInputs.track_targets).map(([track, amount]) => <div key={track}>{field(["track-target", track], amount, `${track}目标（元）`)}</div>)}</div><div className="ny-track-target-action"><button className="ny-distribute-targets" disabled={Boolean(busy) || !canEdit || forecastNumber(edits[nextYearEditKey("target")] ?? inputs.target_revenue_yuan) === null} onClick={distributeTargets}>按预算结转收入分配赛道目标</button><XiaoyuHelp topicId="next-year.track-target-allocation" getContext={() => getHelpContext(true)}/></div></div></BudgetDataSection>{scopeBar(["track", "campus", "product", "grade", "subject"], combinations.filter(row => matches(row, filters)).length)}
           <PagedTable rows={combinations.filter(row => matches(row, filters))} label={`${fy(fiscalYear)}SKU`}
             section={{ id: "next-year-sku", title: "SKU", actions: canEdit && <button className="ny-tool-entry" disabled={Boolean(busy)} aria-expanded={sideExpanded && sideTab === "tools" && toolMode === "business"} aria-controls="ny-context-panel" onClick={() => openTools("business")}>新增校区 / 产品</button> }}
             headers={[...skuIdentityHeaders, "入口", "参与预算"]} render={row => <>{skuIdentityCells(row, row.added && <small>新业务</small>)}<td>{effectiveNextYearEntry(row) ? "是" : "否"}</td><td><label className="ny-checkbox-target"><input type="checkbox" aria-label={`${textDimensions(row)}参与预算`} checked={row.enabled} disabled={Boolean(busy) || !canEdit} onChange={event => { setInputs({ ...inputs, combinations: inputs.combinations.map(item => item.id === row.id ? { ...item, enabled: event.target.checked } : item) }); setPreview(null); setNotice(""); setBalanceIssues([]); }}/></label></td></>}/>
@@ -1112,7 +1145,7 @@ export function NextYearBudgetPage() {
           {manualOpen && <>{scopeBar(["season", "track", "campus", "product", "grade", "subject"], manualRows.filter(row => matches(row, filters)).length, "手动调节范围", "手动调节筛选", "条明细")}<PagedTable rows={manualRows.filter(row => matches(row, filters))} label="预算手动调节明细" headers={[...skuIdentityHeaders, "季度", "当前新生人次", "指定新生人次", "锁定"]} render={row => { const plan = visibleInputs.plans.find(item => item.combination_id === row.combination_id && item.season === row.season), pending = edits[nextYearEditKey("manual", row.combination_id, row.season)] !== undefined; return <>{skuIdentityCells(row)}<td>{row.season}</td><td>{entryAllocationText(row.new_students)}</td><td>{field(["manual", row.combination_id, row.season], plan?.locked ? plan.students : null, `${row.season}${textDimensions(row)}指定新生人次`)}</td><td><label className="ny-checkbox-target"><input type="checkbox" checked={pending || Boolean(plan?.locked)} disabled={Boolean(busy)} aria-label={`${row.season}${textDimensions(row)}手动人数锁定`} onChange={event => { if (!event.target.checked) stage({ ...inputs, plans: inputs.plans.map(item => item.combination_id === row.combination_id && item.season === row.season ? { ...item, locked: false } : item) }, "已解除手动锁定", path => path[0] === "manual" && path[1] === row.combination_id && path[2] === row.season); else stageEdits({ [nextYearEditKey("manual", row.combination_id, row.season)]: String(row.new_students ?? 0) }); }}/></label></td></>; }}/></>}</BudgetDataSection>}
         {preview && !historical && <div className="ny-impact-preview" id="ny-impact-preview" tabIndex={-1}><ImpactComparison before={draft.calculation} after={preview} beforeIdentity={nextYearDraftExportContext(draft, fiscalYear)} afterIdentity={proposalExportContext}/></div>}
         {historical?.draft && <ImpactComparison before={historical.draft.calculation} after={draft.calculation} beforeIdentity={nextYearDraftExportContext(historical.draft, fiscalYear)} afterIdentity={nextYearDraftExportContext(draft, fiscalYear)}/>}
-        <footer ref={actionBarRef} className="ny-action-bar" aria-label="预算保存操作"><div className="ny-action-status">{historical ? <span>历史版本 {versionLabel(historical.draft?.sequence)} · 草稿 · 只读</span> : <><button className={inputChanged ? "ny-edit-state" : ""} disabled={!inputChanged || Boolean(busy)} aria-expanded={sideExpanded && sideTab === "changes"} aria-controls="ny-context-panel" onClick={() => openContext("changes")}>改动 {editSummary.totalCount} 项</button>{pendingTools && <span>有内容待暂存</span>}{classRuleUpgrade && <span>{preview ? "班均口径已预览，待保存" : "班量口径待更新"}</span>}{!unsaved && <span>{versionLabel(draft.sequence)} · 已保存 · 草稿</span>}{unsaved && <button disabled={Boolean(busy)} onClick={undoAllDiff}>放弃修改</button>}</>}</div>{canEdit && <div className="ny-action-buttons"><label className="ny-field"><span>调整备注（选填）</span><input value={reason} placeholder="调整备注（选填）" maxLength={1000} disabled={Boolean(busy)} onChange={event => setReason(event.target.value)}/></label><button disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("preview")}>{busy === "preview" ? "正在预览…" : "查看影响"}</button><button className="decision-primary" disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("save")}>{busy === "save" ? "正在保存…" : "保存新版本"}</button></div>}</footer>
+        <footer ref={actionBarRef} className="ny-action-bar" aria-label="预算保存操作"><div className="ny-action-status">{historical ? <span>历史版本 {versionLabel(historical.draft?.sequence)} · 草稿 · 只读</span> : <><button className={inputChanged ? "ny-edit-state" : ""} disabled={!inputChanged || Boolean(busy)} aria-expanded={sideExpanded && sideTab === "changes"} aria-controls="ny-context-panel" onClick={() => openContext("changes")}>改动 {editSummary.totalCount} 项</button>{pendingTools && <span>有内容待暂存</span>}{classRuleUpgrade && <span>{preview ? "班均口径已预览，待保存" : "班量口径待更新"}</span>}{!unsaved && <span>{versionLabel(draft.sequence)} · 已保存 · 草稿</span>}{unsaved && <button disabled={Boolean(busy)} onClick={undoAllDiff}>放弃修改</button>}</>}</div>{canEdit && <div className="ny-action-buttons"><label className="ny-field"><span>调整备注（选填）</span><input value={reason} placeholder="调整备注（选填）" maxLength={1000} disabled={Boolean(busy)} onChange={event => setReason(event.target.value)}/></label><div className="ny-impact-action"><button disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("preview")}>{busy === "preview" ? "正在预览…" : "查看影响"}</button><XiaoyuHelp topicId="next-year.impact-preview" getContext={() => getHelpContext()}/></div><button className="decision-primary" disabled={Boolean(busy) || !calculationChanged} onClick={() => void run("save")}>{busy === "save" ? "正在保存…" : "保存新版本"}</button></div>}</footer>
         <details className="ny-how"><summary>拆解怎么算</summary><dl><div><dt>入口</dt><dd>指定入口优先，其余按参考人次分配，合计保持不变</dd></div><div><dt>期初老生</dt><dd>{typeof source?.fiscal_year === "number" ? fy(source.fiscal_year) : "来源财年未记录"} 春季预测升年级续入暑假</dd></div><div><dt>后续季度</dt><dd>按续班率、新生占比推算；手动锁定的新生按指定值计算</dd></div><div><dt>班量</dt><dd>人次除以班均，向上取整；同一班均同时检查开班门槛，不自动补人</dd></div><div><dt>结转收入</dt><dd>按学费、折扣、结转比例和税务系数计算</dd></div><div><dt>调平</dt><dd>保留锁定项，不改学费与折扣，不强行放宽调整范围</dd></div><div><dt>状态</dt><dd>{fy(fiscalYear)} 试算草稿，不发布定版</dd></div></dl>{[...new Set(visibleInputs.notes.map(note => note.message).filter((message): message is string => typeof message === "string" && Boolean(message)))].map(message => <p key={message}>{skuText(message)}</p>)}</details>
       </>}
     </main>

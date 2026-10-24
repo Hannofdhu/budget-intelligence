@@ -5,6 +5,7 @@ calculation in an immutable VERSION event. Confirmation is another immutable
 event. Browsing history never queries BI, opens Excel or recalculates a version.
 """
 
+import asyncio
 import hashlib
 import json
 from copy import deepcopy
@@ -94,6 +95,12 @@ async def read_events(session: AsyncSession, department: str) -> list[Json]:
             .order_by(ForecastLedgerEvent.event_no)
         )
     ).all()
+    # Large immutable snapshots are CPU-heavy to decode/hash. Do not freeze all
+    # API endpoints while a cold ledger is being verified.
+    return await asyncio.to_thread(_validated_records, list(records), department)
+
+
+def _validated_records(records: list[ForecastLedgerEvent], department: str) -> list[Json]:
     events = []
     try:
         for record in records:
@@ -157,17 +164,52 @@ class PostgreSQLForecastStore:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession] | None = None) -> None:
         self.session_factory = session_factory
         self._trend_cache: dict[tuple[str, int], tuple[tuple[int, str] | None, str, list[Json]]] = {}
+        self._read_cache: dict[tuple[str, int], tuple[tuple[int, str] | None, list[Json]]] = {}
+        self._read_lock = asyncio.Lock()
 
     def _sessions(self) -> async_sessionmaker[AsyncSession]:
         return self.session_factory or get_session_factory()
 
     async def current(self, department: str) -> Json:
-        async with self._sessions()() as session:
-            return self._view(await read_events(session, department))
+        return deepcopy(self._view(await self._read_events(department)))
+
+    async def _read_events(self, department: str) -> list[Json]:
+        """Reuse fully validated immutable events, checking the DB head on every read.
+
+        UPDATE/DELETE remain forbidden by the ledger trigger. Appends and
+        confirmations change the head and force full validation. Write paths
+        continue to read and validate inside their own database transaction.
+        """
+        factory = self._sessions()
+        key = department, id(factory)
+        async with self._read_lock, factory() as session:
+            head = (
+                await session.execute(
+                    select(ForecastLedgerEvent.event_no, ForecastLedgerEvent.content_hash)
+                    .where(ForecastLedgerEvent.department_id == department)
+                    .order_by(ForecastLedgerEvent.event_no.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
+            token = (head.event_no, head.content_hash) if head else None
+            cached = self._read_cache.get(key)
+            if cached is not None and cached[0] == token:
+                return cached[1]
+            events = await read_events(session, department)
+            verified = (events[-1]["event_no"], fingerprint(events[-1])) if events else None
+            if len(self._read_cache) >= 4 and key not in self._read_cache:
+                self._read_cache.pop(next(iter(self._read_cache)))
+            self._read_cache[key] = verified, events
+            return events
 
     async def versions(self, department: str) -> list[Json]:
-        async with self._sessions()() as session:
-            return list(reversed(self._versions(await read_events(session, department))))
+        return deepcopy(list(reversed(self._versions(await self._read_events(department)))))
+
+    async def latest_confirmed(self, department: str) -> Json | None:
+        versions = self._versions(await self._read_events(department))
+        return deepcopy(
+            next((version for version in reversed(versions) if version["status"] == "CONFIRMED"), None)
+        )
 
     async def trend(
         self,
@@ -200,8 +242,14 @@ class PostgreSQLForecastStore:
             if cached is not None and cached[0] == token and cached[1] == baseline_hash:
                 projected = cached[2]
             else:
-                events = await read_events(session, department)
-                projected = project_forecast_versions(self._versions(events), baseline_hash=baseline_hash)
+                events = await self._read_events(department)
+                try:
+                    projected = project_forecast_versions(self._versions(events), baseline_hash=baseline_hash)
+                except ForecastStoreError:
+                    # A rejected projection must be able to recover with a new
+                    # verified read, never poison a warm cache at the new head.
+                    self._read_cache.pop(key, None)
+                    raise
                 verified_token = (events[-1]["event_no"], fingerprint(events[-1])) if events else None
                 if key not in self._trend_cache and len(self._trend_cache) >= 8:
                     self._trend_cache.pop(next(iter(self._trend_cache)))
@@ -209,18 +257,19 @@ class PostgreSQLForecastStore:
         return deepcopy(select_forecast_trend(projected, days=days, through_version=through_version))
 
     async def version(self, department: str, version_id: str) -> Json | None:
-        async with self._sessions()() as session:
-            events = await read_events(session, department)
-            view = self._view(events)
-            selected = next((item for item in self._versions(events) if item["id"] == version_id), None)
-            if selected is None:
-                return None
-            return {
+        events = await self._read_events(department)
+        view = self._view(events)
+        selected = next((item for item in self._versions(events) if item["id"] == version_id), None)
+        if selected is None:
+            return None
+        return deepcopy(
+            {
                 **view,
                 "baseline_hash": selected["baseline_hash"],
                 "version": selected,
                 "latest_version_id": view["version"]["id"] if view["version"] else None,
             }
+        )
 
     async def request_result(self, department: str, request_id: str, request_hash: str) -> Json | None:
         async with self._sessions()() as session:

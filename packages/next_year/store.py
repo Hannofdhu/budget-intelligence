@@ -69,6 +69,48 @@ def source_fiscal_year(draft: Json) -> int | None:
 class NextYearStore(ForecastStore):
     def __init__(self, root: Path = ROOT) -> None:
         super().__init__(root)
+        # A read projection, not a second ledger. Every read checks every file's
+        # identity/metadata under the existing cross-process lock. Changed,
+        # replaced, removed or appended records must pass the full chain again.
+        self._read_cache: dict[tuple[str, str | None], tuple[tuple[Any, ...], Json]] = {}
+
+    def _read_signature(self) -> tuple[Any, ...]:
+        return tuple(
+            (path.name, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            for path in sorted(self.root.glob("event-*.json"))
+            for info in (path.stat(),)
+        )
+
+    def current(self, department: str) -> Json:
+        view = self._read_view(department)
+        assert view is not None
+        return view
+
+    def _read_view(self, department: str, version_id: str | None = None) -> Json | None:
+        with self._lock():
+            signature = self._read_signature()
+            key = department, version_id
+            cached = self._read_cache.get(key)
+            if cached is not None and cached[0] == signature:
+                return deepcopy(cached[1])
+            events = self._events(department)
+            drafts = self._drafts(events)
+            view = self._draft_view(drafts)
+            if version_id is not None:
+                selected = next((item for item in drafts if item["id"] == version_id), None)
+                if selected is None:
+                    return None
+                view = {
+                    **view,
+                    "draft": selected,
+                    "source_changed": _source_changed(view["source"], selected),
+                    "latest_draft_id": view["draft"]["id"],
+                    "read_only": True,
+                }
+            if len(self._read_cache) >= 4:
+                self._read_cache.pop(next(iter(self._read_cache)))
+            self._read_cache[key] = signature, view
+            return deepcopy(view)
 
     @staticmethod
     def _drafts(events: list[Json]) -> list[Json]:
@@ -133,7 +175,10 @@ class NextYearStore(ForecastStore):
         return drafts
 
     def _view(self, events: list[Json]) -> Json:
-        drafts = self._drafts(events)
+        return self._draft_view(self._drafts(events))
+
+    @staticmethod
+    def _draft_view(drafts: list[Json]) -> Json:
         current = drafts[-1] if drafts else None
         source = current.get("observed_source") if current else None
         return {
@@ -162,21 +207,7 @@ class NextYearStore(ForecastStore):
             return deepcopy(list(reversed(self._drafts(self._events(department)))))
 
     def version(self, department: str, version_id: str) -> Json | None:
-        with self._lock():
-            events = self._events(department)
-            selected = next((item for item in self._drafts(events) if item["id"] == version_id), None)
-            if selected is None:
-                return None
-            view = self._view(events)
-            return deepcopy(
-                {
-                    **view,
-                    "draft": selected,
-                    "source_changed": _source_changed(view["source"], selected),
-                    "latest_draft_id": view["draft"]["id"],
-                    "read_only": True,
-                }
-            )
+        return self._read_view(department, version_id)
 
     def append_draft(
         self,

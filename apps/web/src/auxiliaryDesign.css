@@ -25,7 +25,7 @@
 .budget-auxiliary .decision-question :is(p,code), .budget-auxiliary .decision-notice { font-size: var(--budget-body-size); }
 .budget-auxiliary .candidate-section > header, .budget-auxiliary .scenario-detail > header { gap: 16px; margin-bottom: 16px; }
 .budget-auxiliary .candidate-card, .budget-auxiliary .proof-panel, .budget-auxiliary .unlock-desk { border-radius: var(--budget-radius-section); border-color: var(--budget-divider); background: var(--budget-surface); box-shadow: none; }
-.budget-auxiliary .candidate-card.is-selected { border-color: var(--budget-accent); box-shadow: inset 0 3px var(--budget-accent); }
+.budget-auxiliary .candidate-card.is-selected { border-color: var(--budget-text); box-shadow: inset 0 3px var(--budget-text); }
 .budget-auxiliary .candidate-card__head :is(p,em), .budget-auxiliary .candidate-card__result small, .budget-auxiliary .candidate-card__metrics dt { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .budget-auxiliary .candidate-card__metrics small, .budget-auxiliary .candidate-card__result span, .budget-auxiliary .candidate-empty span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .budget-auxiliary .candidate-empty p, .budget-auxiliary .application-receipt { font-size: var(--budget-body-size); line-height: 1.57143; }
@@ -49,7 +49,7 @@
 .budget-auxiliary-table-scroll { min-width: 0; max-width: 100%; overflow: auto; isolation: isolate; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-control); }
 .budget-auxiliary-table { width: 100%; min-width: 40rem; border-collapse: collapse; font-size: var(--budget-body-size); line-height: 1.42858; }
 .budget-auxiliary-table :is(th,td) { padding: 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--budget-divider); }
-.budget-auxiliary-table thead th { background: #edf2ee; color: var(--budget-text-secondary); font-weight: 600; }
+.budget-auxiliary-table thead th { background: var(--budget-selection-surface); color: var(--budget-text-secondary); font-weight: 600; }
 .budget-auxiliary-table .budget-cell-number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .budget-auxiliary-table td:nth-child(2) { min-width: 15rem; max-width: 32rem; overflow-wrap: anywhere; }
 .budget-auxiliary-table code { font-family: inherit; font-size: inherit; overflow-wrap: anywhere; }

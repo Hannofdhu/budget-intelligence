@@ -19,12 +19,13 @@ const module = { exports: {} };
 new Function("require", "module", "exports", compiled.outputFiles[0].text)(require, module, module.exports);
 const { FY27Header } = module.exports;
 const urls = {
+  cockpit: "/budget/cockpit",
   budget: "/budget/workspace?archive=fy27&step=5",
   forecast: "/budget/forecast?archive=fy27",
   "next-year": "/budget/next-year",
   ai: "/budget/ai",
 };
-const labels = { budget: "FY27定版预算", forecast: "FY27全年预测", "next-year": "FY28预算编制", ai: "AI智解" };
+const labels = { cockpit: "预算驾驶舱", budget: "FY27定版预算", forecast: "FY27全年预测", "next-year": "FY28预算编制", ai: "AI智解" };
 const nodes = tree => {
   if (Array.isArray(tree)) return tree.flatMap(nodes);
   if (!tree || typeof tree !== "object") return [];
@@ -44,7 +45,7 @@ test("FY27 modules render the same single switch with exact routes and one curre
     assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
     const tree = FY27Header({ active, children: "状态" });
     const actual = links(tree);
-    assert.equal(actual.length, 4);
+    assert.equal(actual.length, 5);
     for (const key of Object.keys(labels)) {
       const link = actual.find(node => linkLabel(node) === labels[key]);
       assert.equal(link.props.href, urls[key]);
@@ -68,7 +69,7 @@ test("the shared header shows a read-only fiscal-year label for each module", ()
     assert.equal(label.props.tabIndex, undefined);
     assert.equal(nodes(context).some(node => node.type === "select" || node.type === "button" || node.type === "a"), false);
     assert.doesNotMatch(renderToStaticMarkup(context), /aria-haspopup|<svg|<select|chevron|dropdown/);
-    assert.equal(links(tree).length, 4, "the module switch remains available beside the static year");
+    assert.equal(links(tree).length, 5, "the module switch remains available beside the static year");
   }
 });
 
@@ -81,7 +82,10 @@ test("AI is a cross-year product assistant, not a mislabeled FY27 or FY28 budget
   assert.match(html, /FY27定版预算/); assert.match(html, /FY27全年预测/); assert.match(html, /FY28预算编制/);
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 1);
   assert.match(html, /href="\/budget\/ai" aria-current="page"/);
-  assert.match(source("App.tsx"), /if \(path === "\/budget\/ai"\) return <AiAgentPage \/>/);
+  const app = source("App.tsx");
+  assert.match(app, /const AiAgentPage = lazy\(\(\) => import\("\.\/AiChatPage"\)/);
+  assert.match(app, /if \(path === "\/budget\/ai"\) return <Suspense [^\n]+><AiAgentPage \/><\/Suspense>/);
+  assert.match(app, /正在打开对话工作区/);
 });
 
 test("an explicit budget fiscal year is displayed truthfully without introducing a selector", () => {
@@ -94,15 +98,15 @@ test("an explicit budget fiscal year is displayed truthfully without introducing
 
 test("module names take independent fiscal years, including equal years, without renaming unrelated data destinations", () => {
   const unchangedBase = FY27Header({ active: "next-year", fiscalYear: 2029, children: null });
-  assert.deepEqual(links(unchangedBase).map(linkLabel), ["FY27定版预算", "FY27全年预测", "FY29预算编制", "AI智解"]);
+  assert.deepEqual(links(unchangedBase).map(linkLabel), ["预算驾驶舱", "FY27定版预算", "FY27全年预测", "FY29预算编制", "AI智解"]);
   for (const years of [{ budget: 2029, forecast: 2029, "next-year": 2030 }, { budget: 2029, forecast: 2029, "next-year": 2029 }]) {
     const tree = FY27Header({ active: "ai", moduleFiscalYears: years, children: null });
-    assert.deepEqual(links(tree).map(linkLabel), ["FY29定版预算", "FY29全年预测", `FY${String(years["next-year"]).slice(-2)}预算编制`, "AI智解"]);
+    assert.deepEqual(links(tree).map(linkLabel), ["预算驾驶舱", "FY29定版预算", "FY29全年预测", `FY${String(years["next-year"]).slice(-2)}预算编制`, "AI智解"]);
     assert.deepEqual(links(tree).map(node => node.props.href), Object.values(urls), "display-only configuration must not invent future routing");
   }
   const forecast = FY27Header({ active: "forecast", fiscalYear: 2031, children: null });
-  assert.equal(linkLabel(links(forecast)[1]), "FY31全年预测");
-  assert.equal(linkLabel(links(forecast)[0]), "FY27定版预算", "another module's FY27 archive must not be mislabeled");
+  assert.equal(linkLabel(links(forecast)[2]), "FY31全年预测");
+  assert.equal(linkLabel(links(forecast)[1]), "FY27定版预算", "another module's FY27 archive must not be mislabeled");
 });
 
 test("clicking the current module never reloads or invokes the leave guard", () => {
@@ -183,7 +187,7 @@ test("the common header remains sticky and centered with one shared narrow-scree
   const shared = source("fy27Navigation.css"), global = source("styles.css");
   assert.match(global, /\.decision-topbar\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;/);
   assert.match(shared, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+minmax\(0,\s*1fr\)/);
-  assert.match(shared, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(shared, /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(shared, /@media\s*\(max-width:\s*1000px\)/);
   assert.match(shared, /grid-template-rows:\s*35px\s+48px/,
     "different budget selectors and forecast labels cannot change the switch's vertical position");

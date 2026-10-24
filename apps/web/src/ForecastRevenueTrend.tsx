@@ -5,7 +5,7 @@ import { BudgetDataSection } from "./BudgetDataSection";
 import { BudgetVersionTrace } from "./BudgetVersionIdentity";
 import { versionLabel, versionTimestamp, versionStatusLabel, versionUpdateLabel } from "./budgetVersionDisplay";
 import type { ExportColumn } from "./budgetExport";
-import { forecastNumber, forecastSeasons, getForecastRevenueTrend, getForecastSchedule,
+import { forecastNumber, forecastSeasons, getForecastRevenueTrend, getForecastSchedule, peekForecastRevenueTrend, peekForecastSchedule,
   type ForecastRevenueTrendEnvelope, type ForecastRevenueTrendPoint, type ForecastSchedule,
   type ForecastTrendDays, type ForecastTrendPeriod } from "./forecastApi";
 import "./forecastRevenueTrend.css";
@@ -156,7 +156,7 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
     </div>
     <div className={`forecast-trend-refresh${showFailureDetails ? " forecast-trend-warning" : ""}`}>
       <span role="status">{schedule ? <>{scheduleStatus && `${scheduleStatus} · `}{schedulePlan} · {scheduleSuccess}</>
-        : scheduleError ? <span>自动更新时间暂未读取，已保存预测不受影响</span> : <span>正在读取自动更新状态…</span>}
+        : scheduleError ? <span>自动更新时间暂未读取，已保存预测不受影响</span> : null}
       </span>
       {showFailureDetails && <details className="forecast-trend-failure"><summary>查看原因</summary>
         <p>{scheduleFailureMessage || "自动更新未完成，请联系管理员按诊断信息核查；当前保留上次成功预测。"}</p>
@@ -165,7 +165,7 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
         </dl>
       </details>}
     </div>
-    {loading && <p className="forecast-trend-message" role="status">{data ? "正在读取趋势，保留上次结果…" : "正在读取已保存的预测趋势…"}</p>}
+    {loading && !data && <div className="forecast-trend-message" aria-label="趋势图占位" aria-busy="true"/>}
     {error && <div className="forecast-trend-error" role="status"><span>趋势读取未完成。{data ? `仍显示${rangeLabel(shownDays)}的上次结果，其他预测内容已保留。` : "其他预测内容已保留。"} {error}</span><button type="button" disabled={loading} onClick={onRetry}>重新读取趋势</button></div>}
     {!loading && !error && !points.length && <p className="forecast-trend-message">当前范围还没有可用的历史快照；后续成功更新后将在这里积累趋势。</p>}
     {points.length > 0 && <>
@@ -178,7 +178,7 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
           selectIndex(index);
         }}>
           <title id={`${chartId}-title`}>{`${period}结转收入${mode === "change" ? "变化" : "总量"}趋势（万元）`}</title>
-          <desc id={`${chartId}-description`}>预计结转收入为深绿虚线，截至当日实际结转收入为蓝灰实线。{mode === "change" ? `两条线分别以 ${points[0].date} 的各自保存值为基准，纵轴为增减金额。` : "纵轴为绝对金额，包含零。"}横轴为北京时间快照保存日期，缺失数据不连线。可在下方使用日期选择滑块或展开趋势数据读取每个值。</desc>
+          <desc id={`${chartId}-description`}>预计结转收入为深陶土色虚线，截至当日实际结转收入为深蓝实线。{mode === "change" ? `两条线分别以 ${points[0].date} 的各自保存值为基准，纵轴为增减金额。` : "纵轴为绝对金额，包含零。"}横轴为北京时间快照保存日期，缺失数据不连线。可在下方使用日期选择滑块或展开趋势数据读取每个值。</desc>
           {geometry.ticks.map((tick, index) => <g key={index} className="forecast-trend-grid"><line x1={geometry.left} x2={geometry.right} y1={geometry.y(tick)} y2={geometry.y(tick)}/><text x={geometry.left - 10} y={geometry.y(tick) + 4} textAnchor="end">{tick.toLocaleString("zh-CN", { maximumFractionDigits: axisDigits })}</text></g>)}
           {mode === "change" && <line className="forecast-trend-zero" x1={geometry.left} x2={geometry.right} y1={geometry.y(0)} y2={geometry.y(0)}/>}
           <path className="forecast-trend-line is-forecast" d={geometry.series("forecast_revenue")}/>
@@ -215,9 +215,9 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
 /** Independent read-only loading: a trend failure cannot clear the page's saved calculation. */
 export function ForecastRevenueTrend({ identity, versionId, onVersion, busy = false }: { identity: ApiIdentity; versionId: string; onVersion: (id: string) => void; busy?: boolean }) {
   const [days, setDays] = useState<ForecastTrendDays>(30), [retry, setRetry] = useState(0);
-  const [saved, setSaved] = useState<{ version: string; days: ForecastTrendDays; data: ForecastRevenueTrendEnvelope } | null>(null);
+  const [saved, setSaved] = useState<{ version: string; days: ForecastTrendDays; data: ForecastRevenueTrendEnvelope } | null>(() => { const data = peekForecastRevenueTrend(identity, 30, versionId); return data ? { version: versionId, days: 30, data } : null; });
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
-  const [schedule, setSchedule] = useState<ForecastSchedule | null>(null), [scheduleError, setScheduleError] = useState(false);
+  const [schedule, setSchedule] = useState<ForecastSchedule | null>(() => peekForecastSchedule(identity)), [scheduleError, setScheduleError] = useState(false);
   useEffect(() => {
     const controller = new AbortController(); let current = true;
     setLoading(true); setError("");
@@ -228,7 +228,7 @@ export function ForecastRevenueTrend({ identity, versionId, onVersion, busy = fa
   }, [identity, versionId, days, retry]);
   useEffect(() => {
     const controller = new AbortController(); let current = true;
-    setSchedule(null); setScheduleError(false);
+    setSchedule(peekForecastSchedule(identity)); setScheduleError(false);
     void getForecastSchedule(identity, controller.signal).then(value => { if (current) setSchedule(value); })
       .catch(() => { if (current && !controller.signal.aborted) setScheduleError(true); });
     return () => { current = false; controller.abort(); };

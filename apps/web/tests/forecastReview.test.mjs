@@ -453,6 +453,19 @@ test("continuing from the leave modal returns directly to the last editing tab w
   }
 });
 
+test("read-only loading never locks module navigation, while writes and unsaved input retain their guards", () => {
+  for (const busy of ["读取预测", "读取当前版本", "读取历史版本"]) {
+    const h = pageHarness({ busy }); let prevented = 0;
+    const event = { button: 0, currentTarget: { href: "/budget/next-year" }, preventDefault() { prevented++; } };
+    component(h.page(), "FY27Header").props.onBeforeLeave(event);
+    assert.equal(prevented, 0); assert.equal(h.state.pendingNavigation, "");
+    assert.doesNotMatch(elementText(h.page()), /读取预测中|读取当前版本中|读取历史版本中/);
+    h.state.reason = "保留我的未保存修改";
+    component(h.page(), "FY27Header").props.onBeforeLeave(event);
+    assert.equal(prevented, 1); assert.equal(h.state.pendingNavigation, "/budget/next-year");
+  }
+});
+
 test("continuing an unsaved confirmation explanation stays at confirmation instead of opening unrelated parameter editing", () => {
   const h = pageHarness({ drawerTab: "business", drawerOpen: false, showConfirm: true, confirmationReason: "保留这条正式确认说明" });
   let prevented = 0;

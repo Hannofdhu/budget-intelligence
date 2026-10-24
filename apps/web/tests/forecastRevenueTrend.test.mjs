@@ -222,7 +222,7 @@ test("full forecast entry is hidden for the displayed version and only appears f
 });
 
 test("empty, loading and failed reads never show invented zeros or claim data loss; retry is local", () => {
-  let html = render({ data: null, loading: true }); assert.match(html, /正在读取已保存的预测趋势/); assert.doesNotMatch(html, /<svg/);
+  let html = render({ data: null, loading: true }); assert.match(html, /aria-label="趋势图占位" aria-busy="true"/); assert.doesNotMatch(html, /正在读取|<svg/);
   html = render({ data: null }); assert.match(html, /还没有可用的历史快照/); assert.doesNotMatch(html, /<table/);
   html = render({ error: "连接超时", days: 90, shownDays: 30 }); assert.match(html, /仍显示近 30 天的上次结果/); assert.match(html, /其他预测内容已保留/); assert.match(html, /连接超时/); assert.match(html, /<svg/);
   let retries = 0; const app = harness({ error: "读取失败", onRetry: () => retries++ });

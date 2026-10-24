@@ -1,0 +1,117 @@
+@import "./budgetTokens.css";
+
+.ai-chat-layout.is-knowledge-open { grid-template-columns: 264px minmax(420px,1fr) minmax(320px,384px); }
+.ai-chat-layout.is-knowledge-open.is-sidebar-closed { grid-template-columns: minmax(420px,1fr) minmax(320px,384px); }
+.ai-knowledge-toggle, .ai-knowledge-sidebar-link { color: var(--budget-text); background: var(--budget-surface); border: 1px solid var(--budget-control-border); border-radius: 8px; min-height: 36px; padding: 6px 9px; font-size: var(--budget-caption-size); }
+.ai-knowledge-toggle { flex-shrink: 0; white-space: nowrap; }
+.ai-chat-heading > div:first-child { flex: 1; min-width: 0; }
+.ai-chat-heading > div:last-child { flex-shrink: 0; }
+.ai-knowledge-toggle:hover, .ai-knowledge-sidebar-link:hover,
+.ai-knowledge-toggle[aria-expanded="true"], .ai-knowledge-sidebar-link[aria-expanded="true"] { background: var(--budget-selection-surface); border-color: var(--budget-text-secondary); }
+.ai-knowledge-toggle:focus-visible, .ai-knowledge-sidebar-link:focus-visible { outline: 2px solid var(--budget-text); outline-offset: 3px; }
+.ai-knowledge-sidebar-link { width: 100%; text-align: left; margin-bottom: 12px; padding: 11px 12px; font-weight: 500; }
+.ai-knowledge-applied { display: flex; align-items: center; justify-content: flex-end; min-height: 36px; padding: 4px 28px; border-bottom: 1px solid var(--budget-divider); background: var(--budget-page-background); flex: 0 0 auto; }
+.ai-knowledge-applied button { padding: 4px 0; border: 0; color: var(--budget-text-secondary); background: transparent; font-size: var(--budget-caption-size); text-align: right; }
+.ai-knowledge-card { max-width: 43.75rem; margin: 12px 0 0; padding: 24px 26px; border: 1px solid var(--budget-divider); border-radius: 10px; background: var(--budget-page-background); }
+.ai-knowledge-card-label { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ai-knowledge-card h3 { margin: 14px 0 10px; font-size: 24px; line-height: 1.5; font-weight: 600; }
+.ai-knowledge-card > p { margin: 0 0 18px; font-size: 16px; line-height: 1.8; }
+.ai-knowledge-card .ai-knowledge-actions button { min-width: 132px; min-height: 42px; padding: 8px 18px; }
+.ai-knowledge-card .ai-knowledge-actions .ai-knowledge-primary { min-width: 144px; }
+.ai-knowledge-card dl { margin: 18px 0 22px; padding-top: 14px; border-top: 1px solid var(--budget-divider); font-size: var(--budget-caption-size); color: var(--budget-text-secondary); }
+.ai-knowledge-card dl > div { display: flex; align-items: baseline; gap: 14px; margin: 4px 0; }
+.ai-knowledge-card dt { min-width: 4em; }
+.ai-knowledge-card dd { margin: 0; overflow-wrap: anywhere; }
+.ai-knowledge-state { display: inline-block; flex: 0 0 auto; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: 500; line-height: 1.7; background: var(--budget-selection-surface); color: var(--budget-text-secondary); }
+.ai-knowledge-state.is-pending { color: var(--budget-warning); background: var(--budget-warning-background); }
+.ai-knowledge-state.is-active { color: #465637; background: #f0f2ea; }
+.ai-knowledge-actions, .ai-knowledge-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.ai-knowledge-actions button, .ai-knowledge-row-actions button, .ai-knowledge-remove button, .ai-knowledge-error button { min-height: 38px; padding: 7px 12px; border: 1px solid var(--budget-control-border); border-radius: 7px; color: var(--budget-text); background: var(--budget-surface); }
+.ai-chat-shell .ai-knowledge-primary { background: var(--budget-accent); color: var(--budget-text); border-color: var(--budget-accent); font-weight: 500; }
+.ai-knowledge-actions button:hover:not(:disabled), .ai-knowledge-row-actions button:hover:not(:disabled) { border-color: var(--budget-text); }
+.ai-chat-shell .ai-knowledge-inline-note { margin: 12px 0 0; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); line-height: 1.8; }
+.ai-knowledge-text-action { display: inline-block; margin: 5px 6px 0 0; padding: 3px 0; border: 0; background: transparent; color: var(--budget-text); text-decoration: underline; text-underline-offset: 3px; font-size: var(--budget-caption-size); }
+.ai-knowledge-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--budget-divider); background: var(--budget-surface); overflow: hidden; }
+.ai-knowledge-panel[hidden] { display: none; }
+.ai-knowledge-panel > header { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 22px 24px 16px; }
+.ai-knowledge-panel h2 { margin: 0; font-size: var(--budget-section-title-size); font-weight: 600; }
+.ai-knowledge-panel header p { margin: 6px 0 0; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); }
+.ai-knowledge-close { padding: 5px 8px; min-height: 32px; flex-shrink: 0; border: 1px solid transparent; border-radius: 6px; color: var(--budget-text-secondary); background: transparent; font-size: var(--budget-caption-size); }
+.ai-knowledge-close:hover { background: var(--budget-selection-surface); }
+.ai-knowledge-panel-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 6px 24px 24px; scrollbar-width: thin; }
+.ai-knowledge-search { display: block; margin: 0 0 28px; }
+.ai-knowledge-manage-tools { margin: 0 0 16px; }
+.ai-knowledge-add, .ai-knowledge-delete { min-height: 36px; padding: 6px 10px; border: 1px solid var(--budget-control-border); border-radius: 7px; background: var(--budget-surface); color: var(--budget-text); font-size: var(--budget-caption-size); }
+.ai-knowledge-add { width: 100%; text-align: center; }
+.ai-knowledge-add:hover, .ai-knowledge-delete:hover { background: var(--budget-selection-surface); border-color: var(--budget-text-secondary); }
+.ai-knowledge-entry-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ai-knowledge-entry-toolbar .ai-knowledge-entry-meta { min-width: 0; }
+.ai-knowledge-delete { flex-shrink: 0; }
+.ai-knowledge-create { margin: 0 0 22px; padding: 14px; border: 1px solid var(--budget-divider); border-radius: 8px; background: var(--budget-page-background); }
+.ai-knowledge-create h3 { margin: 0 0 6px; font-size: var(--budget-body-size); }
+.ai-knowledge-create fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.ai-knowledge-create-scope { margin-top: 14px; font-size: var(--budget-caption-size); }
+.ai-knowledge-create-scope summary { cursor: pointer; line-height: 1.8; }
+.ai-knowledge-search input { width: 100%; min-width: 0; min-height: 40px; padding: 8px 11px; border: 1px solid var(--budget-control-border); border-radius: 8px; background: var(--budget-surface); color: var(--budget-text); font-size: var(--budget-caption-size); }
+.ai-knowledge-group + .ai-knowledge-group { margin-top: 26px; }
+.ai-knowledge-group > h3 { margin: 0; padding: 9px 0; font-size: var(--budget-body-size); font-weight: 600; border-bottom: 1px solid var(--budget-divider); }
+.ai-knowledge-entry { padding: 17px 2px; border-bottom: 1px solid var(--budget-divider); }
+.ai-knowledge-entry-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; text-align: left; width: 100%; padding: 0; border: 0; background: transparent; color: var(--budget-text); }
+.ai-knowledge-entry-heading strong { flex: 1; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.ai-knowledge-entry-meta { margin: 5px 0 0; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); }
+.ai-knowledge-entry-detail { margin-top: 12px; font-size: var(--budget-caption-size); }
+.ai-knowledge-entry-detail p { margin: 8px 0; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-knowledge-entry-detail small, .ai-knowledge-snapshot small { color: var(--budget-text-secondary); }
+.ai-knowledge-entry-detail details { margin-top: 12px; }
+.ai-knowledge-entry-detail summary { cursor: pointer; padding: 5px 0; }
+.ai-knowledge-entry-detail blockquote { margin: 8px 0; padding: 8px 12px; border-left: 2px solid var(--budget-divider); background: var(--budget-page-background); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-knowledge-entry-detail ol { padding-left: 20px; }
+.ai-knowledge-panel > footer { padding: 16px 24px 20px; margin: 0; border-top: 1px solid var(--budget-divider); font-size: var(--budget-caption-size); color: var(--budget-text-secondary); line-height: 1.8; }
+.ai-knowledge-views { display: flex; gap: 16px; margin-bottom: 18px; }
+.ai-knowledge-views button { padding: 6px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ai-knowledge-views button[aria-pressed="true"] { border-bottom-color: var(--budget-text); color: var(--budget-text); }
+.ai-knowledge-snapshot > h3 { margin: 0 0 8px; font-size: var(--budget-body-size); }
+.ai-knowledge-snapshot > p, .ai-knowledge-empty { font-size: var(--budget-caption-size); color: var(--budget-text-secondary); line-height: 1.9; }
+.ai-knowledge-snapshot article { padding: 18px 0; border-bottom: 1px solid var(--budget-divider); }
+.ai-knowledge-snapshot h4 { margin: 0 0 8px; font-size: var(--budget-body-size); font-weight: 500; }
+.ai-knowledge-snapshot article > p { margin: 0 0 10px; font-size: var(--budget-caption-size); line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-knowledge-form { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--budget-divider); }
+.ai-knowledge-form h4 { margin: 0 0 6px; font-size: var(--budget-body-size); }
+.ai-knowledge-form > p { margin: 0 0 12px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ai-knowledge-form label { display: grid; gap: 6px; margin-top: 12px; font-size: var(--budget-caption-size); }
+.ai-chat-shell .ai-knowledge-form :is(input,textarea,select) { min-width: 0; width: 100%; min-height: 38px; padding: 7px 9px; border: 1px solid var(--budget-control-border); border-radius: 6px; background: var(--budget-surface); color: var(--budget-text); }
+.ai-knowledge-form textarea { resize: vertical; }
+.ai-knowledge-error, .ai-knowledge-remove { padding: 10px 0; font-size: var(--budget-caption-size); }
+.ai-knowledge-error, .ai-knowledge-warning { color: var(--budget-warning); }
+.ai-knowledge-answer-warning { margin-bottom: 16px; padding: 12px 14px; border-left: 3px solid var(--budget-warning); background: var(--budget-warning-background); color: var(--budget-text); font-size: var(--budget-caption-size); }
+.ai-knowledge-answer-warning p { margin: 5px 0; }
+.ai-knowledge-checks { margin: 10px 0; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ai-knowledge-checks summary { cursor: pointer; padding: 4px 0; }
+.ai-knowledge-remove { margin-top: 14px; border-top: 1px solid var(--budget-divider); }
+.ai-knowledge-remove button + button { margin-left: 8px; }
+@media (max-width: 1279px) and (min-width: 960px) {
+  .ai-chat-layout.is-knowledge-open { grid-template-columns: minmax(420px,1fr) 340px; }
+  .ai-chat-layout.is-knowledge-open .ai-chat-sidebar { display: none; }
+}
+@media (max-width: 959px) {
+  .ai-chat-layout.is-knowledge-open, .ai-chat-layout.is-knowledge-open.is-sidebar-closed { grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto; height: auto; }
+  .ai-chat-layout.is-knowledge-open .ai-knowledge-panel { grid-row: 1; grid-column: 1; max-height: min(60dvh,560px); border-left: 0; border-bottom: 1px solid var(--budget-divider); }
+  .ai-chat-layout.is-knowledge-open .ai-chat-main { grid-row: 2; height: calc(100dvh - var(--budget-header-height,72px)); min-height: 420px; }
+  .ai-knowledge-panel > header { padding: 16px 18px 10px; }
+  .ai-knowledge-panel-scroll { padding: 4px 18px 16px; }
+  .ai-knowledge-panel > footer { padding: 10px 18px; }
+  .ai-knowledge-search { margin-bottom: 14px; }
+}
+@media (max-width: 600px) {
+  .ai-chat-heading { flex-wrap: wrap; }
+  .ai-chat-heading > div:first-child { flex: 1 1 100%; }
+  .ai-chat-heading > div:last-child { width: 100%; justify-content: flex-end; }
+  .ai-knowledge-toggle { padding-inline: 4px; font-size: 12px; }
+  .ai-knowledge-applied { padding-inline: 16px; }
+  .ai-knowledge-card { padding: 18px 16px; }
+  .ai-knowledge-card h3 { font-size: 19px; }
+  .ai-knowledge-actions { gap: 7px; }
+  .ai-knowledge-actions button { padding-inline: 9px; }
+  .ai-knowledge-card .ai-knowledge-actions button { min-width: 0; flex: 1 1 auto; }
+  .ai-knowledge-panel h2 { font-size: 18px; }
+}

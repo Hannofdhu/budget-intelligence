@@ -101,24 +101,26 @@ class ForecastStore:
     def _events(self, department: str) -> list[Json]:
         if not self.root.exists():
             return []
-        events = []
+        verified: list[tuple[Json, str]] = []
         for path in sorted(self.root.glob("event-*.json")):
             try:
                 envelope = json.loads(path.read_text(encoding="utf-8"))
                 event = envelope["event"]
-                if fingerprint(event) != envelope["sha256"]:
+                digest = fingerprint(event)
+                if digest != envelope["sha256"]:
                     raise ForecastStoreError("预测记录完整性校验失败，未使用该结果")
                 if event["department_id"] == department:
-                    events.append(event)
+                    verified.append((event, digest))
             except (KeyError, TypeError, json.JSONDecodeError) as exc:
                 raise ForecastStoreError("预测记录损坏，未使用该结果") from exc
-        events.sort(key=lambda event: event["event_no"])
+        verified.sort(key=lambda item: item[0]["event_no"])
         prior = None
-        for number, event in enumerate(events, 1):
+        for number, (event, digest) in enumerate(verified, 1):
             if event["event_no"] != number or event.get("previous_event_hash") != prior:
                 raise ForecastStoreError("预测版本链不完整，未使用该结果")
-            prior = fingerprint(event)
-        return events
+            # The same canonical digest has already been verified above.
+            prior = digest
+        return [event for event, _digest in verified]
 
     @staticmethod
     def _versions(events: list[Json]) -> list[Json]:

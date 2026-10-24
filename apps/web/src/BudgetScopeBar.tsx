@@ -9,6 +9,7 @@ type Props<T extends Record<string, FilterValue>> = {
   dimensions: readonly BudgetScopeDimension<T>[];
   onChange: (next: T) => void;
   label?: string;
+  summary?: string;
   count?: number;
   countLabel?: string;
   disabled?: boolean;
@@ -19,7 +20,7 @@ type Props<T extends Record<string, FilterValue>> = {
 
 /** A view-only scope control. Its caller owns filtering, URL state and data. */
 export function BudgetScopeBar<T extends Record<string, FilterValue>>({ filters, dimensions, onChange,
-  label = "当前范围", count, countLabel = "条明细", disabled = false, children, selectLabelPrefix = "筛选", onClear }: Props<T>) {
+  label = "当前范围", summary, count, countLabel = "条明细", disabled = false, children, selectLabelPrefix = "筛选", onClear }: Props<T>) {
   const active = dimensions.filter(dimension => hasFilter(filters[dimension.key]));
   const clear = () => {
     if (onClear) onClear();
@@ -27,7 +28,7 @@ export function BudgetScopeBar<T extends Record<string, FilterValue>>({ filters,
   };
   return <section className="budget-scope-bar" aria-label={label}>
     <div className="budget-scope-heading">
-      <div className="budget-scope-summary"><strong>{label}</strong>{!active.length && <span>全部预算</span>}
+      <div className="budget-scope-summary"><strong>{label}</strong>{summary ? <span>{summary}</span> : !active.length && <span>全部预算</span>}
         {count !== undefined && <small>{count.toLocaleString("zh-CN")} {countLabel}</small>}</div>
       <div className="budget-scope-actions">{children}{active.length > 0 && <button type="button" className="budget-scope-clear" disabled={disabled} onClick={clear}>清除筛选</button>}</div>
     </div>

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BudgetBrand } from "./BudgetBrand";
+import { budgetNavigationEvent, budgetHistoryLeaveEvent } from "./budgetNavigation";
+import { preloadBudgetModules } from "./budgetPreload";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OpeningStudentsPage } from "./OpeningStudentsPage";
 import { WorkspacePage } from "./WorkspacePage";
 import { HistoricalBudgetPage } from "./HistoricalBudgetPage";
 import { ForecastPage } from "./ForecastPage";
 import { NextYearBudgetPage } from "./NextYearBudgetPage";
-import { AiAgentPage } from "./AiAgentPage";
-
+import { FY27Header } from "./FY27Header";
 import {
   ApiError,
   confirmFormalPlan,
@@ -32,6 +34,9 @@ import { BudgetVersionIdentity, BudgetVersionTrace } from "./BudgetVersionIdenti
 import { versionLabel } from "./budgetVersionDisplay";
 import { revisionCommandLabel } from "./budgetRevisionDisplay";
 import "./publicationDesign.css";
+
+const AiAgentPage = lazy(() => import("./AiChatPage").then(module => ({ default: module.AiChatPage })));
+const BudgetCockpitPage = lazy(() => import("./BudgetCockpitPage"));
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type CheckFilter = "all" | "blocked";
@@ -225,9 +230,22 @@ function BudgetOverviewRedirect() {
 }
 
 export function App() {
-  const path = window.location.pathname;
-  if (path === "/budget/ai") return <AiAgentPage />;
+  const [path, setPath] = useState(window.location.pathname);
+  const currentPath = useRef(path);
+  currentPath.current = path;
+  useEffect(() => {
+    const route = (event: Event) => {
+      if (event.type === "popstate" && currentPath.current !== window.location.pathname && !window.dispatchEvent(new Event(budgetHistoryLeaveEvent, { cancelable: true }))) return;
+      setPath(window.location.pathname);
+    };
+    window.addEventListener(budgetNavigationEvent, route);
+    window.addEventListener("popstate", route);
+    preloadBudgetModules();
+    return () => { window.removeEventListener(budgetNavigationEvent, route); window.removeEventListener("popstate", route); };
+  }, []);
+  if (path === "/budget/ai") return <Suspense fallback={<main className="decision-workspace" aria-busy="true"><h1 className="budget-page-title">AI智解</h1><p role="status">正在打开对话工作区…</p></main>}><AiAgentPage /></Suspense>;
   if (path === "/budget/forecast") return <ForecastPage />;
+  if (path === "/budget/cockpit") return <Suspense fallback={<div className="decision-shell budget-shell"><FY27Header active="cockpit"><span>只读汇总</span></FY27Header><main className="decision-workspace" aria-busy="true"><h1 className="budget-page-title">预算驾驶舱</h1><p role="status">正在汇集已保存成果…</p></main></div>}><BudgetCockpitPage /></Suspense>;
   if (path === "/budget/next-year") return <NextYearBudgetPage />;
   if (path === "/budget/workspace" && new URLSearchParams(location.search).get("archive") === "fy27") return <HistoricalBudgetPage />;
   if (path === "/" || path === "/budget/workspace") return <WorkspacePage />;
@@ -391,10 +409,10 @@ function PublicationPage() {
 
   if (!revision || !readiness || !annualBudget) {
     if (revisionInput && loadState !== "error") {
-      return <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取发布状态…</p></main></div>;
+      return <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取发布状态…</p></main></div>;
     }
     return (
-      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1 className="budget-page-title">{error ? "发布状态读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
+      <div className="decision-shell publication-loading"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 确认与发布</p><h1 className="budget-page-title">{error ? "发布状态读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void loadRevision(revisionInput, identity)}>重试读取</button>}</main></div>
     );
   }
 

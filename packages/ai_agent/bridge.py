@@ -16,7 +16,7 @@ from packages.ai_agent.config import ModelConfig
 
 _MODEL_PATH = re.compile(r"/model/([^/]+)/v1/chat/completions\Z")
 _BUDGET_PATH = re.compile(
-    r"/budget/(help|fy27-budget|fy27-forecast|fy28-budget|next-year-catalog|"
+    r"/budget/(help|cockpit|cockpit:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}|fy27-budget|fy27-forecast|fy28-budget|next-year-catalog|"
     r"fy27-forecast-versions|fy28-budget-versions|"
     r"(?:fy27-forecast-version|fy28-budget-version):[A-Za-z0-9_-]{1,128})\Z"
 )

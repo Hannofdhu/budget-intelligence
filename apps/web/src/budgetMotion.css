@@ -1,0 +1,280 @@
+/*
+ * budgetMotion.css — 预算智解统一动效与圆角增强
+ *
+ * 遵循 DESIGN.md 第 11.2、15.6、17 章：动效只解释状态变化，不做装饰。
+ * 禁止：数字滚动、闪烁、弹跳、整页入场、背景动画、鼠标跟随、改变正在编辑的行位置。
+ * 全程 ≤ 180ms；全部尊重 prefers-reduced-motion；一切仅影响 compositor 属性
+ * （opacity / transform / box-shadow / border-color / background-color）以避免重排。
+ *
+ * 圆角采用「连续曲率」近似：支持 corner-shape 的浏览器自动获得真 squircle；
+ * 其他浏览器按新 radius 梯度获得更圆润的 border-radius。
+ */
+
+/* ============================================================
+ * 1. 连续曲率圆角（渐进增强）
+ * ============================================================ */
+@supports (corner-shape: squircle) {
+  :root {
+    /* True squircle looks fuller, so slightly reduce the fallback-oriented radius ladder. */
+    --budget-radius-xs: 5px;
+    --budget-radius-sm: 8px;
+    --budget-radius-md: 10px;
+    --budget-radius-lg: 16px;
+    --budget-radius-xl: 22px;
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  .button,
+  .icon-button,
+  .segmented,
+  .segmented button,
+  .candidate-card,
+  .candidate-empty,
+  .scenario-detail,
+  .proof-panel,
+  .unlock-desk,
+  .detail-drawer,
+  .detail-drawer__close,
+  .ledger,
+  .docket,
+  .action-panel,
+  .published-receipt,
+  .declaration,
+  .declaration__signal,
+  .job-strip,
+  .inline-error,
+  .revision-ticket,
+  .lever-rail,
+  .lever-rail__stage em,
+  .trial-content,
+  .trial-record,
+  .trial-notice,
+  .trial-table,
+  .trial-working,
+  .application-receipt,
+  .rebalance-connect form,
+  .rebalance-connect input,
+  .change-table__head,
+  .detail-diff-row > header > span,
+  .brand__seal {
+    corner-shape: squircle;
+  }
+}
+
+/* ============================================================
+ * 2. 全局圆角修正：把生硬的 2/3/4px 升级到梯度
+ *    保留 50% / 999px 等语义角色不动。
+ * ============================================================ */
+
+/* 顶栏品牌印章：从 2px → sm，与导航气质一致 */
+.brand__seal {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* 分段控件：从 2/1px → md/sm，强化胶囊观感 */
+.segmented {
+  border-radius: var(--budget-radius-md);
+}
+
+.segmented button {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* 主按钮、通用按钮：从 2px → md */
+.button,
+.trial-app button,
+.icon-button {
+  border-radius: var(--budget-radius-md);
+}
+
+/* 表单控件：从 2/3px → sm；聚焦阴影柔化 */
+textarea,
+input {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* 工作提示浮条：从 4px → lg（浮层应更饱满） */
+.trial-working {
+  border-radius: var(--budget-radius-lg);
+}
+
+/* 结果筛选按钮等辅助控件 */
+.result-filters button,
+.result-export {
+  border-radius: var(--budget-radius-md);
+}
+
+/* 调平信号块、宣告面板的方形徽章保持方形感，但去掉硬边 */
+.declaration__signal {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* 候选卡片、证据面板等大容器：若无显式圆角，补 lg */
+.candidate-card,
+.candidate-empty,
+.scenario-detail,
+.proof-panel,
+.unlock-desk,
+.detail-drawer,
+.ledger,
+.docket,
+.action-panel,
+.published-receipt,
+.job-strip,
+.inline-error,
+.revision-ticket,
+.lever-rail,
+.application-receipt,
+.rebalance-connect form,
+.trial-content,
+.trial-record,
+.trial-notice {
+  border-radius: var(--budget-radius-lg);
+}
+
+/* 嵌套在大容器内的小标签 */
+.lever-rail__stage em,
+.change-table__head,
+.detail-diff-row > header > span {
+  border-radius: var(--budget-radius-xs);
+}
+
+/* 关闭按钮等小方块控件 */
+.detail-drawer__close,
+.scenario-detail > header button {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* 子表格外壳 */
+.trial-table {
+  border-radius: var(--budget-radius-md);
+}
+
+/* 连接表单输入 */
+.rebalance-connect input {
+  border-radius: var(--budget-radius-sm);
+}
+
+/* ============================================================
+ * 3. A 组：交互态过渡（150ms，compositor-only）
+ *    hover / 焦点 / 选中态的颜色与边框变化
+ * ============================================================ */
+
+button,
+a,
+input,
+textarea,
+select,
+summary,
+.button,
+.icon-button,
+.segmented button {
+  transition:
+    background-color var(--budget-duration-sm) var(--budget-ease-standard),
+    border-color var(--budget-duration-sm) var(--budget-ease-standard),
+    color var(--budget-duration-sm) var(--budget-ease-standard),
+    box-shadow var(--budget-duration-xs) var(--budget-ease-standard);
+}
+
+/* 主按钮按下反馈：轻微 scale，不位移布局 */
+.button:active:not(:disabled),
+.icon-button:active:not(:disabled),
+.trial-app button:active:not(:disabled) {
+  transform: scale(.985);
+  transition-duration: var(--budget-duration-xs);
+}
+
+/* ============================================================
+ * 4. B 组：焦点环淡入
+ *    outline 无法 transition，用 box-shadow 兼顾淡入与可见性
+ * ============================================================ */
+
+:where(button, a, input, textarea, select, summary):focus-visible {
+  transition:
+    outline-offset var(--budget-duration-xs) var(--budget-ease-standard),
+    box-shadow var(--budget-duration-xs) var(--budget-ease-standard),
+    background-color var(--budget-duration-sm) var(--budget-ease-standard),
+    border-color var(--budget-duration-sm) var(--budget-ease-standard);
+}
+
+/* ============================================================
+ * 5. C 组：面板 / 浮层展开（可中断，不改变滚动位置）
+ *    使用 opacity + 极小 translateY；仅动画打开态，关闭瞬时隐藏
+ *    避免规范禁止的「移动正在编辑的行」。
+ * ============================================================ */
+
+@keyframes budget-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 多选筛选菜单、历史抽屉、工具面板等脱离正文流的浮层 */
+.budget-filter-select__menu,
+.budget-utility-panel__content,
+.detail-drawer,
+.scenario-detail,
+.proof-panel {
+  animation: budget-fade-rise var(--budget-duration-md) var(--budget-ease-emphasized);
+  animation-fill-mode: both;
+}
+
+/* ============================================================
+ * 6. D 组：状态徽标淡入
+ *    保存状态、未读角标、校验结果等文字切换时 opacity 淡入，无位移
+ * ============================================================ */
+
+@keyframes budget-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 这些类是整个产品里公用的状态容器；仅做 opacity 过渡，不动位置 */
+.status-badge,
+.save-status,
+.ai-chat__status,
+.ai-chat__unread,
+.budget-version-identity__state,
+.inline-error > strong,
+.inline-error > span {
+  animation: budget-fade-in var(--budget-duration-xs) var(--budget-ease-standard);
+}
+
+/* ============================================================
+ * 7. 全局 reduced-motion 兜底
+ *    规范要求"支持 prefers-reduced-motion，减少或去掉过渡"
+ *    已有的模块级 reduced-motion 规则保持不变；此处是全局安全网
+ * ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+ * 8. 打印：关闭所有装饰
+ * ============================================================ */
+
+@media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

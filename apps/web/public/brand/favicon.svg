@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <style>@media(prefers-color-scheme:dark){.frame{fill:#faf9f5}}</style>
+  <path class="frame" d="M8 8H48L30 26H26V70H70V66L88 48V88H8Z" fill="#141413"/>
+  <path d="M62 8H88V34L70 52V26H44Z" fill="#d97757"/>
+</svg>

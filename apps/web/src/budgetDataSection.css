@@ -1,6 +1,6 @@
 @import "./budgetTokens.css";
 
-/* Scoped M1 sample: do not change the remaining history/next-year sections. */
+/* Shared data section: visual roles only, no data/editing behavior. */
 .budget-data-section {
   min-width: 0;
   margin: var(--budget-space-6) 0;
@@ -28,7 +28,7 @@
   border: 1px solid var(--budget-control-border);
   border-radius: var(--budget-radius-control);
   background: var(--budget-control-surface);
-  color: var(--budget-accent);
+  color: var(--budget-text);
   font: inherit;
   font-size: var(--budget-body-size);
   line-height: 1.42858;
@@ -36,7 +36,7 @@
   white-space: nowrap;
 }
 .budget-data-section .budget-data-section__actions button { min-height: 2.5rem; }
-.budget-data-section button:hover:not(:disabled) { background: #eaf2eb; }
+.budget-data-section button:hover:not(:disabled) { background: var(--budget-selection-surface); }
 .budget-data-section button:disabled { opacity: .5; cursor: default; }
 .budget-data-section :focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
 .budget-data-section > .table-transfer { align-items: flex-end; gap: var(--budget-space-2); padding: 0 0 var(--budget-space-3); border: 0; background: transparent; }
@@ -56,11 +56,11 @@
 .budget-data-section__scroll { max-height: 32.5rem; max-width: 100%; overflow: auto; isolation: isolate; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-control); scroll-margin-bottom: calc(var(--ny-action-bar-height, 0px) + 16px); }
 .budget-data-section__scroll table { width: 100%; border-collapse: collapse; font: inherit; font-size: var(--budget-body-size); line-height: 1.42858; font-variant-numeric: tabular-nums; text-align: left; }
 .budget-data-section__scroll th, .budget-data-section__scroll td { padding: var(--budget-space-3); border-bottom: 1px solid var(--budget-divider); text-align: left; vertical-align: middle; scroll-margin-top: calc(var(--budget-header-height, 72px) + var(--budget-page-nav-height, 62px) + 16px); scroll-margin-bottom: calc(var(--ny-action-bar-height, 0px) + 16px); }
-.budget-data-section__scroll thead th { position: sticky; top: 0; z-index: 1; background: #edf2ee; color: var(--budget-text-secondary); font-size: var(--budget-body-size); font-weight: 600; white-space: nowrap; }
+.budget-data-section__scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--budget-selection-surface); color: var(--budget-text-secondary); font-size: var(--budget-body-size); font-weight: 600; white-space: nowrap; }
 .budget-data-section__scroll tbody tr { height: 3rem; }
 .budget-data-section__scroll tbody th { min-width: 15rem; font-weight: 500; overflow-wrap: anywhere; }
 .budget-data-section__scroll tbody th strong { font-weight: 600; }
-.budget-data-section__scroll tbody tr:hover { background: #f0f5f1; }
+.budget-data-section__scroll tbody tr:hover { background: var(--budget-page-background); }
 .budget-data-section__scroll small { display: block; margin-top: var(--budget-space-1); color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-weight: 400; line-height: 1.5; }
 .budget-data-section__scroll .budget-cell-number { text-align: right; white-space: nowrap; }
 .budget-data-section__scroll td { min-width: 5rem; }

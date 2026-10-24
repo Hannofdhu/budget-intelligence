@@ -14,14 +14,18 @@ import time
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field
 
 from packages.ai_agent.bridge import BridgeHandler
+from packages.ai_agent.chat import ChatError, ChatService, ChatStore, public_chat
+from packages.ai_agent.chat_title import generate_chat_title
 from packages.ai_agent.config import ModelConfigError, load_model_config
+from packages.ai_agent.knowledge import KnowledgeConflict, KnowledgeDraft, KnowledgeError
 from packages.ai_agent.runtime import RuntimeErrorSafe, RuntimeManager
 from packages.config.settings import get_settings
 
@@ -30,6 +34,7 @@ COOKIE = "budget_ai_session"
 LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "testclient"}
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 RESOURCES = {
+    "cockpit": "/budget-cockpit",
     "fy27-budget": "/historical-budgets/fy27",
     "fy27-forecast": "/forecasts/fy27/current",
     "fy27-forecast-versions": "/forecasts/fy27/current",
@@ -83,6 +88,19 @@ class AiService:
         self.owners: dict[str, str] = {}
         self.tickets: dict[str, tuple[str, str, float]] = {}
         self.lock = asyncio.Lock()
+        self._chats: ChatService | None = None
+
+    def chats(self) -> ChatService:
+        if self._chats is None:
+            root = Path(getattr(get_settings(), "ai_agent_runtime_root", "output/ai-agent"))
+
+            async def title_generator(question: str, answer: str) -> str | None:
+                return await generate_chat_title((await self.manager()).config, question, answer)
+
+            self._chats = ChatService(
+                ChatStore(root / "chat-history"), self.manager, title_generator=title_generator
+            )
+        return self._chats
 
     def browser(self, connection: Request | WebSocket) -> str:
         key = connection.cookies.get(COOKIE, "")
@@ -120,8 +138,26 @@ class AiService:
             return {
                 "role": "预算智解产品使用助手，帮助理解数据与使用产品，不修改产品源码或预算",
                 "resources": list(RESOURCES),
-                "version_resources": ["fy27-forecast-version:<id>", "fy28-budget-version:<id>"],
+                "version_resources": [
+                    "fy27-forecast-version:<id>",
+                    "fy28-budget-version:<id>",
+                    "cockpit:<forecast-id>:<next-year-id>",
+                ],
+                "dimensions": {
+                    "campus": "校区：组织维度，使用接口的campus字段；不是赛道",
+                    "track": "赛道：业务维度，使用接口的track字段；不是校区",
+                    "product": "产品",
+                    "subject": "科目",
+                    "grade": "年级",
+                    "season": "季度",
+                    "notice": "名称与数量以本次读取数据为准；不要把赛道值填入仅表示校区的列",
+                },
+                "knowledge": "长期知识由产品界面确认保存；工作区文件不等于跨对话记忆，不得宣称已永久保存",
                 "modules": {
+                    "预算驾驶舱": (
+                        "已保存成果的跨模块只读汇集；定版目标、截至快照日期实际、全年预计"
+                        "和下一年预算草稿分开呈现。可按六维或其组合下钻，必须保留精确来源与范围。"
+                    ),
                     "查看预算": "FY27 已定版预算，只读看板与透视；可筛选、复制表格、导出明细",
                     "达成预测": "使用已保存预测及来源快照回顾；更新、调整、确认在原产品中进行",
                     "下一年预算": "FY28 以已确认 FY27 预测为基础，经营目标由用户设置；五步拆解",
@@ -137,6 +173,11 @@ class AiService:
                 ],
             }
         path = RESOURCES.get(resource)
+        if path is None and resource.startswith("cockpit:"):
+            parts = resource.split(":")
+            if len(parts) != 3 or not all(SAFE_ID.fullmatch(part) for part in parts[1:]):
+                raise ValueError("驾驶舱快照标识无效")
+            path = f"/budget-cockpit?forecast_version={parts[1]}&next_year_version={parts[2]}"
         if path is None:
             kind, separator, identifier = resource.partition(":")
             if not separator or not SAFE_ID.fullmatch(identifier):
@@ -175,6 +216,8 @@ def _service(connection: Request | WebSocket) -> AiService:
 
 async def close_ai_agent(app: FastAPI) -> None:
     service = getattr(app.state, "ai_agent_service", None)
+    if service and service._chats:
+        await service._chats.close()
     if service and service.runtime:
         await service.runtime.close()
 
@@ -188,12 +231,16 @@ async def status(request: Request, response: Response) -> dict[str, Any]:
     service.browsers = {key: expiry for key, expiry in service.browsers.items() if expiry > now}
     service.tickets = {key: item for key, item in service.tickets.items() if item[2] > now}
     key = request.cookies.get(COOKIE, "")
-    if key not in service.browsers:
+    if key not in service.browsers and not (
+        key and (service.chats().store.known_owner(key) or service.chats().knowledge.known_owner(key))
+    ):
         if len(service.browsers) >= 64:
             raise HTTPException(429, "本机浏览器会话过多，请稍后重试")
         key = secrets.token_urlsafe(32)
     service.browsers[key] = now + 3600
-    response.set_cookie(COOKIE, key, httponly=True, samesite="strict", max_age=3600, path="/api/v1/ai-agent")
+    response.set_cookie(
+        COOKIE, key, httponly=True, samesite="strict", max_age=31_536_000, path="/api/v1/ai-agent"
+    )
     result: dict[str, Any] = {
         "available": False,
         "reason": "AI 运行环境未准备好",
@@ -229,6 +276,208 @@ async def start(request: Request) -> dict[str, Any]:
         raise HTTPException(503, "Pi 暂时无法启动，请检查 Docker 和本机模型配置后重试") from exc
     service.owners[session.id] = owner
     return _session_view(session.to_dict())
+
+
+class ChatCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    context: dict[str, Any] | None = None
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ChatMessageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: str = Field(min_length=1, max_length=32_000)
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ChatUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    title: str | None = Field(default=None, min_length=1, max_length=80)
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+class ChatRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    completion_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class KnowledgeProposalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    message_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class KnowledgeUpdateInput(KnowledgeDraft):
+    revision: int = Field(ge=1)
+
+
+class KnowledgeCreateInput(KnowledgeDraft):
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class KnowledgeActionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    revision: int = Field(ge=1)
+    action: Literal["approve", "disable", "dismiss", "delete"]
+    replacements: dict[str, int] = Field(default_factory=dict, max_length=20)
+
+
+@router.get("/knowledge")
+async def knowledge_list(request: Request, response: Response) -> dict[str, Any]:
+    _guard(request)
+    service = _service(request)
+    owner = service.browser(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return service.chats().knowledge.list(owner)
+    except (KnowledgeError, OSError) as exc:
+        raise HTTPException(503, "知识暂时无法读取，未覆盖原记录；请重试") from exc
+
+
+@router.post("/knowledge", status_code=201)
+async def knowledge_create(request: Request, body: KnowledgeCreateInput) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        draft = KnowledgeDraft.model_validate(body.model_dump(exclude={"request_id"}))
+        return service.chats().knowledge.create(owner, draft, body.request_id)
+    except KnowledgeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "记录未确认保存，输入内容仍保留，请重试") from exc
+
+
+@router.post("/conversations/{conversation_id}/knowledge-proposals", status_code=201)
+async def knowledge_propose(
+    request: Request, conversation_id: str, body: KnowledgeProposalInput
+) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        return await service.chats().remember(owner, conversation_id, body.message_id)
+    except (KnowledgeError, ChatError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "候选知识暂时无法保存，原对话仍保留，请重试") from exc
+
+
+@router.patch("/knowledge/{knowledge_id}")
+async def knowledge_update(request: Request, knowledge_id: str, body: KnowledgeUpdateInput) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        draft = KnowledgeDraft.model_validate(body.model_dump(exclude={"revision"}))
+        return service.chats().knowledge.update(owner, knowledge_id, body.revision, draft)
+    except (KnowledgeConflict, KnowledgeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "知识修改未确认保存，请刷新核对；原对话仍保留") from exc
+
+
+@router.post("/knowledge/{knowledge_id}/actions")
+async def knowledge_action(request: Request, knowledge_id: str, body: KnowledgeActionInput) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        return service.chats().knowledge.act(
+            owner, knowledge_id, body.revision, body.action, body.replacements
+        )
+    except (KnowledgeConflict, KnowledgeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "知识操作未确认保存，请刷新核对；原对话仍保留") from exc
+
+
+@router.get("/conversations")
+async def conversations(request: Request, response: Response) -> dict[str, Any]:
+    _guard(request)
+    service = _service(request)
+    owner = service.browser(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        chats = service.chats()
+        items = chats.list(owner)
+        return {"conversations": items, "storage": "local-browser-owned"}
+    except (ChatError, OSError) as exc:
+        raise HTTPException(503, "历史对话暂时无法读取，原记录仍保留") from exc
+
+
+@router.post("/conversations", status_code=201)
+async def create_conversation(request: Request, body: ChatCreate) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        return public_chat(service.chats().store.create(owner, body.context, body.request_id))
+    except ChatError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(request: Request, response: Response, conversation_id: str) -> dict[str, Any]:
+    _guard(request)
+    service = _service(request)
+    owner = service.browser(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        chats = service.chats()
+        return chats.present(owner, chats.read(owner, conversation_id, summarize_title=True))
+    except ChatError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.patch("/conversations/{conversation_id}")
+async def update_conversation(request: Request, conversation_id: str, body: ChatUpdate) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        chats = service.chats()
+        return chats.present(
+            owner, await chats.update(owner, conversation_id, body.model_dump(exclude_unset=True))
+        )
+    except ChatError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/messages", status_code=202)
+async def send_chat_message(request: Request, conversation_id: str, body: ChatMessageInput) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        chats = service.chats()
+        return chats.present(owner, await chats.send(owner, conversation_id, body.text, body.request_id))
+    except ChatError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/stop")
+async def stop_chat_message(request: Request, conversation_id: str) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        chats = service.chats()
+        return chats.present(owner, await chats.stop(owner, conversation_id))
+    except ChatError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/read")
+async def read_chat_result(request: Request, conversation_id: str, body: ChatRead) -> dict[str, Any]:
+    _guard(request, mutation=True)
+    service = _service(request)
+    owner = service.browser(request)
+    try:
+        chats = service.chats()
+        return chats.present(owner, await chats.acknowledge(owner, conversation_id, body.completion_id))
+    except ChatError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.post("/sessions/{session_id}/attach-ticket")

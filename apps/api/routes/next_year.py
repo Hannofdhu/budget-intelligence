@@ -6,6 +6,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import Field
+from starlette.concurrency import run_in_threadpool
 
 from apps.api.auth import current_actor
 from apps.api.routes import forecast as forecast_routes
@@ -25,6 +26,7 @@ router = APIRouter()
 store = NextYearStore()
 Json = dict[str, Any]
 ActorDep = Annotated[Actor, Depends(current_actor)]
+_source_options_cache: dict[tuple[Any, ...], list[Json]] = {}
 RequestId = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]
 DRAFT_FIELDS = {
     "id",
@@ -186,6 +188,33 @@ def _latest_source(versions: list[Json], baseline: Json, fiscal_year: str = "fy2
     return forecast_basis(latest)
 
 
+async def _observed_source(actor: Actor, baseline: Json, fiscal_year: str) -> Json | None:
+    if _year(fiscal_year) != baseline.get("fiscal_year", 2027) + 1:
+        return None
+    if hasattr(forecast_routes.store, "latest_confirmed"):
+        latest = await forecast_routes._store_call("latest_confirmed", actor.department_id)
+        return _latest_source([latest] if latest else [], baseline, fiscal_year)
+    return _latest_source(await _forecasts(actor), baseline, fiscal_year)
+
+
+async def _source_options(actor: Actor, baseline: Json, history: list[Json]) -> list[Json]:
+    # Confirmation is part of the token: confirming an older version must also
+    # invalidate this projection. Every request still checks access + DB head.
+    token = tuple((item["id"], item["status"]) for item in history)
+    key = id(forecast_routes.store), actor.department_id, baseline["sha256"], token
+    if key in _source_options_cache:
+        return deepcopy(_source_options_cache[key])
+    sources = []
+    for version in reversed(await _forecasts(actor)):
+        if version.get("status") == "CONFIRMED":
+            _validate_forecast(version, baseline)
+            sources.append({**forecast_basis(version), "fiscal_year": baseline["fiscal_year"]})
+    if len(_source_options_cache) >= 8:
+        _source_options_cache.pop(next(iter(_source_options_cache)))
+    _source_options_cache[key] = sources
+    return deepcopy(sources)
+
+
 def _digest(command: str, body: StrictBody) -> str:
     try:
         return fingerprint({"command": command, "body": body.model_dump(mode="json")})
@@ -229,12 +258,11 @@ def _validate_bound_source(draft: Json, baseline: Json) -> None:
 async def catalog(request: Request, actor: ActorDep) -> Json:
     baseline = await forecast_routes._access(request, actor)
     try:
-        versions = await _forecasts(actor)
-        sources = []
-        for version in reversed(versions):
-            if version.get("status") == "CONFIRMED":
-                _validate_forecast(version, baseline)
-                sources.append({**forecast_basis(version), "fiscal_year": baseline["fiscal_year"]})
+        forecast_view = await forecast_routes._current(actor)
+        sources = await _source_options(actor, baseline, forecast_view["history"])
+        latest_draft = next(
+            (item for item in forecast_view["history"] if item.get("status") == "DRAFT"), None
+        )
         years = {2028, baseline["fiscal_year"] + 1}
         if store.root.exists():
             years.update(
@@ -244,7 +272,8 @@ async def catalog(request: Request, actor: ActorDep) -> Json:
             )
         contexts = []
         for year in sorted(years):
-            draft = _store_for_year(str(year)).current(actor.department_id)["draft"]
+            view = await run_in_threadpool(_store_for_year(str(year)).current, actor.department_id)
+            draft = view["draft"]
             if draft is None and year not in {2028, baseline["fiscal_year"] + 1}:
                 continue
             contexts.append(
@@ -267,6 +296,15 @@ async def catalog(request: Request, actor: ActorDep) -> Json:
             "source_fiscal_year": baseline["fiscal_year"],
             "default_fiscal_year": baseline["fiscal_year"] + 1,
             "sources": sources,
+            # Presentation metadata only: drafts remain ineligible as a basis.
+            "latest_draft": (
+                {
+                    **{key: latest_draft[key] for key in ("id", "sequence", "as_of", "status")},
+                    "fiscal_year": baseline["fiscal_year"],
+                }
+                if latest_draft
+                else None
+            ),
             "fiscal_years": contexts,
         }
     except (ForecastStoreError, NextYearError) as exc:
@@ -277,8 +315,8 @@ async def catalog(request: Request, actor: ActorDep) -> Json:
 async def current(request: Request, actor: ActorDep, fiscal_year: str = "fy28") -> Json:
     baseline = await forecast_routes._access(request, actor)
     try:
-        view = _store_for_year(fiscal_year).current(actor.department_id)
-        source = _latest_source(await _forecasts(actor), baseline, fiscal_year)
+        view = await run_in_threadpool(_store_for_year(fiscal_year).current, actor.department_id)
+        source = await _observed_source(actor, baseline, fiscal_year)
         draft = view["draft"]
         if draft:
             _check_year(draft, fiscal_year)
@@ -473,9 +511,9 @@ async def versions(request: Request, actor: ActorDep, fiscal_year: str = "fy28")
 async def version(request: Request, version_id: str, actor: ActorDep, fiscal_year: str = "fy28") -> Json:
     baseline = await forecast_routes._access(request, actor)
     try:
-        view = _selected_version(actor, version_id, fiscal_year)
+        view = await run_in_threadpool(_selected_version, actor, version_id, fiscal_year)
         _validate_bound_source(view["draft"], baseline)
-        source = _latest_source(await _forecasts(actor), baseline, fiscal_year)
+        source = await _observed_source(actor, baseline, fiscal_year)
         bound = view["draft"]["source"]
         changed = source is None or any(
             bound.get(key) != source.get(key) for key in ("id", "calculation_hash")

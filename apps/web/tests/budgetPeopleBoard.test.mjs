@@ -83,7 +83,7 @@ test("unknown renewal stays unpainted and zero is displayed and plotted as real 
     fact({ id: "missing", grade: "八年级", renewalNumerator: null, renewalDenominator: null }),
   ]);
   const table = renewalTable(html);
-  assert.match(table, /class="ba-renewal-heatcell" style="background-color:rgba\(54, 106, 85, 0\.04\)"[^>]*>[\s\S]*?春续暑，预算续班率，0%/);
+  assert.match(table, /class="ba-renewal-heatcell" style="background-color:rgba\(217, 119, 87, 0\.04\)"[^>]*>[\s\S]*?春续暑，预算续班率，0%/);
   assert.match(table, /<td class="ba-renewal-heatcell"><button[^>]*智慧空间，八年级，春续暑，预算续班率，—/);
   const zeroOnly = render([fact({ renewalNumerator: 0, renewalDenominator: 100 })]);
   assert.match(zeroOnly, /class="ba-renewal-point"[^>]*cy="150"/);

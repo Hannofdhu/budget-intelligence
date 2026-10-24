@@ -250,6 +250,9 @@ async def test_budget_callback_receives_only_resource_and_never_mutates() -> Non
         "fy28-budget-versions",
         "fy27-forecast-version:01a1-abc_DEF",
         "fy28-budget-version:01a1-abc_DEF",
+        "cockpit",
+        "cockpit:p26:n25",
+        "cockpit:none:none",
     ],
 )
 async def test_budget_version_resources_have_safe_identifier_whitelist(resource: str) -> None:

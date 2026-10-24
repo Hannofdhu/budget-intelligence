@@ -8,13 +8,14 @@ import path from "node:path";
 
 const resources = [
   "help",
+  "cockpit",
   "fy27-budget", "fy27-forecast", "fy28-budget", "next-year-catalog",
   "fy27-forecast-versions", "fy28-budget-versions",
 ];
 const help = {
-  usage: "budget-api list | budget-api get RESOURCE [--version ID] [--output FILE]",
+  usage: "budget-api list | budget-api get RESOURCE [--version ID] [--forecast-version ID --budget-version ID] [--output FILE]",
   resources,
-  examples: ["budget-api get fy27-budget", "budget-api get fy28-budget --output budget.json"],
+  examples: ["budget-api get fy27-budget", "budget-api get fy28-budget --output budget.json", "budget-api get cockpit --forecast-version FORECAST_ID --budget-version BUDGET_ID --output cockpit.json"],
   permissions: "仅查询产品已保存数据；不能修改预算、刷新预测或执行定版。",
 };
 async function main() {
@@ -29,17 +30,22 @@ async function main() {
   if (args[0] !== "get" || !resources.includes(resource)) throw new Error("未知资源；运行 budget-api help");
   let version = null;
   let output = null;
+  let forecastVersion = null, budgetVersion = null;
   for (let i = 2; i < args.length; i += 2) {
     const key = args[i], value = args[i + 1];
-    if (!value || !["--version", "--output"].includes(key)) throw new Error("参数无效");
+    if (!value || !["--version", "--output", "--forecast-version", "--budget-version"].includes(key)) throw new Error("参数无效");
     if (key === "--version") version = value;
+    else if (key === "--forecast-version") forecastVersion = value;
+    else if (key === "--budget-version") budgetVersion = value;
     else output = value;
   }
   if (version && !["fy27-forecast", "fy28-budget"].includes(resource)) {
     throw new Error("该资源不支持版本查询");
   }
   if (version && !/^[A-Za-z0-9_-]{1,128}$/.test(version)) throw new Error("版本标识无效");
-  const requested = version ? `${resource}-version:${version}` : resource;
+  if ((forecastVersion || budgetVersion) && (resource !== "cockpit" || !forecastVersion || !budgetVersion || version)) throw new Error("驾驶舱须同时提供两个快照标识");
+  if ([forecastVersion, budgetVersion].some(value => value && !/^[A-Za-z0-9_-]{1,128}$/.test(value))) throw new Error("驾驶舱快照标识无效");
+  const requested = forecastVersion && budgetVersion ? `cockpit:${forecastVersion}:${budgetVersion}` : version ? `${resource}-version:${version}` : resource;
   const url = `/budget/${encodeURIComponent(requested)}`;
   const data = await new Promise((resolve, reject) => {
     const request = http.get({ hostname: "127.0.0.1", port: 4081, path: url }, response => {

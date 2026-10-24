@@ -1,3 +1,4 @@
+import { BudgetBrand } from "./BudgetBrand";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionTable } from "./ActionTable";
 import "./auxiliaryDesign.css";
@@ -462,9 +463,9 @@ export function RebalancingPage() {
   }
 
   if (!revision || !budget) {
-    if (revisionInput && state !== "error") return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取预算缺口…</p></main></div>;
+    if (revisionInput && state !== "error") return <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace" aria-busy="true"><div className="decision-skeleton decision-skeleton--progress" /><div className="decision-skeleton decision-skeleton--title" /><div className="decision-skeleton decision-skeleton--body" /><p role="status">正在读取预算缺口…</p></main></div>;
     return (
-      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><span aria-hidden="true">智</span><strong>预算智解</strong></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 处理缺口</p><h1>{error ? "预算缺口读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void load(revisionInput)}>重试读取</button>}</main></div>
+      <div className="decision-shell"><header className="decision-topbar"><a className="decision-brand" href="/budget/workspace"><BudgetBrand /></a></header><main className="decision-workspace publication-entry"><p className="decision-kicker">年度预算 / 处理缺口</p><h1>{error ? "预算缺口读取失败" : "请先打开年度预算"}</h1>{error && <p role="alert">{error}</p>}<a className="decision-primary" href="/budget/workspace">返回年度预算</a>{revisionInput && <button className="publication-retry" onClick={() => void load(revisionInput)}>重试读取</button>}</main></div>
     );
   }
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from packages.forecast.store import fingerprint
+from packages.forecast.store import ForecastStoreError, fingerprint
 from packages.next_year.store import NextYearStore, NextYearStoreError
 
 Json = dict[str, Any]
@@ -54,6 +54,42 @@ def _append(
 
 def _files(path: Path) -> dict[str, bytes]:
     return {item.name: item.read_bytes() for item in path.glob("event-*.json")}
+
+
+def test_current_read_cache_reuses_validation_but_detects_another_writer_and_copy_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = NextYearStore(tmp_path)
+    first = _append(store)["draft"]
+    read_events = store._events
+    calls = 0
+
+    def counted(department: str) -> list[Json]:
+        nonlocal calls
+        calls += 1
+        return read_events(department)
+
+    monkeypatch.setattr(store, "_events", counted)
+    before = _files(tmp_path)
+    viewed = store.current("department")
+    viewed["draft"]["inputs"]["frozen"]["students"] = 999
+    assert store.current("department")["draft"]["inputs"]["frozen"]["students"] == 10
+    assert calls == 1 and _files(tmp_path) == before
+    second = _append(NextYearStore(tmp_path), request="other-writer", parent=first["id"], operation="REVISE")
+    assert store.current("department")["draft"]["id"] == second["draft"]["id"]
+    assert calls == 2
+    assert store.current("other-department")["draft"] is None
+
+
+def test_warm_current_cache_rejects_modified_files(tmp_path: Path) -> None:
+    store = NextYearStore(tmp_path)
+    _append(store)
+    store.current("department")
+    target = next(tmp_path.glob("event-*.json"))
+    original = target.read_text()
+    target.write_text(original.replace('"prepare or revise"', '"corrupt or revise"'))
+    with pytest.raises(ForecastStoreError, match="完整性"):
+        store.current("department")
 
 
 def test_empty_and_first_draft_keep_full_frozen_basis(tmp_path: Path) -> None:

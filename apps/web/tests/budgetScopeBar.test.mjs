@@ -18,6 +18,15 @@ const find = (node, predicate) => Array.isArray(node) ? node.flatMap(child => fi
 const label = node => Array.isArray(node) ? node.map(label).join("") : node && typeof node === "object" ? label(node.props?.children)
   : node == null || typeof node === "boolean" ? "" : String(node);
 
+test("a caller's drill summary cannot masquerade as all budget while global filters remain untouched", () => {
+  const filters = { campus: "", season: "" };
+  const html = renderToStaticMarkup(createElement(BudgetScopeBar, { filters, dimensions, count: 32,
+    summary: "下钻：赛道：空间、年级：七年级", onChange() { assert.fail("render is read-only"); } }));
+  assert.match(html, /下钻：赛道：空间、年级：七年级/);
+  assert.doesNotMatch(html, />全部预算</);
+  assert.deepEqual(filters, { campus: "", season: "" });
+});
+
 test("shared scope distinguishes all budget, active scope and zero results without changing input", () => {
   const filters = { campus: "", season: "" }, before = JSON.stringify(filters);
   const all = renderToStaticMarkup(createElement(BudgetScopeBar, { filters, dimensions, count: 952, onChange() {} }));

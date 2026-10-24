@@ -1,6 +1,6 @@
 @import "./budgetTokens.css";
 
-.forecast-revenue-trend { --trend-forecast: var(--budget-accent); --trend-actual: #496678; margin-bottom: 24px; }
+.forecast-revenue-trend { --trend-forecast: var(--budget-chart-forecast); --trend-actual: var(--budget-chart-actual); margin-bottom: 24px; }
 .forecast-revenue-trend > .budget-data-section__heading { margin-bottom: 12px; }
 .forecast-revenue-trend > .budget-data-section__description { max-width: none; margin-bottom: 12px; }
 .forecast-shell .forecast-trend-range { display: flex; align-items: center; flex-direction: row; gap: 8px; color: var(--budget-text-secondary); font-size: var(--budget-label-size); }
@@ -8,17 +8,17 @@
 .forecast-trend-context { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 24px; margin: 8px 0; }
 .forecast-trend-periods { display: flex; flex-wrap: wrap; gap: 4px; }
 .forecast-shell .forecast-trend-periods button { min-height: 36px; padding: 6px 12px; border-color: transparent; background: transparent; }
-.forecast-shell .forecast-revenue-trend .forecast-trend-periods button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); border-color: var(--budget-accent); font-weight: 600; }
+.forecast-shell .forecast-revenue-trend .forecast-trend-periods button[aria-pressed="true"] { color: var(--budget-selected-text); background: var(--budget-text); border-color: var(--budget-text); font-weight: 600; }
 .forecast-trend-modes { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--budget-divider); border-radius: 8px; background: var(--budget-surface); }
 .forecast-shell .forecast-trend-modes button { min-height: 36px; padding: 6px 12px; border-color: transparent; background: transparent; white-space: nowrap; }
-.forecast-shell .forecast-revenue-trend .forecast-trend-modes button[aria-pressed="true"] { color: #fff; background: var(--budget-accent); border-color: var(--budget-accent); font-weight: 600; }
+.forecast-shell .forecast-revenue-trend .forecast-trend-modes button[aria-pressed="true"] { color: var(--budget-selected-text); background: var(--budget-text); border-color: var(--budget-text); font-weight: 600; }
 .forecast-trend-legend { display: flex; flex-wrap: wrap; gap: 12px 20px; font-size: var(--budget-caption-size); color: var(--budget-text-secondary); }
 .forecast-trend-legend span { display: inline-flex; align-items: center; gap: 8px; }
 .forecast-trend-legend span::before { content: ""; width: 24px; border-top: 2px solid var(--trend-actual); }
 .forecast-trend-legend .is-forecast::before { border-top-color: var(--trend-forecast); border-top-style: dashed; }
 .forecast-trend-refresh { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); overflow-wrap: anywhere; }
 .forecast-trend-warning { color: var(--budget-warning); }
-.forecast-trend-failure > summary { cursor: pointer; color: var(--budget-accent); min-height: 36px; align-content: center; }
+.forecast-trend-failure > summary { cursor: pointer; color: var(--budget-text); min-height: 36px; align-content: center; }
 .forecast-trend-failure[open] { flex-basis: 100%; }
 .forecast-trend-failure p { margin: 4px 0 8px; }
 .forecast-trend-failure dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0 0 8px; color: var(--budget-text-secondary); }
@@ -38,7 +38,7 @@
 .forecast-trend-dot.is-actual { fill: var(--trend-actual); }
 .forecast-trend-cursor { stroke: var(--budget-text-secondary); stroke-width: 1; stroke-dasharray: 2 4; opacity: .6; pointer-events: none; vector-effect: non-scaling-stroke; }
 .forecast-shell .forecast-trend-date-control { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 12px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
-.forecast-shell .forecast-trend-date-control input[type="range"] { flex: 1 1 160px; width: auto; min-width: 0; min-height: 36px; padding: 0; accent-color: var(--budget-accent); cursor: pointer; }
+.forecast-shell .forecast-trend-date-control input[type="range"] { flex: 1 1 160px; width: auto; min-width: 0; min-height: 36px; padding: 0; accent-color: var(--budget-text); cursor: pointer; }
 .forecast-trend-date-control time { min-width: 6.5rem; text-align: right; font-variant-numeric: tabular-nums; }
 .forecast-trend-point { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 8px 24px; padding: 12px 0 0; border-top: 1px solid var(--budget-divider); }
 .forecast-trend-point-values { display: flex; flex-wrap: wrap; gap: 16px 32px; }
@@ -53,12 +53,12 @@
 .forecast-trend-hint, .forecast-trend-message { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.5; margin: 12px 0; overflow-wrap: anywhere; }
 .forecast-trend-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px; border-left: 3px solid var(--budget-error); color: var(--budget-error); background: var(--budget-error-background); margin: 12px 0; }
 .forecast-trend-data { margin-top: 12px; }
-.forecast-trend-data > summary { width: fit-content; min-height: 36px; display: list-item; align-content: center; color: var(--budget-accent); cursor: pointer; font-size: var(--budget-body-size); }
+.forecast-trend-data > summary { width: fit-content; min-height: 36px; display: list-item; align-content: center; color: var(--budget-text); cursor: pointer; font-size: var(--budget-body-size); }
 .forecast-trend-data > .action-table { margin-top: 12px; }
 .forecast-trend-table-wrap { max-width: 100%; overflow: auto; isolation: isolate; border: 1px solid var(--budget-divider); border-radius: 8px; }
 .forecast-trend-table-wrap table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: var(--budget-body-size); line-height: 1.42858; }
 .forecast-trend-table-wrap th, .forecast-trend-table-wrap td { padding: 12px 16px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--budget-divider); font-variant-numeric: tabular-nums; }
-.forecast-trend-table-wrap thead th { color: var(--budget-text-secondary); background: var(--budget-table-header-surface, #edf2ee); font-weight: 600; }
+.forecast-trend-table-wrap thead th { color: var(--budget-text-secondary); background: var(--budget-table-header-surface, var(--budget-selection-surface)); font-weight: 600; }
 .forecast-trend-table-wrap td { min-height: 48px; }
 .forecast-revenue-trend :is(button, input, select, summary):focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 2px; }
 @media (max-width: 850px) {

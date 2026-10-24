@@ -1106,6 +1106,7 @@ async def test_catalog_lists_real_confirmed_sources_and_keeps_old_source_selecta
     view = await route.catalog(request, actor)
     assert view["source_fiscal_year"] == 2027
     assert view["default_fiscal_year"] == 2028
+    assert view["latest_draft"] is None
     assert [item["id"] for item in view["sources"]] == [latest["id"], first["id"]]
     assert view["fiscal_years"] == [
         {
@@ -1126,6 +1127,61 @@ async def test_catalog_lists_real_confirmed_sources_and_keeps_old_source_selecta
     assert prepared["draft"]["source"]["id"] == first["id"]
     assert prepared["source_changed"] is True
     assert (await route.catalog(request, actor))["fiscal_years"][0]["has_draft"] is True
+
+
+@pytest.mark.asyncio
+async def test_catalog_explains_latest_draft_without_confirming_or_selecting_it(
+    setup_route: tuple[Request, Actor, Json],
+) -> None:
+    request, actor, _ = setup_route
+    confirmed = _forecast(actor)
+    older_draft = _forecast(actor, parent=confirmed["id"], sequence=2, confirmed=False)
+    latest = _forecast(actor, parent=older_draft["id"], sequence=3, confirmed=False)
+    before_forecast, before_budget = _bytes(_forecast_store().root), _bytes(route.store.root)
+
+    view = await route.catalog(request, actor)
+
+    assert view["latest_draft"] == {
+        **{key: latest[key] for key in ("id", "sequence", "as_of", "status")},
+        "fiscal_year": 2027,
+    }
+    assert [item["id"] for item in view["sources"]] == [confirmed["id"]]
+    assert "source evidence" not in str(view)
+    assert "calculation" not in view["latest_draft"]
+    assert _bytes(_forecast_store().root) == before_forecast
+    assert _bytes(route.store.root) == before_budget
+    current = await route.current(request, actor)
+    assert current["source"]["id"] == confirmed["id"]
+    assert current["draft"] is None
+
+    # A real confirmation updates the catalog; reading the notice never does.
+    _forecast_store().confirm(
+        department=actor.department_id,
+        actor=actor.user_id,
+        version_id=latest["id"],
+        request_id="confirm-latest-for-catalog",
+        request_hash="catalog-confirmed-fixture",
+        reason="fixture reviewed",
+    )
+    updated = await route.catalog(request, actor)
+    assert updated["sources"][0]["id"] == latest["id"]
+    assert updated["latest_draft"]["id"] == older_draft["id"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_can_explain_a_draft_before_any_forecast_is_confirmed(
+    setup_route: tuple[Request, Actor, Json],
+) -> None:
+    request, actor, _ = setup_route
+    assert (await route.catalog(request, actor))["latest_draft"] is None
+    latest = _forecast(actor, confirmed=False)
+    before = _bytes(_forecast_store().root)
+    view = await route.catalog(request, actor)
+    assert view["sources"] == []
+    assert view["latest_draft"]["id"] == latest["id"]
+    assert view["latest_draft"]["status"] == "DRAFT"
+    assert view["fiscal_years"][0]["can_prepare"] is False
+    assert _bytes(_forecast_store().root) == before
 
 
 @pytest.mark.asyncio

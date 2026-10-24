@@ -1,0 +1,22 @@
+.budget-brand-mark {
+  display: block;
+  flex: 0 0 auto;
+  width: var(--budget-brand-size, 2rem);
+  height: var(--budget-brand-size, 2rem);
+  object-fit: contain;
+}
+
+.decision-brand, .brand:has(.budget-brand-mark) { white-space: nowrap; }
+.brand:has(.budget-brand-mark) strong { font-size: .9375rem; }
+
+.ai-agent-start-hint { display: flex; align-items: center; gap: 1rem; }
+.ai-agent-start-hint .budget-brand-mark { --budget-brand-size: 2.5rem; }
+.ai-agent-start-hint strong { color: var(--budget-text); font-weight: 600; }
+.ai-agent-start-hint p { margin: .375rem 0 0; }
+
+@media (max-width: 500px) {
+  .decision-brand, .brand:has(.budget-brand-mark) { --budget-brand-size: 1.75rem; }
+  .brand:has(.budget-brand-mark) { gap: .5rem; }
+  .ai-agent-start-hint { gap: .75rem; }
+  .ai-agent-start-hint .budget-brand-mark { --budget-brand-size: 2rem; }
+}

@@ -1,0 +1,13 @@
+.xiaoyu { display: block; flex: 0 0 auto; width: 3rem; height: auto; aspect-ratio: 360 / 340; object-fit: contain; pointer-events: none; user-select: none; }
+.xiaoyu.is-welcome { width: 8rem; margin-bottom: 1rem; }
+.xiaoyu.is-empty { width: 6rem; margin-bottom: 1rem; }
+.xiaoyu-feedback { display: flex; align-items: center; gap: .75rem; }
+.xiaoyu-feedback > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.xiaoyu-feedback-title { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; }
+.ny-empty > .xiaoyu { margin-inline: auto; }
+.forecast-error .xiaoyu-feedback-title > strong { margin: 0; }
+@media (max-width: 600px) {
+  .xiaoyu.is-welcome { width: 5.5rem; margin-bottom: .75rem; }
+  .xiaoyu.is-inline { width: 2.5rem; }
+  .xiaoyu-feedback, .xiaoyu-feedback-title { gap: .5rem; }
+}

@@ -38,13 +38,22 @@ class FakeRuntime(RuntimeManager):
     async def status(self) -> dict[str, Any]:
         return {"available": True, "isolated": True, "pi_version": "1.2.0"}
 
-    async def start(self, *, cols: int = 100, rows: int = 30) -> Session:
+    async def start(
+        self,
+        *,
+        cols: int = 100,
+        rows: int = 30,
+        mode: str = "terminal",
+        workspace_id: str | None = None,
+    ) -> Session:
         session = Session(
             f"session_{len(self.sessions) + 1}",
             Path("/unused-fixture"),
             status="running",
             cols=cols,
             rows=rows,
+            mode=mode,
+            workspace_id=workspace_id or "",
         )
         self.sessions.append(session)
         return session
@@ -468,3 +477,36 @@ async def test_budget_help_uses_product_revenue_terminology() -> None:
         and "不要与业务收入（含税）、原价收入或结转比例混称" in rule
         for rule in rules
     )
+
+
+async def test_cockpit_reader_preserves_both_exact_pins_and_server_owned_get_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    observed: list[dict[str, Any]] = []
+
+    @app.get("/api/v1/budget-cockpit")
+    async def cockpit(request: Request) -> dict[str, Any]:
+        observed.append(
+            {
+                "method": request.method,
+                "params": dict(request.query_params),
+                "department": request.headers.get("x-department-id"),
+            }
+        )
+        return {"read_only": True, "sources": {"forecast": {"id": "p26"}}}
+
+    monkeypatch.setattr(route, "get_settings", _settings)
+    result = await route.AiService(app).read_budget("cockpit:p26:n25")
+    assert result["read_only"] is True
+    assert observed == [
+        {
+            "method": "GET",
+            "params": {"forecast_version": "p26", "next_year_version": "n25"},
+            "department": "fixture-department",
+        }
+    ]
+    for resource in ("cockpit:p26", "cockpit:p26:n25:extra", "cockpit:../p26:n25", "cockpit:p26:n25?write=1"):
+        with pytest.raises(ValueError):
+            await route.AiService(app).read_budget(resource)
+    assert len(observed) == 1

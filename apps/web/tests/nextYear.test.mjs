@@ -45,7 +45,7 @@ test("API uses an independent next-year ledger and exact saved forecast/parent, 
     const preview = await previewNextYearBudget(identity, "next-year-N1", inputs());
     assert.equal(preview.source.id, source.id); assert.equal(preview.calculation.annual.total_students, 400);
     assert.deepEqual(requests.map(r => r.url), ["current", "prepare", "revise", "preview"].map(p => `/api/v1/next-year-budgets/fy28/${p}`));
-    assert.equal(requests[0].signal, signal); assert.equal(new Headers(requests[0].headers).get("X-User-ID"), identity.userId);
+    assert.notEqual(requests[0].signal, signal, "a leaving subscriber cannot abort another page's shared background read"); assert.equal(new Headers(requests[0].headers).get("X-User-ID"), identity.userId);
     assert.deepEqual(JSON.parse(requests[1].body), { forecast_id: source.id, parent_id: null, reason: "基于已确认 FY27 预测生成 FY28 预算草稿" });
     assert.deepEqual(JSON.parse(requests[3].body), { parent_id: "next-year-N1", inputs: inputs() });
     for (const r of requests.slice(1)) { assert.equal(r.method, "POST"); assert.match(r.headers["Idempotency-Key"], /^[a-f0-9-]{36}$/); }
@@ -233,6 +233,53 @@ test("a missing or ineligible source never turns source_changed into a fictitiou
   } finally { restore(); }
 });
 
+test("confirmed basis picker explains the latest draft without selecting it or changing saved inputs", () => {
+  const restore = fakeBrowser();
+  try {
+    const confirmed = { ...source, id: "forecast-P20", sequence: 20 };
+    const saved = draft({ sequence: 25, source: confirmed });
+    const h = pageHarness({ stateData: envelope({ source: confirmed, draft: saved }) });
+    h.state[14] = { source_fiscal_year: 2027, sources: [confirmed], fiscal_years: [], latest_draft: { id: "forecast-P26", sequence: 26, fiscal_year: 2027, status: "DRAFT", as_of: "2026-10-23" } };
+    const before = JSON.stringify([h.state[1], h.state[2], h.state[3]]);
+    openVersions(h);
+    const tree = h.render(), html = h.html();
+    const picker = nodes(tree).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准");
+    assert.ok(picker);
+    assert.equal(picker.props.value, confirmed.id);
+    assert.equal(picker.props["aria-describedby"], "ny-source-draft-note");
+    assert.deepEqual(nodes(picker.props.children).filter(node => node.type === "option").map(node => node.props.value), [confirmed.id]);
+    assert.match(text(html), /最新草稿：FY27全年预测 · 第26版，尚未确认。核对并确认后可在此选择；不会自动更换当前基准。/);
+    assert.match(text(html), /编制基准：FY27全年预测 · 第20版/);
+    assert.doesNotMatch(html, /编制基准预测|基准预测版本|value="forecast-P26"/);
+    assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), before);
+  } finally { restore(); }
+});
+
+test("draft basis notices are year-aware and never advertise an older or confirmed version as the latest draft", () => {
+  const restore = fakeBrowser();
+  try {
+    const candidate = { id: "new-draft", sequence: 26, fiscal_year: 2027, status: "DRAFT", as_of: "2026-10-23" };
+    for (const latest of [null, { ...candidate, fiscal_year: 2028 }, { ...candidate, sequence: 15 }, { ...candidate, status: "CONFIRMED" }]) {
+      const h = pageHarness(); h.state[14] = { source_fiscal_year: 2027, sources: [source], fiscal_years: [], latest_draft: latest };
+      openVersions(h); assert.doesNotMatch(h.html(), /最新草稿：|ny-source-draft-note/);
+    }
+    const h = pageHarness(); h.state[15] = 2030;
+    h.state[14] = { source_fiscal_year: 2029, sources: [{ ...source, fiscal_year: 2029 }], fiscal_years: [], latest_draft: { ...candidate, fiscal_year: 2029, sequence: 37 } };
+    openVersions(h); assert.match(text(h.html()), /最新草稿：FY29全年预测 · 第37版/);
+  } finally { restore(); }
+});
+
+test("first-use empty state explains an unconfirmed draft without offering it as a selectable basis", () => {
+  const restore = fakeBrowser();
+  try {
+    const h = pageHarness({ stateData: envelope({ source: null, draft: null }) });
+    h.state[14] = { source_fiscal_year: 2027, sources: [], fiscal_years: [], latest_draft: { id: "forecast-P1", sequence: 1, fiscal_year: 2027, status: "DRAFT", as_of: "2026-10-23" } };
+    assert.match(text(h.html()), /先确认全年预测 最新草稿：FY27全年预测 · 第1版/);
+    assert.equal(nodes(h.render()).some(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准"), false);
+    assert.equal(button(h.render(), "生成 FY28 草稿"), undefined);
+  } finally { restore(); }
+});
+
 test("export identity follows the displayed saved calculation or a real preview, never unsaved inputs alone", () => {
   const restore = fakeBrowser();
   try {
@@ -391,7 +438,7 @@ test("a new-basis comparison keeps the old saved identity and the new source's u
     const h = pageHarness({ stateData: envelope({ draft: current }) });
     h.state[14] = { source_fiscal_year: 2027, sources: [source, candidate], fiscal_years: [] };
     globalThis.fetch = async (url, options) => { requests.push(url); assert.deepEqual(JSON.parse(options.body), { forecast_id: candidate.id, parent_id: current.id }); return Response.json({ read_only: true, fiscal_year: 2028, parent_id: current.id, source_id: candidate.id, source: candidate, inputs: inputs(), calculation: previewCalculation }); };
-    openVersions(h); nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本").props.onChange({ target: { value: candidate.id } });
+    openVersions(h); nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准").props.onChange({ target: { value: candidate.id } });
     button(h.render(), "预览基准变化").props.onClick(); await flush();
     const comparison = comparisonPanel(h), tree = comparison.type(comparison.props), table = nodes(tree).find(node => node.type?.name === "PagedTable"), exported = table.props.exportRow(table.props.rows[0]);
     assert.match(table.props.filename, /第12版.*对比.*第12版.*未保存预览/);
@@ -426,7 +473,7 @@ test("phase 2 opening and closing versions or pending work is inspection-only an
     nodes(h.render()).find(node => node.type === "textarea").props.onChange({ target: { value: "rate-2\t82\t26" } });
     const before = JSON.stringify([h.state[1], h.state[2], h.state[3], h.state[8], h.state[20]]);
     openVersions(h); assert.ok(versionPanel(h));
-    assert.equal(nodes(versionPanel(h).props.children).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本").props.disabled, true);
+    assert.equal(nodes(versionPanel(h).props.children).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准").props.disabled, true);
     assert.match(h.html(), /先保存或放弃修改，再切换版本或更换基准/);
     versionPanel(h).props.onClose(); assert.equal(versionPanel(h), undefined);
     openProblems(h); assert.ok(classPanel(h.render()));
@@ -479,7 +526,7 @@ test("phase 2 basis preview is readonly, preserves the parent and manual target,
     const noGoal = inputs({ target_revenue_yuan: null, track_targets: { 智慧空间: null } }), after = calculation({ annual: totals({ target_revenue_yuan: null, gap_yuan: null }) });
     const h = pageHarness({ activeTask: 1 }); h.state[14] = { source_fiscal_year: 2027, sources: [source, older], fiscal_years: [{ fiscal_year: 2028 }] };
     const originalSaved = JSON.stringify([h.state[1], h.state[2], h.state[3]]);
-    openVersions(h); nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本").props.onChange({ target: { value: older.id } });
+    openVersions(h); nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准").props.onChange({ target: { value: older.id } });
     assert.equal(button(h.render(), "以此预测生成新草稿"), undefined); assert.equal(requests.length, 0);
     globalThis.fetch = async (url, options) => {
       requests.push({ url, method: options.method, headers: options.headers, body: JSON.parse(options.body) });
@@ -523,7 +570,7 @@ test("phase 2 changing the selected source expires the preview and a late respon
     const other = { ...source, id: "forecast-P3", sequence: 3, snapshot_hash: "snapshot-P3", fiscal_year: 2027 };
     const h = pageHarness(); h.state[14] = { source_fiscal_year: 2027, sources: [source, other], fiscal_years: [{ fiscal_year: 2028 }] };
     globalThis.fetch = (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return new Promise(resolve => { resolvePreview = resolve; }); };
-    const select = () => nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本");
+    const select = () => nodes(h.render()).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准");
     openVersions(h); button(h.render(), "预览基准变化").props.onClick();
     assert.equal(select().props.disabled, true, "the UI itself blocks changing basis during a preview");
     // Simulate an external catalog/source selection change despite the disabled control.
@@ -639,7 +686,7 @@ test("no goal does not block changing counts, previewing or saving; target field
     harness.state[9] = 1; const tree = harness.render(), html = harness.html();
     const targetLabel = nodes(tree).find(node => node.type === "label" && text(renderToStaticMarkup(node)).startsWith("全年经营目标（元）"));
     assert.equal(nodes(targetLabel).find(node => node.type === "input").props.value, ""); assert.match(html, /编制基准：FY27全年预测 · 第16版/);
-    openVersions(harness); assert.match(harness.html(), /基准预测版本/); assert.match(text(harness.html()), /第16版.*40 万元/);
+    openVersions(harness); assert.match(harness.html(), /已确认的预测基准/); assert.match(text(harness.html()), /第16版.*40 万元/);
     assert.equal(button(tree, "按预算结转收入分配赛道目标").props.disabled, true);
   } finally { globalThis.fetch = original; restore(); }
 });
@@ -652,6 +699,49 @@ test("track allocation uses calculated budget income only after the annual targe
     button(harness.render(), "按预算结转收入分配赛道目标").props.onClick();
     assert.equal(harness.state[3][key("track-target", "智慧空间")], "600000.00"); assert.equal(harness.state[3][key("track-target", "智慧伴学")], "200000.00");
     assert.equal(harness.state[2].target_revenue_yuan, null); assert.equal(harness.state[2].entry_total, 100); assert.deepEqual(harness.state[2].finance, withoutTargets.finance);
+  } finally { restore(); }
+});
+
+test("track help uses saved weights despite a new preview, filter or target edits, without running allocation", () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = () => { calls++; throw new Error("help is read-only"); };
+  try {
+    const savedTracks = [{ track: "智慧空间", ...totals({ revenue_yuan: "300000" }) }, { track: "智慧伴学", ...totals({ revenue_yuan: "100000" }) }];
+    const fixture = envelope({ draft: draft({ inputs: inputs({ track_targets: { 智慧空间: "1", 智慧伴学: "449999" } }), calculation: calculation({ tracks: savedTracks }) }) });
+    const harness = pageHarness({ stateData: fixture, activeTask: 1, edited: { [key("target")]: "800000" },
+      activePreview: calculation({ tracks: savedTracks.map(row => ({ ...row, revenue_yuan: "999" })) }) });
+    harness.state[10].track = "智慧空间";
+    const before = JSON.stringify(harness.state);
+    const help = nodes(harness.render()).find(node => node.props?.topicId === "next-year.track-target-allocation");
+    const context = help.props.getContext();
+    assert.equal(context.snapshot.state, "preview");
+    assert.equal(context.snapshot.trackTargetAllocation.annualTargetYuan, "800000");
+    assert.equal(context.snapshot.trackTargetAllocation.weightVersionId, fixture.draft.id);
+    assert.deepEqual(context.snapshot.trackTargetAllocation.weights, [
+      { track: "智慧空间", revenueYuan: "300000" }, { track: "智慧伴学", revenueYuan: "100000" },
+    ]);
+    assert.equal(JSON.stringify(harness.state), before); assert.equal(calls, 0);
+    button(harness.render(), "按预算结转收入分配赛道目标").props.onClick();
+    assert.equal(harness.state[3][key("track-target", "智慧空间")], "600000.00");
+    assert.equal(harness.state[3][key("track-target", "智慧伴学")], "200000.00");
+    assert.equal(harness.state[7], null, "allocation clears the old preview"); assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("track help stays available for an unset annual goal and binds a viewed historical version", () => {
+  const restore = fakeBrowser();
+  try {
+    const harness = pageHarness({ activeTask: 1, stateData: envelope({ draft: draft({ inputs: inputs({ target_revenue_yuan: null }) }) }) });
+    assert.equal(button(harness.render(), "按预算结转收入分配赛道目标").props.disabled, true);
+    const help = () => nodes(harness.render()).find(node => node.props?.topicId === "next-year.track-target-allocation");
+    assert.equal(help().props.getContext().snapshot.trackTargetAllocation.annualTargetYuan, "");
+    const old = draft({ id: "historical-N0", sequence: 0, inputs: inputs({ target_revenue_yuan: "123456" }) });
+    harness.state[16] = envelope({ draft: old, read_only: true });
+    const context = help().props.getContext();
+    assert.equal(context.snapshot.trackTargetAllocation.weightVersionId, old.id);
+    assert.equal(context.snapshot.trackTargetAllocation.annualTargetYuan, "123456");
+    assert.ok(context.source.includes("historical-N0")); assert.equal(context.snapshot.state, "saved");
   } finally { restore(); }
 });
 
@@ -1275,7 +1365,7 @@ test("choosing a historical version uses its source, plans and notes after the a
     globalThis.fetch = async url => { assert.match(url, /versions\/history-N0$/); return Response.json(historical); };
     const harness = pageHarness({ stateData: envelope({ history: [{ id: "history-N0", sequence: 0, created_at: "2026-10-01T00:00:00Z" }] }) });
     button(harness.render(), "版本记录").props.onClick(); button(pagedRow(harness.render(), "FY28预算版本"), "查看").props.onClick(); await flush();
-    harness.state[9] = 3; button(harness.render(), "计划新生").props.onClick(); const html = harness.html(); assert.match(html, /编制基准：FY27全年预测 · 第3版/); assert.match(html, /value="777"/); assert.match(html, /来自历史N0的说明/); assert.doesNotMatch(html, /保存新版本|基准预测版本/);
+    harness.state[9] = 3; button(harness.render(), "计划新生").props.onClick(); const html = harness.html(); assert.match(html, /编制基准：FY27全年预测 · 第3版/); assert.match(html, /value="777"/); assert.match(html, /来自历史N0的说明/); assert.doesNotMatch(html, /保存新版本|已确认的预测基准/);
     assert.equal(harness.state[1].draft.source.sequence, 16);
   } finally { globalThis.fetch = original; restore(); }
 });
@@ -1286,7 +1376,7 @@ test("selecting an older confirmed forecast sends that exact source while preser
     const old = { ...source, id: "forecast-P3", sequence: 3, fiscal_year: 2027 };
     const harness = pageHarness({ activeTask: 1 }); harness.state[14] = { source_fiscal_year: 2027, default_fiscal_year: 2028, sources: [source, old], fiscal_years: [{ fiscal_year: 2028, has_draft: true }] };
     openVersions(harness);
-    nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "基准预测版本").props.onChange({ target: { value: old.id } });
+    nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "已确认的预测基准").props.onChange({ target: { value: old.id } });
     globalThis.fetch = async (url, options) => { sent.push({ url, body: JSON.parse(options.body) }); return Response.json(url.endsWith("prepare-preview") ? { read_only: true, fiscal_year: 2028, parent_id: "next-year-N1", source_id: old.id, source: old, inputs: inputs(), calculation: calculation() } : envelope({ draft: draft({ id: "new-N2", sequence: 2, parent_id: "next-year-N1", source: old }) })); };
     button(harness.render(), "预览基准变化").props.onClick(); await flush();
     assert.equal(sent.length, 1); assert.match(sent[0].url, /prepare-preview$/); assert.deepEqual(sent[0].body, { forecast_id: old.id, parent_id: "next-year-N1" }); assert.equal(harness.state[1].draft.id, "next-year-N1");
@@ -1313,7 +1403,7 @@ test("year-specific URLs reload their ledger, roll back on failure, and protect 
     assert.equal(harness.state[15], 2029); assert.equal(harness.state[1].draft.inputs.fiscal_year, 2029); assert.match(globalThis.location.search, /year=2029/);
     assert.equal(nodes(harness.render()).find(node => typeof node.type === "function" && node.type.name === "FY27Header").props.fiscalYear, 2029);
     const savedBusy = harness.state[4], savedData = harness.state[1];
-    harness.state[4] = "load"; assert.match(harness.html(), /正在读取 FY29预算编制…/);
+    harness.state[4] = "load"; assert.doesNotMatch(harness.html(), /正在读取 FY29预算编制…/); assert.match(harness.html(), /全年结转收入/);
     harness.state[4] = "prepare"; harness.state[1] = { ...savedData, draft: null };
     assert.match(harness.html(), /正在生成 FY29 草稿…/);
     harness.state[4] = savedBusy; harness.state[1] = savedData;
@@ -2378,7 +2468,7 @@ test("selecting versions and returning current synchronize one shareable URL and
     filterEffect(h, "popstate")(); globalThis.location = historicalUrl; await listeners.get("popstate")();
     assert.equal(h.state[16].draft.id, "history-N0"); assert.deepEqual(h.state[10].campus, ["西直门", "中关村"]); assert.doesNotMatch(h.html(), /保存新版本/);
     filterEffect(h, "popstate")(); globalThis.location = { href: "http://127.0.0.1:5188/budget/next-year?year=2028&nyTask=2&bf_season=秋季&bf_season=寒假", search: "?year=2028&nyTask=2&bf_season=秋季&bf_season=寒假" }; await listeners.get("popstate")();
-    assert.equal(h.state[16], null); assert.equal(h.state[9], 2); assert.deepEqual(h.state[10].season, ["秋季", "寒假"]); assert.equal(requests.length, 2, "return to the already loaded current draft does not force a refresh");
+    assert.equal(h.state[16], null); assert.equal(h.state[9], 2); assert.deepEqual(h.state[10].season, ["秋季", "寒假"]); assert.equal(requests.length, 1, "cached exact history and the already loaded current draft do not force another request");
     assert.ok(requests.every(request => request.method === "GET"));
   } finally { globalThis.fetch = original; restore(); }
 });

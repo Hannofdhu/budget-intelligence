@@ -1,4 +1,5 @@
 import { identityHeaders, newRequestId, parseResponse, type ApiIdentity } from "./api.ts";
+import { budgetReadKey, readBudgetResource, peekBudgetRead, storeBudgetRead, invalidateBudgetReads } from "./budgetReadCache.ts";
 import { compareBudgetGrades } from "./budgetDisplay.ts";
 import { versionFileStem } from "./budgetVersionDisplay.ts";
 
@@ -342,19 +343,31 @@ async function forecastResponse<T>(response: Response): Promise<T> {
   return parseResponse<T>(response);
 }
 export async function getForecast(identity: ApiIdentity, signal?: AbortSignal): Promise<ForecastEnvelope> {
-  return forecastResponse(await fetch(`${base}/current`, { headers: identityHeaders(identity), signal }));
+  return readBudgetResource(budgetReadKey(identity, `${base}/current`), async sharedSignal => forecastResponse(await fetch(`${base}/current`, { headers: identityHeaders(identity), signal: sharedSignal })), signal);
 }
+export const peekForecast = (identity: ApiIdentity, id = "") => peekBudgetRead<ForecastEnvelope>(budgetReadKey(identity, id ? `${base}/versions/${encodeURIComponent(id)}` : `${base}/current`));
 export async function getForecastVersion(identity: ApiIdentity, id: string, signal?: AbortSignal): Promise<ForecastEnvelope> {
-  return forecastResponse(await fetch(`${base}/versions/${encodeURIComponent(id)}`, { headers: identityHeaders(identity), signal }));
+  const path = `${base}/versions/${encodeURIComponent(id)}`;
+  return readBudgetResource(budgetReadKey(identity, path), async sharedSignal => {
+    const result = await forecastResponse<ForecastEnvelope>(await fetch(path, { headers: identityHeaders(identity), signal: sharedSignal }));
+    if (result.version?.id !== id) throw new ForecastRequestError("未读取到所选预测版本，请重新选择。", 409, { code: "VERSION_MISMATCH", retryable: false });
+    return result;
+  }, signal);
 }
 /** Read existing immutable snapshots only; opening the trend never refreshes or confirms a forecast. */
 export async function getForecastRevenueTrend(identity: ApiIdentity, days: ForecastTrendDays, throughVersion: string, signal?: AbortSignal): Promise<ForecastRevenueTrendEnvelope> {
   const query = new URLSearchParams({ days: String(days), through_version: throughVersion });
-  return forecastResponse(await fetch(`${base}/trend?${query}`, { headers: identityHeaders(identity), signal }));
+  const data = await forecastResponse<ForecastRevenueTrendEnvelope>(await fetch(`${base}/trend?${query}`, { headers: identityHeaders(identity), signal }));
+  if (!signal?.aborted) storeBudgetRead(budgetReadKey(identity, `${base}/trend?${query}`), data);
+  return data;
 }
+export const peekForecastRevenueTrend = (identity: ApiIdentity, days: ForecastTrendDays, version: string) => peekBudgetRead<ForecastRevenueTrendEnvelope>(budgetReadKey(identity, `${base}/trend?${new URLSearchParams({ days: String(days), through_version: version })}`));
 export async function getForecastSchedule(identity: ApiIdentity, signal?: AbortSignal): Promise<ForecastSchedule> {
-  return forecastResponse(await fetch(`${base}/schedule`, { headers: identityHeaders(identity), signal }));
+  const data = await forecastResponse<ForecastSchedule>(await fetch(`${base}/schedule`, { headers: identityHeaders(identity), signal }));
+  if (!signal?.aborted) storeBudgetRead(budgetReadKey(identity, `${base}/schedule`), data);
+  return data;
 }
+export const peekForecastSchedule = (identity: ApiIdentity) => peekBudgetRead<ForecastSchedule>(budgetReadKey(identity, `${base}/schedule`));
 export async function getForecastSnapshot(identity: ApiIdentity, id: string): Promise<ForecastSnapshotArchive> {
   const archive = await forecastResponse<ForecastSnapshotArchive>(await fetch(`${base}/versions/${encodeURIComponent(id)}/snapshot`, { headers: identityHeaders(identity) }));
   if (archive.version?.id !== id || !archive.snapshot) throw new ForecastRequestError("本次快照与所选预测不一致，请重新读取。", 409, { code: "SNAPSHOT_VERSION_MISMATCH", retryable: false });
@@ -370,10 +383,15 @@ export async function downloadForecastSnapshot(identity: ApiIdentity, version: F
   } finally { anchor.remove(); URL.revokeObjectURL(url); }
 }
 async function commandForecast(path: string, identity: ApiIdentity, body: unknown, requestId = newRequestId()): Promise<ForecastEnvelope> {
+  invalidateBudgetReads("/forecasts/");
+  invalidateBudgetReads("/budget-cockpit");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), forecastCommandTimeoutMs);
   try {
-    return await forecastResponse<ForecastEnvelope>(await fetch(`${base}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify(body), signal: controller.signal }));
+    const result = await forecastResponse<ForecastEnvelope>(await fetch(`${base}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": requestId }, body: JSON.stringify(body), signal: controller.signal }));
+    invalidateBudgetReads("/forecasts/"); invalidateBudgetReads("/next-year-budgets/");
+    invalidateBudgetReads("/budget-cockpit");
+    return storeBudgetRead(budgetReadKey(identity, `${base}/current`), result);
   } catch (error) {
     if (controller.signal.aborted) throw new ForecastRequestError("等待操作结果超时，本次是否完成尚未确认。请重试核对。", 0, { code: "REQUEST_TIMEOUT", retryable: true });
     throw error;

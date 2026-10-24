@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from packages.ai_agent.config import ModelConfig
+from packages.ai_agent.knowledge_checks import BudgetEvidence
+from packages.ai_agent.rpc import RpcRuntime
 
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_EVENTS = 2048
@@ -49,6 +51,10 @@ SYSTEM_PROMPT = (
 
 class RuntimeErrorSafe(RuntimeError):
     """User-facing runtime errors deliberately exclude process stderr and secrets."""
+
+
+class RuntimeCapacityError(RuntimeErrorSafe):
+    """No guest or model request was started; an accepted chat may safely wait."""
 
 
 class BridgeProtocol(Protocol):
@@ -80,6 +86,11 @@ class Session:
     _stopping: bool = field(default=False, repr=False)
     _stop_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _attached: int = field(default=0, repr=False)
+    mode: str = "terminal"
+    workspace_id: str = ""
+    _rpc_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict, repr=False)
+    _rpc_write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _budget_evidence: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,7 +107,7 @@ class Session:
         }
 
 
-class RuntimeManager:
+class RuntimeManager(RpcRuntime):
     def __init__(
         self,
         runtime_root: Path,
@@ -190,15 +201,24 @@ class RuntimeManager:
     def _prepare_directory(self, session: Session) -> tuple[Path, Path]:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.root.chmod(0o700)
-        session.directory.mkdir(mode=0o700, exist_ok=False)
-        workspace = session.directory / "workspace"
-        agent = self.root / "agent"
+        if session.mode != "chat" or not session.workspace_id or session.workspace_id == session.id:
+            session.directory.mkdir(mode=0o700, exist_ok=False)
+        home = (
+            self.root / (session.workspace_id or session.id) if session.mode == "chat" else session.directory
+        )
+        if session.mode == "chat" and (home.is_symlink() or home.resolve().parent != self.root):
+            raise RuntimeErrorSafe("AI 工作区无效。")
+        workspace = home / "workspace"
+        # Chat profiles are per conversation, never the legacy shared Pi profile.
+        agent = home / "chat-agent" if session.mode == "chat" else self.root / "agent"
         if agent.is_symlink():
             raise RuntimeErrorSafe("AI 会话配置目录不能是符号链接。")
         # The private 0700 parent is not mounted. The guest's fixed node UID
         # needs write access to these two otherwise empty, per-session roots.
         for directory in (workspace, agent):
-            directory.mkdir(mode=0o777, exist_ok=directory == agent)
+            if directory.is_symlink():
+                raise RuntimeErrorSafe("AI 工作目录不能是符号链接。")
+            directory.mkdir(mode=0o777, exist_ok=directory == agent or session.mode == "chat")
             directory.chmod(0o777)
         configs = (("models.json", self.config.pi_models()), ("settings.json", self.config.pi_settings()))
         for name, payload in configs:
@@ -263,21 +283,31 @@ class RuntimeManager:
         if self._closed:
             raise RuntimeErrorSafe("AI 运行服务正在关闭。")
 
-    async def start(self, *, cols: int = 100, rows: int = 30) -> Session:
+    async def start(
+        self, *, cols: int = 100, rows: int = 30, mode: str = "terminal", workspace_id: str | None = None
+    ) -> Session:
         self._validate_dimensions(cols, rows)
+        if mode not in {"terminal", "chat"} or (
+            workspace_id is not None
+            and (mode != "chat" or re.fullmatch(r"[a-f0-9]{32}", workspace_id) is None)
+        ):
+            raise RuntimeErrorSafe("AI 工作区无效。")
+        if workspace_id and not (self.root / workspace_id / "workspace").is_dir():
+            raise RuntimeErrorSafe("原对话工作区不可用，记录仍保留，未创建替代上下文。")
         async with self._lock:
             self._require_open()
             if (
                 sum(s.status in {"starting", "running", "cleanup_failed"} for s in self._sessions.values())
                 >= self.max_sessions
             ):
-                raise RuntimeErrorSafe("同时运行的 AI 会话已达上限，请先结束一个会话。")
+                raise RuntimeCapacityError("同时运行的 AI 会话已达上限，请先结束一个会话。")
             state = await self.status()
             self._require_open()
             if not state.get("available"):
                 raise RuntimeErrorSafe(str(state.get("reason", "AI 隔离环境不可用。")))
             session_id = uuid.uuid4().hex
             session = Session(session_id, self.root / session_id, cols=cols, rows=rows)
+            session.mode, session.workspace_id = mode, workspace_id or session_id
             session._container = f"budget-ai-{self._manager_id}-{session_id[:12]}"
             self._sessions[session_id] = session
             try:
@@ -291,7 +321,18 @@ class RuntimeManager:
                     raise RuntimeErrorSafe("AI 隔离容器启动失败；未使用主机运行作为替代。")
                 await self._start_relay(session)
                 self._require_open()
-                await self._start_terminal(session)
+                if mode == "chat":
+                    await self._start_rpc(
+                        session,
+                        SYSTEM_PROMPT
+                        + "你通过产品的对话界面与用户交流，直接回答，不要求用户输入Pi命令或粘贴终端。"
+                        "面向用户称定版预算、全年预测、预算编制，具体财年以读取结果为准。"
+                        "分析可用Markdown标题、列表和表格呈现，保留金额单位。"
+                        "引用数据时注明实际读取的财年、模块、已保存版本和数据截至时间；"
+                        "版本序号使用第几版，不将P/N技术编号作为主要称呼。工具开始运行不代表任务已经完成。",
+                    )
+                else:
+                    await self._start_terminal(session)
                 self._require_open()
                 session.status = "running"
                 if self._cleaner is None:
@@ -389,8 +430,19 @@ class RuntimeManager:
             await self._stop_session(session)
 
     async def _dispatch(self, session: Session, frame: dict[str, Any]) -> None:
+        path = frame.get("path", "")
+        collect = (
+            session.mode == "chat"
+            and frame.get("method") == "GET"
+            and isinstance(path, str)
+            and path.startswith("/budget/")
+            and path != "/budget/help"
+        )
+        evidence = BudgetEvidence(path) if collect else None
         try:
             async for response in self.handler.handle(frame):
+                if evidence and (contract := evidence.feed(response)) is not None:
+                    session._budget_evidence = [*session._budget_evidence, contract][-12:]
                 if session._relay is None or session._relay.stdin is None:
                     return
                 encoded = json.dumps(response, ensure_ascii=False, allow_nan=False).encode() + b"\n"
@@ -457,7 +509,8 @@ class RuntimeManager:
             event = {"type": kind, "seq": session._seq, **values}
             session._events.append(event)
             session._output_bytes += len(str(event.get("data", "")).encode())
-            while len(session._events) > MAX_EVENTS or session._output_bytes > MAX_OUTPUT_BYTES:
+            limit = 16 * 1024 * 1024 if session.mode == "chat" else MAX_OUTPUT_BYTES
+            while len(session._events) > MAX_EVENTS or session._output_bytes > limit:
                 dropped = session._events.popleft()
                 session._output_bytes -= len(str(dropped.get("data", "")).encode())
             session._condition.notify_all()

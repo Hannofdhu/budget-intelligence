@@ -1,4 +1,5 @@
 import { identityHeaders, newRequestId, parseResponse, type ApiIdentity } from "./api.ts";
+import { budgetReadKey, readBudgetResource, peekBudgetRead, storeBudgetRead, invalidateBudgetReads } from "./budgetReadCache.ts";
 import { forecastNumber, forecastSeasons, type ForecastSeason } from "./forecastApi.ts";
 
 export { forecastSeasons as nextYearSeasons };
@@ -72,6 +73,8 @@ export interface NextYearBasisPreview {
 }
 export interface NextYearCatalog {
   source_fiscal_year: number; sources: ForecastBasis[];
+  /** Read-only notice metadata; never a selectable or automatically confirmed basis. */
+  latest_draft?: { id: string; sequence: number; as_of: string; status: "DRAFT"; fiscal_year: number } | null;
   fiscal_years: { fiscal_year: number; has_draft: boolean; latest_sequence?: number | null; [key: string]: unknown }[];
   default_fiscal_year: number;
 }
@@ -123,15 +126,21 @@ const baseFor = (year = 2028) => `/api/v1/next-year-budgets/${year < 2100 ? `fy$
 async function response<T>(value: Response): Promise<T> {
   if (!value.ok) {
     const payload = await value.clone().json().catch(() => null) as { detail?: unknown } | null;
-    if (typeof payload?.detail === "string") throw new Error(payload.detail);
+    if (typeof payload?.detail === "string") throw Object.assign(new Error(payload.detail), { status: value.status });
   }
   return parseResponse<T>(value);
 }
 export async function getNextYearBudget(identity: ApiIdentity, signal?: AbortSignal, year = 2028): Promise<NextYearEnvelope> {
-  return response(await fetch(`${baseFor(year)}/current`, { headers: identityHeaders(identity), signal }));
+  const path = `${baseFor(year)}/current`;
+  return readBudgetResource(budgetReadKey(identity, path), async sharedSignal => response(await fetch(path, { headers: identityHeaders(identity), signal: sharedSignal })), signal);
 }
+export const peekNextYearBudget = (identity: ApiIdentity, year: number, version?: string | null) => peekBudgetRead<NextYearEnvelope>(budgetReadKey(identity, version ? `${baseFor(year)}/versions/${encodeURIComponent(version)}` : `${baseFor(year)}/current`));
 async function command<T>(path: string, identity: ApiIdentity, body: unknown, year = 2028): Promise<T> {
-  return response(await fetch(`${baseFor(year)}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": newRequestId() }, body: JSON.stringify(body) }));
+  const writing = ["/prepare", "/revise", "/restore"].includes(path);
+  if (writing) { invalidateBudgetReads("/next-year-budgets/"); invalidateBudgetReads("/budget-cockpit"); }
+  const result = await response<T>(await fetch(`${baseFor(year)}${path}`, { method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json", "Idempotency-Key": newRequestId() }, body: JSON.stringify(body) }));
+  if (writing) { invalidateBudgetReads("/next-year-budgets/"); invalidateBudgetReads("/budget-cockpit"); storeBudgetRead(budgetReadKey(identity, `${baseFor(year)}/current`), result); }
+  return result;
 }
 export function prepareNextYearBudget(identity: ApiIdentity, forecastId: string, parentId: string | null, year = 2028): Promise<NextYearEnvelope> {
   return command("/prepare", identity, { forecast_id: forecastId, parent_id: parentId, reason: `基于已确认 FY${String(year - 1).slice(-2)} 预测生成 FY${String(year).slice(-2)} 预算草稿` }, year);
@@ -147,10 +156,12 @@ export function previewNextYearBudget(identity: ApiIdentity, parentId: string, i
   return command("/preview", identity, { parent_id: parentId, inputs }, inputs.fiscal_year);
 }
 export async function getNextYearCatalog(identity: ApiIdentity, signal?: AbortSignal): Promise<NextYearCatalog> {
-  return response(await fetch("/api/v1/next-year-budgets/catalog", { headers: identityHeaders(identity), signal }));
+  const path = "/api/v1/next-year-budgets/catalog";
+  return readBudgetResource(budgetReadKey(identity, path), async sharedSignal => response(await fetch(path, { headers: identityHeaders(identity), signal: sharedSignal })), signal);
 }
-export async function getNextYearVersion(identity: ApiIdentity, versionId: string, year = 2028): Promise<NextYearEnvelope> {
-  return response(await fetch(`${baseFor(year)}/versions/${encodeURIComponent(versionId)}`, { headers: identityHeaders(identity) }));
+export async function getNextYearVersion(identity: ApiIdentity, versionId: string, year = 2028, signal?: AbortSignal): Promise<NextYearEnvelope> {
+  const path = `${baseFor(year)}/versions/${encodeURIComponent(versionId)}`;
+  return readBudgetResource(budgetReadKey(identity, path), async sharedSignal => response(await fetch(path, { headers: identityHeaders(identity), signal: sharedSignal })), signal);
 }
 export function restoreNextYearVersion(identity: ApiIdentity, parentId: string, versionId: string, reason: string, year = 2028): Promise<NextYearEnvelope> {
   return command("/restore", identity, { parent_id: parentId, version_id: versionId, reason }, year);

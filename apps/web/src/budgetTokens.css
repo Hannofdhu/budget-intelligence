@@ -1,19 +1,35 @@
-/* DESIGN.md v1.0 · shared semantic tokens across the product. */
+/* DESIGN.md v1.2 · brand palette and accessible functional roles. */
 :root {
-  --budget-font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --budget-text: #192521;
-  --budget-text-secondary: #5f6d65;
-  --budget-accent: #173f37;
-  --budget-focus: #286355;
-  --budget-surface: #fbfcf8;
+  --budget-font-family: "Poppins", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --budget-font-heading: var(--budget-font-family);
+  --budget-font-prose: "Lora", Georgia, "Songti SC", "SimSun", serif;
+  --budget-text: #141413;
+  --budget-text-secondary: #65645f;
+  --budget-accent: #d97757;
+  --budget-action-text: #141413;
+  --budget-selected-surface: #141413;
+  --budget-selected-text: #faf9f5;
+  --budget-focus: #141413;
+  --budget-surface: #fff;
   --budget-control-surface: #fff;
-  --budget-divider: #d6dad3;
-  --budget-control-border: #7c8a80;
-  --budget-page-background: #eef0eb;
+  --budget-divider: #e8e6dc;
+  --budget-control-border: #7b7971;
+  --budget-page-background: #faf9f5;
+  --budget-table-header-surface: #e8e6dc;
+  --budget-hover-surface: #faf9f5;
+  --budget-selection-surface: #e8e6dc;
+  --budget-brand-muted: #b0aea5;
+  --budget-brand-blue: #6a9bcc;
+  --budget-brand-green: #788c5d;
+  /* Data strokes are darker functional derivatives, not altered brand values. */
+  --budget-chart-forecast: #a65338;
+  --budget-chart-actual: #3f6d95;
+  --budget-chart-budget: #7b7971;
   --budget-warning: #80501c;
   --budget-warning-background: #f5e9d6;
   --budget-error: #a23f35;
   --budget-error-background: #f6e4e0;
+  --budget-info: #2d5f78;
   --budget-page-title-size: 2rem;
   --budget-section-title-size: 1.125rem;
   --budget-subsection-title-size: 1rem;
@@ -27,8 +43,22 @@
   --budget-space-4: 1rem;
   --budget-space-6: 1.5rem;
   --budget-space-8: 2rem;
-  --budget-radius-section: 1rem;
-  --budget-radius-control: .5rem;
+  --budget-radius-section: 1.5rem;
+  --budget-radius-control: .75rem;
+  /* Continuous-curvature radius ladder; iOS-leaning values so the softening is visible without squircle support. */
+  --budget-radius-xs: 6px;
+  --budget-radius-sm: 10px;
+  --budget-radius-md: 12px;
+  --budget-radius-lg: 18px;
+  --budget-radius-xl: 24px;
+  --budget-radius-pill: 999px;
+  --budget-radius-full: 50%;
+  /* Motion tokens — all transitions respect prefers-reduced-motion in budgetMotion.css. */
+  --budget-ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --budget-ease-emphasized: cubic-bezier(.16, 1, .3, 1);
+  --budget-duration-xs: 120ms;
+  --budget-duration-sm: 160ms;
+  --budget-duration-md: 180ms;
   --budget-z-content: 0;
   --budget-z-table: 10;
   --budget-z-header: 20;

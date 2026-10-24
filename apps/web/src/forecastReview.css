@@ -4,25 +4,25 @@
 .forecast-shell .forecast-data-notice:hover:not(:disabled) { background: #f4eddd; }
 .forecast-data-notice-dot { width: 6px; height: 6px; border-radius: 50%; background: #a67738; flex-shrink: 0; }
 .forecast-data-notice-action { margin-left: 7px; color: var(--budget-text-secondary); font-weight: 400; }
-.forecast-data-review { color: #263c31; font-size: var(--budget-body-size); }
+.forecast-data-review { color: var(--budget-text); font-size: var(--budget-body-size); }
 .forecast-data-review > section { margin-bottom: 28px; }
 .forecast-data-review section > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .forecast-data-review section > header > span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .forecast-review-next { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; margin: 0 0 20px; }
 .forecast-review-next p { margin: 0; max-width: 34em; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.75; }
 .forecast-review-next button { flex-shrink: 0; }
-.forecast-review-campus, .forecast-review-problem { border-block-start: 1px solid #dce3dc; }
-.forecast-review-campus:last-child, .forecast-review-problem:last-child { border-block-end: 1px solid #dce3dc; }
+.forecast-review-campus, .forecast-review-problem { border-block-start: 1px solid var(--budget-divider); }
+.forecast-review-campus:last-child, .forecast-review-problem:last-child { border-block-end: 1px solid var(--budget-divider); }
 .forecast-review-campus > summary, .forecast-review-problem > summary, .forecast-review-records > summary { display: flex; align-items: center; gap: 13px; min-height: 50px; cursor: pointer; list-style: none; }
 .forecast-review-campus > summary::-webkit-details-marker, .forecast-review-problem > summary::-webkit-details-marker, .forecast-review-records > summary::-webkit-details-marker { display: none; }
 .forecast-review-campus > summary::before, .forecast-review-problem > summary::before, .forecast-review-records > summary::before { content: "+"; color: var(--budget-text-secondary); width: 10px; }
 .forecast-review-campus[open] > summary::before, .forecast-review-problem[open] > summary::before, .forecast-review-records[open] > summary::before { content: "−"; }
 .forecast-review-campus > summary > strong, .forecast-review-problem > summary > strong { flex: 1; font-weight: 600; }
 .forecast-review-campus > summary > span, .forecast-review-problem > summary > span, .forecast-review-records > summary > span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); white-space: nowrap; }
-.forecast-review-table-wrap { overflow-x: auto; margin-bottom: 16px; border: 1px solid #dce3dc; border-radius: 8px; }
+.forecast-review-table-wrap { overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--budget-divider); border-radius: 8px; }
 .forecast-review-table-wrap table { width: 100%; min-width: 640px; border-collapse: collapse; text-align: left; font-size: var(--budget-body-size); line-height: 1.42858; }
-.forecast-review-table-wrap th, .forecast-review-table-wrap td { padding: 13px 14px; border-bottom: 1px solid #e7ece6; vertical-align: top; line-height: 1.7; }
-.forecast-review-table-wrap thead th { color: var(--budget-text-secondary); background: #edf2ee; font-weight: 600; font-size: var(--budget-body-size); }
+.forecast-review-table-wrap th, .forecast-review-table-wrap td { padding: 13px 14px; border-bottom: 1px solid var(--budget-divider); vertical-align: top; line-height: 1.7; }
+.forecast-review-table-wrap thead th { color: var(--budget-text-secondary); background: var(--budget-selection-surface); font-weight: 600; font-size: var(--budget-body-size); }
 .forecast-review-table-wrap tbody th { font-weight: 500; min-width: 220px; overflow-wrap: anywhere; }
 .forecast-review-table-wrap td { min-width: 100px; overflow-wrap: anywhere; }
 .forecast-review-table-wrap small { display: block; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); margin-top: 4px; }
@@ -30,21 +30,21 @@
 .forecast-review-table-wrap tr:last-child > * { border-bottom: 0; }
 .forecast-review-evidence { margin-top: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-weight: 400; }
 .forecast-review-evidence > summary { cursor: pointer; width: fit-content; }
-.forecast-review-evidence > div { margin-top: 10px; padding: 12px; background: #f5f7f3; border-radius: 5px; }
+.forecast-review-evidence > div { margin-top: 10px; padding: 12px; background: var(--budget-page-background); border-radius: 5px; }
 .forecast-review-evidence code { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); overflow-wrap: anywhere; }
 .forecast-review-evidence p { margin: 8px 0; line-height: 1.7; }
 .forecast-review-evidence pre { margin: 0; color: var(--budget-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--budget-caption-size); line-height: 1.65; }
 .forecast-review-problem ul { list-style: none; margin: 0 0 15px; padding: 0 0 0 23px; }
-.forecast-review-problem li { padding: 12px 0; border-top: 1px solid #e7ece6; line-height: 1.7; }
-.forecast-review-records { margin-top: 26px; border-top: 1px solid #dce3dc; }
+.forecast-review-problem li { padding: 12px 0; border-top: 1px solid var(--budget-divider); line-height: 1.7; }
+.forecast-review-records { margin-top: 26px; border-top: 1px solid var(--budget-divider); }
 .forecast-review-records > summary > strong { font-weight: 500; color: var(--budget-text-secondary); }
-.forecast-review-records article { padding: 18px 0; border-top: 1px solid #e7ece6; }
+.forecast-review-records article { padding: 18px 0; border-top: 1px solid var(--budget-divider); }
 .forecast-review-records h3 { margin: 0 0 14px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.7; font-weight: 500; }
 .forecast-review-records dl { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0; }
 .forecast-review-records dl > div { display: flex; align-items: baseline; gap: 10px; }
 .forecast-review-records dt { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .forecast-review-records dd { margin: 0; font-size: var(--budget-caption-size); font-variant-numeric: tabular-nums; }
 .forecast-review-empty { margin: 0; padding: 18px 0; color: var(--budget-text-secondary); }
-.forecast-data-review summary:focus-visible, .forecast-review-table-wrap:focus-visible { outline: 2px solid #427e69; outline-offset: 3px; }
+.forecast-data-review summary:focus-visible, .forecast-review-table-wrap:focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 3px; }
 @media (max-width: 500px) { .forecast-review-next { flex-direction: column; gap: 12px; } .forecast-review-campus > summary, .forecast-review-problem > summary { gap: 10px; } .forecast-review-table-wrap th, .forecast-review-table-wrap td { padding: 10px; } .forecast-review-records dl { flex-direction: column; gap: 10px; } }
 @media (prefers-reduced-motion: reduce) { .forecast-data-notice { transition: none !important; } }

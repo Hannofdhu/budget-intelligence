@@ -2,12 +2,14 @@
 
 /* Semantic roles, not a second theme or editing workflow. */
 :is(.decision-shell, .budget-shell, .app-frame) { font-family: var(--budget-font-family); font-size: var(--budget-body-size); line-height: 1.57143; color: var(--budget-text); background: var(--budget-page-background); }
-.budget-page-title { margin: 0; font-family: var(--budget-font-family); font-size: var(--budget-page-title-size); line-height: 1.25; font-weight: 700; letter-spacing: -.02em; }
+.budget-page-title { margin: 0; font-family: var(--budget-font-heading); font-size: var(--budget-page-title-size); line-height: 1.25; font-weight: 700; letter-spacing: normal; }
 .budget-section-title { margin: 0; font-size: var(--budget-section-title-size); line-height: 1.44445; font-weight: 600; }
 .budget-subsection-title { margin: 0; font-size: var(--budget-subsection-title-size); line-height: 1.5; font-weight: 600; }
 .budget-surface { min-width: 0; margin-block: var(--budget-space-6); padding: var(--budget-space-6); background: var(--budget-surface); border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-section); }
 .budget-status { max-width: 80ch; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.57143; overflow-wrap: anywhere; }
 .budget-status[role="alert"] { color: var(--budget-error); }
+/* Narrative explanations are distinct from dense controls, tables and state. */
+:is(.budget-data-section__description, .ny-how dd, .ny-how > p) { font-family: var(--budget-font-prose); line-height: 1.75; }
 .budget-cell-number { text-align: right; font-variant-numeric: tabular-nums; }
 /* The column owns alignment, including editors. Never infer a role from column position. */
 table[data-budget-table] :is(th, td).budget-cell-text { text-align: left; }

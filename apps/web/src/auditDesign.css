@@ -60,7 +60,7 @@
 .audit-app .revision-spine__list > button { color: var(--budget-text); border-color: var(--budget-divider); border-radius: 0; background: transparent; }
 .audit-app .revision-spine__list > button, .audit-app .audit-history-all button { display: flex; flex-direction: column; align-items: stretch; gap: 8px; text-align: left; }
 .audit-app .revision-spine__list > button:hover,
-.audit-app .revision-spine__list > button.is-selected { color: var(--budget-text); background: #e5eee7; }
+.audit-app .revision-spine__list > button.is-selected { color: var(--budget-text); background: var(--budget-selection-surface); }
 .audit-app .revision-spine__number { font: 600 1rem/1.5 var(--budget-font-family); }
 .audit-app .revision-spine__meta > strong { color: var(--budget-text); font-size: var(--budget-body-size); }
 .audit-app .revision-spine__list { gap: var(--budget-space-2); padding: 0 var(--budget-space-6) var(--budget-space-6); }
@@ -96,7 +96,7 @@
 .audit-app .component-diff--removed .component-diff__type,
 .audit-app .detail-diff-row--removed > header > span { color: #a23f35; background: #f6e4e0; }
 .audit-app .status-tag--published { color: #2d5f78; }
-.audit-app .archive-signout button { background: var(--budget-accent); }
+.audit-app .archive-signout button { background: var(--budget-text); }
 .audit-app .detail-diff-row > header p, .audit-app .detail-state > dl dd,
 .audit-app .audit-event details dd, .audit-app .revision-spine__meta > strong { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .audit-app .detail-diff-row > header strong { color: var(--budget-text); font-size: var(--budget-body-size); }

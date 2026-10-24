@@ -1,0 +1,36 @@
+.ny-impact-action { display: inline-flex; align-items: flex-end; gap: .25rem; }
+.ny-track-target-action .xiaoyu-help-trigger, .ny-action-bar .xiaoyu-help-trigger, .xiaoyu-help-trigger { display: inline-flex; align-items: center; flex-direction: column; justify-content: center; gap: 0; min-width: 3.25rem; min-height: 2.75rem; padding: 0 .25rem .125rem; border: 0; background: transparent; color: var(--budget-text-secondary); font: inherit; font-size: .625rem; line-height: 1.2; cursor: pointer; }
+.xiaoyu-help-trigger > .xiaoyu { width: 2.75rem; margin-top: -.625rem; transition: transform var(--budget-duration-sm) var(--budget-ease-standard); }
+.ny-action-bar .xiaoyu-help-trigger:hover, .xiaoyu-help-trigger:hover, .xiaoyu-help-trigger[aria-expanded="true"] { background: transparent; color: var(--budget-text); }
+.xiaoyu-help-trigger:hover > .xiaoyu { transform: translateY(-2px); }
+.xiaoyu-help-trigger:focus-visible, .xiaoyu-help-card :is(button,a):focus-visible { outline: 2px solid var(--budget-focus); outline-offset: 3px; border-radius: 6px; }
+.xiaoyu-help-card { position: fixed; z-index: var(--budget-z-dialog,60); display: flex; flex-direction: column; width: min(480px,calc(100% - 24px)); max-height: calc(100dvh - 32px); overflow: hidden; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-xl,24px); color: var(--budget-text); background: var(--budget-page-background); box-shadow: 0 16px 48px rgb(45 38 30 / .16), 0 2px 6px rgb(45 38 30 / .05); font-family: var(--budget-font-family); }
+.xiaoyu-help-heading { display: flex; align-items: center; gap: 1rem; flex: 0 0 auto; padding: 1.5rem 1.5rem 0; }
+.xiaoyu-help-heading > .xiaoyu { width: 3.5rem; }
+.xiaoyu-help-heading > div { flex: 1; min-width: 0; }
+.xiaoyu-help-heading > div > span { color: var(--budget-text-secondary); font-size: 14px; }
+.xiaoyu-help-heading h2 { margin: .375rem 0 0; font-size: 26px; line-height: 1.4; font-weight: 600; text-wrap: balance; }
+.xiaoyu-help-card .xiaoyu-help-close { align-self: flex-start; width: 2.75rem; height: 2.75rem; flex-shrink: 0; margin: -.5rem -.75rem 0 0; padding: 0; border: 0; border-radius: 50%; color: var(--budget-text-secondary); background: transparent; font: 1.75rem/1 var(--budget-font-family); cursor: pointer; }
+.xiaoyu-help-close:hover { background: var(--budget-selection-surface); }
+.xiaoyu-help-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.5rem; font-size: 22px; line-height: 1.65; scrollbar-width: thin; }
+.xiaoyu-help-body > p { margin: 0; }
+.xiaoyu-help-body > p + p { margin-top: 1rem; }
+.xiaoyu-help-body .is-key { font-weight: 600; }
+.xiaoyu-help-footer { display: flex; flex: 0 0 auto; justify-content: flex-end; padding: 0 1.5rem 1.5rem; }
+.xiaoyu-help-footer a { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 3rem; padding: .625rem 1rem; border: 1px solid var(--budget-text); border-radius: .75rem; background: var(--budget-accent); color: var(--budget-text); text-decoration: none; font-size: 18px; font-weight: 500; }
+.xiaoyu-help-footer a:hover { filter: brightness(.96); }
+.xiaoyu-help-footer a[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.xiaoyu-help-body .xiaoyu-help-error { font-size: 16px; color: var(--budget-error); }
+.xiaoyu-help-error button { min-height: 2.75rem; margin-left: .5rem; color: inherit; background: transparent; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+.ai-chat-help-context { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--budget-divider); }
+.ai-chat-help-context strong { display: block; }
+.ai-chat-help-context p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .xiaoyu-help-card { border-radius: 20px; }
+  .xiaoyu-help-heading { padding: 1.25rem 1.25rem 0; gap: .75rem; }
+  .xiaoyu-help-heading h2 { font-size: 24px; }
+  .xiaoyu-help-heading > .xiaoyu { width: 3rem; }
+  .xiaoyu-help-body { padding: 1.25rem; font-size: 20px; }
+  .xiaoyu-help-footer { padding: 0 1.25rem max(1.25rem,env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) { .xiaoyu-help-trigger > .xiaoyu { transition: none; transform: none; } }

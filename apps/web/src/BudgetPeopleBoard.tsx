@@ -41,7 +41,7 @@ export function BudgetPeopleBoard({ facts, unit = "wan", fiscalYear = 2027, onSe
   };
   // Continuous intensity communicates only the magnitude; no performance thresholds are introduced.
   const renewalHeat = (value: number | null) => value !== null && Number.isFinite(value) && value >= 0 && value <= 1
-    ? { backgroundColor: `rgba(54, 106, 85, ${0.04 + value * 0.16})` } : undefined;
+    ? { backgroundColor: `rgba(217, 119, 87, ${0.04 + value * 0.16})` } : undefined;
 
   return <>
     <div className="ba-board-grid ba-people-charts">

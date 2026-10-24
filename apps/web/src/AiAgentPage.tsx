@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { FY27Header } from "./FY27Header";
+import { BudgetMark } from "./BudgetBrand";
 import { budgetModuleName, budgetModuleYears } from "./budgetModules";
 import { aiBudgetContextPrompt, readAiBudgetContext, type AiBudgetContext } from "./aiBudgetContext";
 import { BudgetVersionTrace } from "./BudgetVersionIdentity";
@@ -109,7 +110,7 @@ export function AiAgentWorkspace({ status, loading, busy, error, notice, session
         </div>}
         <p className="ai-agent-context-boundary">先读取已保存版本；其他页面未保存的改动不在上下文中。</p>
       </details>
-      {sessionId ? terminal : <p className="ai-agent-start-hint">点击上方“开始对话”，进入 Pi 后提问。</p>}
+      {sessionId ? terminal : <div className="ai-agent-start-hint"><BudgetMark /><div><strong>预算有据，决策有解。</strong><p>点击上方“开始对话”，进入 Pi 后提问。</p></div></div>}
     </section>
     <section className="ai-agent-recall" aria-label="会话回顾">
       <h2 className="budget-section-title">会话回顾</h2>
@@ -154,8 +155,8 @@ function AiAgentTerminal({ sessionId, onState }: { sessionId: string; onState(st
         cursorBlink: true, cursorStyle: "bar", scrollback: 10000, screenReaderMode: false, disableStdin: true,
         linkHandler: { activate() {} },
         theme: {
-          background: "#ffffff", foreground: "#173f37", cursor: "#173f37", cursorAccent: "#ffffff",
-          selectionBackground: "#dbe9df", selectionForeground: "#173f37",
+          background: "#ffffff", foreground: "#141413", cursor: "#141413", cursorAccent: "#ffffff",
+          selectionBackground: "#e8e6dc", selectionForeground: "#141413",
           black: "#18231f", red: "#b55248", green: "#427b64", yellow: "#96713c", blue: "#456e87", magenta: "#805a82", cyan: "#477e78", white: "#e5eae3",
           brightBlack: "#6a7c70", brightRed: "#b55248", brightGreen: "#427b64", brightYellow: "#96713c", brightBlue: "#456e87", brightMagenta: "#805a82", brightCyan: "#477e78", brightWhite: "#ffffff",
         },
@@ -240,7 +241,7 @@ function AiAgentTerminal({ sessionId, onState }: { sessionId: string; onState(st
   </div>;
 }
 
-export function AiAgentPage() {
+export function AiAgentLegacyPage() {
   const sourceContext = readAiBudgetContext(typeof location === "undefined" ? "" : location.search);
   const [status, setStatus] = useState<AiAgentStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,3 +320,5 @@ export function AiAgentPage() {
       terminal={sessionId ? <AiAgentTerminal key={sessionId} sessionId={sessionId} onState={setSessionState} /> : null} />
   </div>;
 }
+
+export { AiChatPage as AiAgentPage } from "./AiChatPage";

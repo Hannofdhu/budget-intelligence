@@ -1,4 +1,5 @@
 import { ActionTable } from "./ActionTable";
+import { BudgetBrand } from "./BudgetBrand";
 import { useEffect, useRef, useState } from "react";
 import { fetchOpeningWorkspace, newRequestId, saveOpening, type OpeningDimension, type OpeningWorkspace, type ApiIdentity } from "./api";
 import { BudgetDataSection } from "./BudgetDataSection";
@@ -55,7 +56,7 @@ export function OpeningStudentsPage() {
     finally { setBusy(false); }
   };
   return <div className="app-frame budget-auxiliary">
-    <header className="topbar"><a className="brand" href={`/budget/workspace?revision=${encodeURIComponent(revision)}`}>年度预算工作区</a><nav aria-label="主要导航"><a className="is-current" href={`/budget/opening?revision=${encodeURIComponent(revision)}`}>期初老生</a><a href={`/budget/rebalancing?revision=${encodeURIComponent(revision)}`}>调平方案</a><a href={`/budget/audit?revision=${encodeURIComponent(revision)}`}>版本记录</a></nav></header>
+    <header className="topbar"><a className="brand" href={`/budget/workspace?revision=${encodeURIComponent(revision)}`} aria-label="预算智解，返回年度预算工作区"><BudgetBrand /></a><nav aria-label="主要导航"><a className="is-current" href={`/budget/opening?revision=${encodeURIComponent(revision)}`}>期初老生</a><a href={`/budget/rebalancing?revision=${encodeURIComponent(revision)}`}>调平方案</a><a href={`/budget/audit?revision=${encodeURIComponent(revision)}`}>版本记录</a></nav></header>
     <main className="workspace opening-workspace">
       <header className="budget-auxiliary-heading"><h1 className="budget-page-title">期初老生维护</h1></header>
       <details className="opening-technical" open={!data}><summary>连接与追溯设置</summary><fieldset disabled={busy || data !== null} className="opening-connection"><legend>本地开发身份与预算修订</legend>

@@ -59,7 +59,14 @@ class MemorySession:
         # Keep the deliberate substitution at this boundary, not in assertions.
         return cast(AsyncSession, self)
 
-    async def execute(self, _statement: Any, _parameters: Any = None) -> None:
+    async def execute(self, _statement: Any, _parameters: Any = None) -> Any:
+        if getattr(_statement, "is_select", False):
+            from types import SimpleNamespace
+
+            department = _statement.compile().params["department_id_1"]
+            rows = [record for record in self.records if record.department_id == department]
+            head = max(rows, key=lambda record: record.event_no) if rows else None
+            return SimpleNamespace(one_or_none=lambda: head)
         self.lock_count += 1
 
     async def scalars(self, statement: Any) -> Any:
@@ -88,6 +95,49 @@ class MemorySession:
         except BaseException:
             self.records = before
             raise
+
+
+async def test_read_cache_checks_head_and_invalidates_confirmation_without_revalidating_unchanged_chain(
+    tmp_path: Path,
+    memory_store: tuple[database.PostgreSQLForecastStore, MemorySession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, session = memory_store
+    first = legacy_version(ForecastStore(tmp_path))["version"]
+    await database.import_ledger(
+        session.as_async_session(),
+        database.prepare_ledger("department", tmp_path),
+        actor="test",
+        reason="test",
+    )
+    original = database.read_events
+    reads = 0
+
+    async def counted(active: AsyncSession, department: str) -> list[dict[str, Any]]:
+        nonlocal reads
+        reads += 1
+        return await original(active, department)
+
+    monkeypatch.setattr(database, "read_events", counted)
+    viewed = await store.current("department")
+    viewed["version"]["snapshot"]["rows"][0]["count"] = 999
+    assert (await store.current("department"))["version"]["snapshot"]["rows"][0]["count"] == -1
+    assert await store.latest_confirmed("department") is None
+    assert reads == 1
+    await store.confirm(
+        department="department",
+        actor="owner",
+        version_id=first["id"],
+        request_id="confirmation",
+        request_hash="confirmation",
+        reason="approved",
+    )
+    reads = 0
+    assert (await store.current("department"))["version"]["status"] == "CONFIRMED"
+    confirmed = await store.latest_confirmed("department")
+    assert confirmed is not None and confirmed["id"] == first["id"]
+    assert reads == 1
+    assert (await store.current("other-department"))["version"] is None
 
 
 @pytest.fixture
