@@ -48,7 +48,8 @@ test("optional nearest DOM context is read-only, validates shape, and does not w
 
 test("unsaved input transfers identify their saved basis without claiming a new saved budget", () => {
   const result = withVersionExportContext({ columns: [{ key: "total", label: "总人次" }], rows: [{ total: 10000 }], filename: "入口" }, { ...context(), preview: true });
-  assert.equal(result.rows[0]._budget_version, "未保存预览（基于第12版）"); assert.match(result.filename, /未保存预览/);
+  assert.equal(result.rows[0]._budget_version, "第12版");
+  assert.equal(result.rows[0]._budget_result_state, "未保存预览"); assert.match(result.filename, /未保存预览/);
 });
 
 test("explicit paged and quarterly copy grids preserve every original cell and add the same exact source metadata", () => {

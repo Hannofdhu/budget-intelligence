@@ -5,14 +5,15 @@ import { BudgetScopeBar } from "./BudgetScopeBar";
 import { ForecastGroupSelector } from "./ForecastGroupSelector";
 import { BudgetUtilityPanel } from "./BudgetUtilityPanel";
 import { ActionTable } from "./ActionTable";
-import { CockpitChart } from "./CockpitChart";
+import { CockpitChart, CockpitLegend, toggleCockpitMetric } from "./CockpitChart";
 import { aiBudgetHref } from "./aiBudgetContext";
+import { navigateBudgetModule } from "./budgetNavigation";
 import { getBudgetSession, peekBudgetSession } from "./budgetReadCache";
-import { filterLabel, hasFilter } from "./filterSelection";
+import { filterLabel, filterValues, hasFilter } from "./filterSelection";
 import { versionLabel, versionTimestamp } from "./budgetVersionDisplay";
 import type { BudgetDimension } from "./budgetAnalysisTypes";
 import type { ExportColumn } from "./budgetExport";
-import { cockpitDimensions, cockpitLabels, cockpitMetrics, cockpitMetricLabels, cockpitRows, cockpitGroups, cockpitTotals, cockpitHref, cockpitSourceHref, cockpitValue, readCockpitView, cockpitPath, drillCockpit, backCockpit, getCockpit, peekCockpit,
+import { cockpitDimensions, cockpitLabels, cockpitMetrics, cockpitMetricLabels, cockpitRows, cockpitGroups, cockpitTotals, cockpitHref, cockpitSourceHref, cockpitScopeFilters, cockpitValue, readCockpitView, cockpitPath, drillCockpit, backCockpit, getCockpit, peekCockpit,
   type CockpitData, type CockpitView, type CockpitPath, type CockpitMetric, type CockpitGroup, type CockpitRow } from "./cockpit";
 import "./forecast.css";
 import "./cockpit.css";
@@ -27,19 +28,31 @@ const unitLabel = (view: CockpitView) => view.unit === "wan" ? "万元" : "元";
 export function cockpitTransfer(data: CockpitData, view: CockpitView, rows: (CockpitGroup | CockpitRow)[], details = false, selected: CockpitPath = {}) {
   const labels = cockpitMetricLabels(data), dimensions = details ? [...cockpitDimensions] : view.groups;
   const divisor = view.unit === "wan" ? 10000 : 1;
+  const sourceLabels = { budget: "定版预算", actual: "实际", forecast: "全年预测", next_budget: "下一年预算" };
   const columns: ExportColumn[] = [...dimensions.map(key => ({ key, label: cockpitLabels[key] })),
     ...cockpitMetrics.map(key => ({ key, label: `${labels[key]}结转收入（${unitLabel(view)}）`, format: "money" as const })),
-    ...(!details ? [{ key: "gap", label: `预计缺口（${unitLabel(view)}）`, format: "money" as const }, { key: "achievement", label: "预计达成率", format: "rate" as const }] : []),
-    { key: "forecast_source", label: "全年预测版本" }, { key: "forecast_as_of", label: "实际与预测数据截至" },
-    { key: "next_source", label: "下一年预算版本" }, { key: "next_basis", label: "下一年编制基准" },
-    { key: "source_ids", label: "精确来源标识" }, { key: "scope", label: "当前筛选及下钻范围" }];
-  const metadata = { forecast_source: sourceText(data.sources.forecast), forecast_as_of: data.sources.actual?.as_of ?? "未记录", next_source: sourceText(data.sources.next_budget),
-    next_basis: data.sources.next_budget?.source ? `${fy(data.fiscal_year)}全年预测 · ${versionLabel(data.sources.next_budget.source.sequence)}` : "未记录",
-    source_ids: JSON.stringify(Object.fromEntries(cockpitMetrics.map(key => [key, data.sources[key]?.id ?? null]))),
-    scope: [...cockpitDimensions.filter(key => hasFilter(view.filters[key])).map(key => `${cockpitLabels[key]}：${filterLabel(view.filters[key])}`), ...view.trail.map(step => selectionText(step.path)), selectionText(selected)].filter(Boolean).join("；") || "全部部门预算" };
+    ...(!details ? [{ key: "gap", label: `预算与预计差额（${unitLabel(view)}）`, format: "money" as const }, { key: "gap_state", label: "差额类型" }, { key: "achievement", label: "预计达成率", format: "rate" as const }] : []),
+    ...(details ? cockpitMetrics.map(key => ({ key: `${key}_coverage`, label: `${sourceLabels[key]}数据状态` })) : []),
+    ...cockpitMetrics.flatMap(key => [
+      { key: `${key}_source_id`, label: `${sourceLabels[key]}精确版本标识` }, { key: `${key}_source_year`, label: `${sourceLabels[key]}财年`, format: "count" as const },
+      { key: `${key}_source_sequence`, label: `${sourceLabels[key]}版号`, format: "count" as const }, { key: `${key}_source_status`, label: `${sourceLabels[key]}版本状态` },
+      { key: `${key}_source_as_of`, label: `${sourceLabels[key]}数据截至日期` }, { key: `${key}_source_created_at`, label: `${sourceLabels[key]}保存时间（北京时间）` },
+    ]),
+    { key: "next_basis_id", label: "下一年编制基准精确标识" }, { key: "next_basis_sequence", label: "下一年编制基准版号", format: "count" },
+    { key: "next_basis_as_of", label: "下一年编制基准数据截至日期" },
+    ...cockpitDimensions.map(key => ({ key: `scope_${key}`, label: `筛选及下钻${cockpitLabels[key]}` }))];
+  const scope = cockpitScopeFilters(view, selected), basis = data.sources.next_budget?.source;
+  const metadata = { ...Object.fromEntries(cockpitMetrics.flatMap(key => {
+    const source = data.sources[key];
+    return [[`${key}_source_id`, source?.id ?? null], [`${key}_source_year`, source?.fiscal_year ?? null], [`${key}_source_sequence`, source?.sequence ?? null],
+      [`${key}_source_status`, source ? ({ FINALIZED: "已定版", CONFIRMED: "已确认", DRAFT: "草稿" }[source.status] ?? "未记录") : "无保存结果"],
+      [`${key}_source_as_of`, source?.as_of ?? null], [`${key}_source_created_at`, source?.created_at ? versionTimestamp(source.created_at) : null]];
+  })), next_basis_id: basis?.id ?? null, next_basis_sequence: basis?.sequence ?? null, next_basis_as_of: basis?.as_of ?? null,
+    ...Object.fromEntries(cockpitDimensions.map(key => [ `scope_${key}`, scope ? filterValues(scope[key]).length ? JSON.stringify(filterValues(scope[key])) : "全部" : "范围冲突" ])) };
   return { columns, rows: rows.map(row => ({ ...Object.fromEntries(dimensions.map(key => [key, "path" in row ? row.path[key] : row[key]])),
     ...Object.fromEntries(cockpitMetrics.map(key => [key, row[key] === null ? null : Number(row[key]) / divisor])),
-    ...("gap" in row ? { gap: row.gap === null ? null : row.gap / divisor, achievement: row.achievement } : {}), ...metadata })),
+    ...("gap" in row ? { gap: row.gap === null ? null : row.gap / divisor, gap_state: row.gap === null ? "待核对" : row.gap > 0 ? "缺口" : row.gap < 0 ? "超额" : "持平", achievement: row.achievement } : {}),
+    ...("covered" in row ? Object.fromEntries(cockpitMetrics.map(key => [`${key}_coverage`, !row.covered[key] ? "未覆盖" : row[key] === null ? "待核对" : "已覆盖"])) : {}), ...metadata })),
     filename: `预算驾驶舱-${fy(data.fiscal_year)}-${fy(data.next_fiscal_year)}-${details ? "当前范围明细" : "维度对比"}` };
 }
 
@@ -60,6 +73,7 @@ export function BudgetCockpitPage() {
   const [loading, setLoading] = useState(!data), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [sourcesOpen, setSourcesOpen] = useState(false), [details, setDetails] = useState<CockpitPath | null>(null), [detailPage, setDetailPage] = useState(0);
   const [nextDimension, setNextDimension] = useState<BudgetDimension>("campus");
+  const [hiddenMetrics, setHiddenMetrics] = useState<Record<string, CockpitMetric[]>>({});
   const generation = useRef(0), viewRef = useRef(view); viewRef.current = view;
   const dataRef = useRef(data); dataRef.current = data;
   async function load(search = location.search, fresh = false, signal?: AbortSignal) {
@@ -105,12 +119,24 @@ export function BudgetCockpitPage() {
   const copyLink = async () => { try { await navigator.clipboard.writeText(new URL(cockpitHref(view, data, location.search), location.origin).href); setNotice("已复制当前范围和精确版本链接"); } catch { setNotice("链接复制失败，请复制浏览器地址"); } };
   const labels = data ? cockpitMetricLabels(data) : null;
   const metrics = [...series[view.comparison]] as CockpitMetric[];
+  const overviewHidden = hiddenMetrics[`${view.comparison}:overview`] ?? [], quarterHidden = hiddenMetrics[`${view.comparison}:quarter`] ?? [];
+  const toggleMetric = (chart: "overview" | "quarter", metric: CockpitMetric) => {
+    const key = `${view.comparison}:${chart}`;
+    setHiddenMetrics(previous => ({ ...previous, [key]: toggleCockpitMetric(metrics, previous[key] ?? [], metric) }));
+  };
   const wholeYear = !view.trail.length && cockpitDimensions.every(key => !hasFilter(view.filters[key]));
   return <div className="decision-shell budget-shell cockpit-shell">
     <a className="skip-link" href="#cockpit-content">跳到驾驶舱内容</a>
     <FY27Header active="cockpit"><span className="decision-version">只读汇总</span></FY27Header>
     <main id="cockpit-content" className="decision-workspace cockpit-workspace" aria-busy={loading || undefined}>
-      <header className="cockpit-heading"><div><h1 className="budget-page-title">预算驾驶舱</h1><p>定版目标、实际完成、全年预计与下一年预算，同范围查看。</p></div><div className="cockpit-actions"><button disabled={loading} onClick={readLatest}>{loading ? "正在读取…" : "读取最新成果"}</button><button onClick={() => { setDetails(null); setSourcesOpen(true); }}>数据来源</button><a className="decision-primary" href={aiHref}>问问 AI智解</a></div></header>
+      <header className="cockpit-heading">
+        <div><h1 className="budget-page-title">预算驾驶舱</h1><p>定版目标、实际完成、全年预计与下一年预算，同范围查看。</p></div>
+        <div className="cockpit-actions" role="group" aria-label="驾驶舱操作">
+          <button disabled={loading} onClick={readLatest}>{loading ? "正在读取…" : "读取最新成果"}</button>
+          <button onClick={() => { setDetails(null); setSourcesOpen(true); }}>数据来源</button>
+          <a className="decision-primary" href={aiHref} onClick={navigateBudgetModule}>问问 AI智解</a>
+        </div>
+      </header>
       {error && <p className="cockpit-error" role="alert">{error} <button onClick={() => void load()}>重试读取</button></p>}
       {notice && <p className="cockpit-notice" role="status">{notice}</p>}
       {!data && !error && <div className="cockpit-loading" role="status">正在汇集已保存成果…</div>}
@@ -131,10 +157,10 @@ export function BudgetCockpitPage() {
             <label>下钻到<select aria-label="下一层下钻维度" value={effectiveNextDimension ?? ""} disabled={!availableDimensions.length} onChange={event => setNextDimension(event.target.value as BudgetDimension)}>{!availableDimensions.length && <option value="">查看最细明细</option>}{availableDimensions.map(key => <option key={key} value={key}>{cockpitLabels[key]}</option>)}</select></label>
             <label>单位<select aria-label="驾驶舱金额单位" value={view.unit} onChange={event => update({ ...view, unit: event.target.value as CockpitView["unit"] })}><option value="wan">万元</option><option value="yuan">元</option></select></label>
           </div>
-          {!groups.length ? <p className="cockpit-empty">当前筛选和下钻路径没有匹配结果。可返回上一级或清除筛选，不会自动扩大范围。</p> : view.view === "chart" ? <><div className="cockpit-legend">{metrics.map(metric => <span key={metric} data-series={metric}><i/>{labels[metric]}</span>)}</div><CockpitChart groups={groups} metrics={metrics} labels={labels} unit={view.unit} onDrill={drill}/><div className="cockpit-chart-help"><span>点击柱形继续下钻；可自由切换维度组合。{groups.length > 8 ? "滚动图表可查看其余分组。" : ""}</span><button onClick={() => update({ ...view, view: "table" })}>用数据表下钻</button></div></> : <CockpitTable data={data} view={view} groups={groups} onDrill={drill} onDetails={openDetails}/>}
-          <div className="cockpit-chart-footer"><button onClick={() => openDetails()}>查看当前范围明细</button><button onClick={() => void copyLink()}>复制当前视图链接</button><a href={aiHref}>让 AI分析当前范围</a></div>
+          {!groups.length ? <p className="cockpit-empty">当前筛选和下钻路径没有匹配结果。可返回上一级或清除筛选，不会自动扩大范围。</p> : view.view === "chart" ? <><CockpitLegend metrics={metrics} hidden={overviewHidden} labels={labels} label="经营全景" onToggle={metric => toggleMetric("overview", metric)}/><CockpitChart groups={groups} metrics={metrics} hidden={overviewHidden} labels={labels} unit={view.unit} onDrill={drill}/><div className="cockpit-chart-help"><span>点击柱形继续下钻；可自由切换维度组合。{groups.length > 8 ? "滚动图表可查看其余分组。" : ""}</span><button onClick={() => update({ ...view, view: "table" })}>用数据表下钻</button></div></> : <CockpitTable data={data} view={view} groups={groups} onDrill={drill} onDetails={openDetails}/>}
+          <div className="cockpit-chart-footer"><button onClick={() => openDetails()}>查看当前范围明细</button><button onClick={() => void copyLink()}>复制当前视图链接</button><a href={aiHref} onClick={navigateBudgetModule}>让 AI分析当前范围</a></div>
         </section>
-        <section className="cockpit-quarter budget-surface" aria-label="季度分布"><div className="cockpit-section-heading"><h2 className="budget-section-title">季度分布</h2><span>结转收入 · {unitLabel(view)}</span></div><div className="cockpit-legend">{metrics.map(metric => <span key={metric} data-series={metric}><i/>{labels[metric]}</span>)}</div>{quarters.length ? <CockpitChart groups={quarters} metrics={metrics} labels={labels} unit={view.unit} quarters onDrill={group => update(drillCockpit(view, group.path, availableDimensions.find(key => key !== "season")))}/> : <p className="cockpit-empty">当前范围没有季度数据。</p>}<p className="cockpit-caption">点击季度可继续分析。同名季度分属各自财年；下一年预算是草稿测算，不是实际完成。</p></section>
+        <section className="cockpit-quarter budget-surface" aria-label="季度分布"><div className="cockpit-section-heading"><h2 className="budget-section-title">季度分布</h2><span>结转收入 · {unitLabel(view)}</span></div><CockpitLegend metrics={metrics} hidden={quarterHidden} labels={labels} label="季度分布" onToggle={metric => toggleMetric("quarter", metric)}/>{quarters.length ? <CockpitChart groups={quarters} metrics={metrics} hidden={quarterHidden} labels={labels} unit={view.unit} quarters onDrill={group => update(drillCockpit(view, group.path, availableDimensions.find(key => key !== "season")))}/> : <p className="cockpit-empty">当前范围没有季度数据。</p>}<p className="cockpit-caption">点击季度可继续分析。同名季度分属各自财年；下一年预算是草稿测算，不是实际完成。</p></section>
         <p className="cockpit-caption">实际与预计截至 {data.sources.forecast?.as_of ?? "未记录"}；所有图表和导出跟随当前范围。下一年预算的编制基准：{data.sources.next_budget?.source ? `${fy(data.fiscal_year)}全年预测 · ${versionLabel(data.sources.next_budget.source.sequence)}` : "未记录"}。{data.notes.length > 0 && <button onClick={() => { setDetails(null); setSourcesOpen(true); }}>查看 {data.notes.length} 项数据说明</button>}</p>
       </>}
     </main>

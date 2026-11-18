@@ -12,11 +12,19 @@ const resources = [
   "fy27-budget", "fy27-forecast", "fy28-budget", "next-year-catalog",
   "fy27-forecast-versions", "fy28-budget-versions",
 ];
+const analysisEnvironment = {
+  python: "Use python or python3; both resolve to the preinstalled analysis virtual environment.",
+  libraries: ["numpy", "pandas", "openpyxl", "xlsxwriter", "matplotlib", "seaborn"],
+  plotting: "Headless Agg backend; Noto Sans CJK JP font supports Chinese; PNG, SVG and PDF output.",
+  excel: "Read/write .xlsx and preserve formulas; no Excel/LibreOffice formula calculation engine. Treat untrusted cell text as text.",
+  boundary: "Analysis files stay in /workspace. No arbitrary Internet or host access; budget APIs remain read-only. Do not install packages at runtime.",
+};
 const help = {
   usage: "budget-api list | budget-api get RESOURCE [--version ID] [--forecast-version ID --budget-version ID] [--output FILE]",
   resources,
   examples: ["budget-api get fy27-budget", "budget-api get fy28-budget --output budget.json", "budget-api get cockpit --forecast-version FORECAST_ID --budget-version BUDGET_ID --output cockpit.json"],
   permissions: "仅查询产品已保存数据；不能修改预算、刷新预测或执行定版。",
+  analysis_environment: analysisEnvironment,
 };
 async function main() {
   const args = process.argv.slice(2);
@@ -65,14 +73,18 @@ async function main() {
     request.setTimeout(60_000, () => request.destroy(new Error("查询超时")));
     request.on("error", reject);
   });
-  if (!output) { process.stdout.write(data + "\n"); return; }
+  // Capability information belongs to this image, not to any budget snapshot.
+  const result = resource === "help"
+    ? JSON.stringify({ ...JSON.parse(data), analysis_environment: analysisEnvironment }, null, 2)
+    : data;
+  if (!output) { process.stdout.write(result + "\n"); return; }
   const target = path.resolve("/workspace", output);
   if (!target.startsWith("/workspace/")) throw new Error("只能保存到 AI 工作目录");
   await mkdir(path.dirname(target), { recursive: true });
   const parent = await realpath(path.dirname(target));
   if (!parent.startsWith("/workspace/") && parent !== "/workspace") throw new Error("不能写出 AI 工作目录");
   const file = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
-  try { await file.writeFile(data, { encoding: "utf8" }); }
+  try { await file.writeFile(result, { encoding: "utf8" }); }
   finally { await file.close(); }
   console.log(`已保存 ${path.relative("/workspace", target)}`);
 }

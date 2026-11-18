@@ -277,36 +277,40 @@ test("six-dimension rendered copy and export keep every grouped row, all student
   } finally { browser.restore(); }
 });
 
-test("scope typed transfer keeps known budget numbers numeric beside unbudgeted text and carries all groups and one unambiguous footer", async () => {
+test("scope typed transfer separates numeric metrics from coverage and difference states and carries every group plus its footer", async () => {
   const dimensions = ["season", "track", "subject", "product", "grade", "campus"];
   const rows = [row({ campus: "真实预算", budget_revenue: "100000.123456", forecast_revenue: "98000.654321", budget_new: 40, budget_old: 60, forecast_new: 37, forecast_old: 60 }),
     row({ campus: "独立业务", budget_covered: false, budget_revenue: 0, budget_total: 0, budget_new: 0, budget_old: 0, forecast_revenue: "500.123456", forecast_total: 2, forecast_new: 1, forecast_old: 1 })];
   const before = JSON.stringify(rows), transfer = forecastScopeTransfer(dimensions, groupForecastRows(rows, dimensions), summarizeForecastRows(rows));
-  assert.equal(transfer.rows.length, 3); assert.equal(transfer.columns.length, 16);
+  assert.equal(transfer.rows.length, 3); assert.equal(transfer.columns.length, 18);
   const known = transfer.rows.find(row => row.campus === "真实预算"), independent = transfer.rows.find(row => row.campus === "独立业务"), footer = transfer.rows.at(-1);
   assert.equal(known.budget_revenue, 100000.123456 / 10000); assert.equal(known.budget_total, 100);
-  assert.equal(independent.budget_revenue, "未单列"); assert.equal(independent.budget_total, "未单列"); assert.equal(independent.budget_new, null);
+  assert.equal(independent.budget_revenue, null); assert.equal(independent.budget_total, null); assert.equal(independent.budget_status, "未单列"); assert.equal(independent.budget_new, null);
+  assert.equal(known.gap, (100000.123456 - 98000.654321) / 10000); assert.equal(known.gap_state, "缺口");
   assert.equal(footer.season, "当前范围合计"); assert.ok(dimensions.slice(1).every(key => footer[key] === ""));
   assert.equal(footer.budget_revenue, known.budget_revenue); assert.equal(footer.forecast_total, 99);
   const copied = tableCopyRows(transfer.columns, transfer.rows);
-  assert.equal(copied.length, 4); assert.ok(copied.every(row => row.length === 16));
+  assert.equal(copied.length, 4); assert.ok(copied.every(row => row.length === 18));
   assert.deepEqual(copied[0].slice(-6), ["预算人次 / 总人次", "预算人次 / 新生人次", "预算人次 / 老生人次", "预计 / 实际人次 / 总人次", "预计 / 实际人次 / 新生人次", "预计 / 实际人次 / 老生人次"]);
   const workbook = await budgetWorkbook(transfer.columns, transfer.rows, "当前范围达成");
   const { default: ExcelJS } = await import("exceljs"), reopened = new ExcelJS.Workbook(); await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
   const sheet = reopened.worksheets[0], knownIndex = transfer.rows.indexOf(known) + 2, independentIndex = transfer.rows.indexOf(independent) + 2;
-  assert.equal(sheet.getCell(knownIndex, 7).type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell(knownIndex, 11).type, ExcelJS.ValueType.Number);
-  assert.equal(sheet.getCell(knownIndex, 7).value, known.budget_revenue); assert.equal(sheet.getCell(independentIndex, 7).value, "未单列");
-  for (const col of [7, 8, 10, 11, 12, 13, 14, 15, 16]) assert.equal(sheet.getCell(4, col).type, ExcelJS.ValueType.Number, `footer column ${col}`);
+  assert.equal(sheet.getCell(knownIndex, 7).type, ExcelJS.ValueType.Number); assert.equal(sheet.getCell(knownIndex, 13).type, ExcelJS.ValueType.Number);
+  assert.equal(sheet.getCell(knownIndex, 7).value, known.budget_revenue); assert.equal(sheet.getCell(independentIndex, 7).value, null); assert.equal(sheet.getCell(independentIndex, 11).value, "未单列");
+  for (const col of [7, 8, 9, 12, 13, 14, 15, 16, 17, 18]) assert.equal(sheet.getCell(4, col).type, ExcelJS.ValueType.Number, `footer column ${col}`);
   assert.equal(JSON.stringify(rows), before);
   const empty = forecastScopeTransfer(dimensions, [], summarizeForecastRows([])); assert.equal(empty.rows.length, 0);
   const unnamed = [row({ track: "", method: "UNMAPPED_ACTUAL", budget_revenue: 0, budget_total: 0 })];
   const unnamedTransfer = forecastScopeTransfer(["track"], groupForecastRows(unnamed, ["track"]), summarizeForecastRows(unnamed));
   assert.equal(unnamedTransfer.rows[0].track, "未填写"); assert.equal(unnamedTransfer.rows[0].budget_revenue, null);
-  assert.equal(unnamedTransfer.rows[0].gap_label, null); assert.equal(unnamedTransfer.rows[0].achievement, null);
+  assert.equal(unnamedTransfer.rows[0].gap, null); assert.equal(unnamedTransfer.rows[0].gap_state, "待核对"); assert.equal(unnamedTransfer.rows[0].achievement, null);
   const tree = dashboardHarness(calculation({ rows }))();
   const region = findTree(tree, node => node.type === "div" && node.props["aria-label"] === "维度达成表")[0];
   const action = findTree(region, node => typeof node.type === "function" && node.type.name === "ActionTable")[0];
   assert.equal(action.props.exportData.rows.length, 2); assert.equal(action.props.exportLabel, "导出当前表格");
+  const quarterRegion = findTree(tree, node => node.type === "div" && node.props["aria-label"] === "季度达成明细表")[0];
+  const quarterAction = findTree(quarterRegion, node => typeof node.type === "function" && node.type.name === "ActionTable")[0];
+  assert.equal(quarterAction.props.exportLabel, "导出当前表格", "structured data does not rename the existing DOM-fallback action");
 });
 
 test("board and detail navigation shares one exact scope, preserves it across tabs, and never changes the whole-year or quarter result", () => {

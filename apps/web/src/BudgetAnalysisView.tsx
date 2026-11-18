@@ -52,6 +52,22 @@ const detailColumns: ExportColumn[] = [
   { key: "detailDiscount", label: "折扣率", format: "rate" },
   { key: "renewal", label: "续班率", format: "rate" },
 ];
+/** Detail numeric columns contain only saved numbers; source states get their own fields. */
+export function budgetAnalysisDetailTransfer(facts: BudgetFact[], filename: string) {
+  const numeric = detailColumns.filter(column => column.format);
+  const columns = detailColumns.flatMap(column => column.format ? [column, { key: `${column.key}_status`, label: `${column.label}状态` }] : [column]);
+  const rows = facts.map(fact => {
+    const values: Record<string, unknown> = { ...fact };
+    for (const column of numeric) {
+      const raw = fact[column.key as keyof BudgetFact], known = numericValue(raw as BudgetFact["revenue"]) !== null;
+      const text = typeof raw === "string" ? raw.trim() : "";
+      values[column.key] = known ? raw : null;
+      values[`${column.key}_status`] = known ? "已提供" : text === "-" ? "不适用" : raw == null || text === "" && typeof raw !== "number" ? "未提供" : text || "无效数值";
+    }
+    return values;
+  });
+  return { columns, rows, filename };
+}
 const matchesPath = (fact: BudgetFact, path: Partial<Record<BudgetDimension, string>>) => Object.entries(path).every(([key, value]) => fact[key as BudgetDimension] === value);
 const localNumber = (value: number, digits = 2) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits }).format(value);
 const validateViewState = (state: BudgetAnalysisState, facts: BudgetFact[], parentOwnsFilters = false) => {
@@ -263,9 +279,8 @@ export function BudgetAnalysisView({ facts, contextKey, fiscalYear, annualTarget
   const pageCount = Math.max(1, Math.ceil(detailFacts.length / 25));
   const safePage = selectionScope === filterKey ? Math.min(detailPage, pageCount - 1) : 0;
   const pagedFacts = detailFacts.slice(safePage * 25, (safePage + 1) * 25);
-  const exportColumns = detailColumns;
   const exportStem = versionExportContext ? versionFileStem(versionExportContext) : `FY${String(fiscalYear).slice(-2)}`;
-  const detailTransfer = { columns: exportColumns, rows: detailFacts, filename: `${exportStem}-${detailSelection ? "所选" : "预算"}明细` };
+  const detailTransfer = budgetAnalysisDetailTransfer(detailFacts, `${exportStem}-${detailSelection ? "所选" : "预算"}明细`);
 
   function selectCell(row: BudgetPivotRow, columnKey: string, metric: BudgetMetric, extend = false) {
     const next = { row: row.key, column: columnKey, metric };

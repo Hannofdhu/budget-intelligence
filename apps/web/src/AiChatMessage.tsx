@@ -3,7 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ActionTable } from "./ActionTable";
 import { Xiaoyu } from "./Xiaoyu";
-import type { ChatMessage } from "./aiChatApi";
+import { chatSnapshotNote, type ChatMessage } from "./aiChatApi";
 
 export function chatSafeUrl(value: string): string {
   if (/^https:\/\//i.test(value)) return value;
@@ -15,13 +15,15 @@ export function AiChatMessage({ message, showCompanion = true }: { message: Chat
   const [copyNotice, setCopyNotice] = useState("");
   const user = message.role === "user", busy = ["queued", "preparing", "running", "stopping"].includes(message.state);
   const needsReview = message.validation?.state === "needs_review";
+  const snapshotNote = chatSnapshotNote(message);
   const copy = async () => {
-    try { if (!navigator.clipboard?.writeText) throw new Error(); await navigator.clipboard.writeText((needsReview ? `待核实：${message.validation!.warnings.join("；")}\n\n` : "") + message.text); setCopyNotice("已复制"); }
+    try { if (!navigator.clipboard?.writeText) throw new Error(); await navigator.clipboard.writeText((needsReview ? `待核实：${message.validation!.warnings.join("；")}\n\n` : "") + (snapshotNote ? `${snapshotNote}\n\n` : "") + message.text); setCopyNotice("已复制"); }
     catch { setCopyNotice("复制失败，请选中文字后使用系统复制"); }
   };
   return <article className={`ai-chat-message ${user ? "is-user" : "is-assistant"}`} aria-label={user ? "我的消息" : "AI智解的回答"}>
     <div className="ai-chat-message-meta"><span>{user ? "我" : "AI智解"}</span>{!user && busy && <span className="ai-chat-progress">{message.progress || ({ queued: "排队中", preparing: "正在准备", stopping: "正在停止" } as Record<string,string>)[message.state] || "正在回答"}</span>}</div>
     {!user && needsReview && <div className="ai-knowledge-answer-warning" role="status"><strong>待核实</strong>{message.validation!.warnings.map(warning => <p key={warning}>{warning}</p>)}<small>暂不提供此回答表格的一键导出；复制回答会带上本提示。</small></div>}
+    {!user && snapshotNote && <p className="ai-chat-message-note">{snapshotNote}</p>}
     {message.activities && message.activities.length > 0 && <details className="ai-chat-activities"><summary>执行过程 · {message.activities.length}项{busy ? " · 进行中" : ""}</summary><ol>{message.activities.map((activity, index) => <li key={activity.id || index}>
       <details><summary><span>{({ bash: "运行分析", read: "读取文件", write: "生成文件", edit: "调整工作区文件", grep: "检索资料", ls: "查看工作区", find: "查找文件" } as Record<string, string>)[activity.tool] || "处理分析任务"}</span><small>{({ running: "进行中", complete: "已完成", error: "未完成", interrupted: "已中断" } as Record<string, string>)[activity.state] || activity.state}</small></summary><code>{activity.summary}</code>{activity.output && <pre>{activity.output}</pre>}</details>
     </li>)}</ol></details>}
@@ -34,6 +36,6 @@ export function AiChatMessage({ message, showCompanion = true }: { message: Chat
     {!user && message.state === "interrupted" && <p className="ai-chat-message-note">回答已停止，以上内容和执行记录已保留。</p>}
     {!user && message.state === "cancelled" && <p className="ai-chat-message-note">已取消排队，未调用模型。问题仍保留，可重新提问。</p>}
     {!user && message.text && !busy && <div className="ai-chat-message-actions"><button onClick={() => { void copy(); }} aria-label="复制这条回答">复制回答</button>{message.model && <span>{message.model}</span>}<span role="status">{copyNotice}</span></div>}
-    {!user && message.validation && <details className="ai-knowledge-checks"><summary>口径检查范围{needsReview ? " · 待核实" : " · 有限检查"}</summary><p>{message.validation.notice}</p><p>{message.validation.resources.length ? `本轮读取：${message.validation.resources.join("、")}` : "本轮未记录成功的预算读取。"}</p></details>}
+    {!user && message.validation && <details className="ai-knowledge-checks"><summary>口径检查范围{needsReview ? " · 待核实" : " · 有限检查"}</summary><p>{message.validation.notice}</p><p>{message.validation.resources.length ? `本轮接口读取：${message.validation.resources.join("、")}` : snapshotNote ? "本轮使用此前接口快照，文件指纹一致。" : "本轮未记录成功的预算读取。"}</p>{message.validation.snapshots?.map(source => <p key={`${source.resource}-${source.captured_at}`}>快照文件：{source.files.join("、")}</p>)}</details>}
   </article>;
 }

@@ -307,21 +307,29 @@ test("shared read-only tables use one keyboard entry while the existing pivot an
   assert.equal((analysis.match(/<ActionTable keyboardNavigation/g) ?? []).length, 1, "the existing pivot range is not replaced by another selection system");
   const people = source("BudgetPeopleBoard.tsx");
   for (const label of ["季度招生预算表", "赛道年级跨季续班率表"]) {
-    assert.ok(people.includes(`<ActionTable keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="${label}，可横向滚动" aria-label="${label}"`));
+    const labelAt = people.indexOf(`aria-label="${label}"`);
+    const owner = people.slice(people.lastIndexOf("<ActionTable", labelAt), people.indexOf(">", labelAt));
+    assert.ok(labelAt >= 0 && owner.includes("keyboardNavigation"), label);
+    assert.ok(owner.includes('scrollClassName="ba-table-wrap"'), label);
+    assert.ok(owner.includes(`scrollLabel="${label}，可横向滚动"`), label);
     assert.ok(!people.includes(`tabIndex={0} aria-label="${label}"`));
   }
   const quarter = source("BudgetQuarterTable.tsx");
   assert.match(quarter, /scrollClassName="ba-table-wrap" scrollRef=\{observeBudgetTableHeader\} scrollLabel=\{`\$\{tableLabel\}，可横向滚动`\}/);
   assert.match(quarter, /<ActionTable keyboardNavigation className=\{`ba-table \$\{tableClassName\}`\} tableLabel=\{tableLabel\}/);
   const forecast = source("ForecastPage.tsx");
-  for (const label of ["季度达成明细表", "维度达成表", "预测明细表", "校区预测人数"]) {
-    const context = label === "校区预测人数" ? "" : " {...budgetVersionExportAttributes(exportContext)}";
+  for (const label of ["季度达成明细表", "维度达成表", "预测明细表"]) {
+    const context = " {...budgetVersionExportAttributes(exportContext)}";
     assert.ok(forecast.includes(`className="forecast-table-region" aria-label="${label}"${context}><ActionTable keyboardNavigation`));
     const region = forecast.slice(forecast.indexOf(`className="forecast-table-region" aria-label="${label}"`));
     assert.match(region.slice(0, region.indexOf("<thead>")), /scrollClassName="forecast-table-wrap"/);
     assert.match(region.slice(0, region.indexOf("<thead>")), new RegExp(`aria-label="${label}"`));
     assert.ok(!forecast.includes(`tabIndex={0} aria-label="${label}"`));
   }
+  const rates = source("ForecastCampusRates.tsx");
+  assert.match(rates, /<ActionTable keyboardNavigation tableLabel="校区预测人数试算明细"/);
+  assert.match(rates, /scrollClassName="forecast-table-wrap"/);
+  assert.doesNotMatch(rates, /tabIndex=\{0\}/, "the new input adapter still delegates one keyboard range to ActionTable");
   assert.match(forecast, /<ActionTable exportData=\{parameterTransfer\} keyboardNavigation tableLabel=\{legacyTrial \? "试用假设明细" : "独立业务参数"\}/);
   assert.match(forecast, /aria-label=\{legacyTrial \? "试用假设明细表" : "独立业务参数表"\} className="forecast-sku-parameter-table" scrollClassName="forecast-table-wrap"/);
   assert.match(forecast, /<input[^>]*onChange|<select[^>]*onChange/, "the forecast parameter table retains its existing editable controls");

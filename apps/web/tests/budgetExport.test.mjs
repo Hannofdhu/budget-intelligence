@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { budgetWorkbook } from "../src/budgetExport.ts";
-import { historicalExportColumns } from "../src/historicalBudgetExport.ts";
+import { historicalExportColumns, historicalExportRows, historicalRenewalExport } from "../src/historicalBudgetExport.ts";
 
 test("XLSX keeps actual numbers, numeric API decimals, blank, zero, negative and literal strings distinct", async () => {
   const columns = [
@@ -42,9 +42,10 @@ test("all five exports exclude spreadsheet locations and store amounts/counts/ra
   for (let step = 1; step <= 5; step++) {
     const columns = historicalExportColumns(step);
     assert.ok(columns.every(column => !/Excel|来源|依据|行号|小数/.test(column.label)));
-    const workbook = await budgetWorkbook(columns, [row]);
+    const [exported] = historicalExportRows(step, [row]);
+    const workbook = await budgetWorkbook(columns, [exported]);
     columns.forEach((column, index) => {
-      assert.equal(workbook.worksheets[0].getCell(2, index + 1).value, row[column.key]);
+      assert.equal(workbook.worksheets[0].getCell(2, index + 1).value, exported[column.key]);
       if (column.format) assert.equal(typeof workbook.worksheets[0].getCell(2, index + 1).value, "number");
     });
   }
@@ -96,4 +97,39 @@ test("normal results and confirmation views hide technical provenance controls w
   const record = fs.readFileSync(new URL("../src/PublishedBudgetRecord.tsx", import.meta.url), "utf8");
   assert.match(record, /fetchPublicationReadiness/);
   assert.match(record, /readiness\.checks\.map/);
+});
+
+test("FY27 renewal exports separate non-applicability and unknown states while retaining numeric zero and precision", () => {
+  const source = [{ renewal: "-" }, { renewal: null }, { renewal: "unknown" }, { renewal: 0 }, { renewal: 0.654321987 }, { renewal: "0.812345" }];
+  const before = JSON.stringify(source), rows = historicalExportRows(3, source);
+  assert.deepEqual(rows.map(row => row.renewal), [null, null, null, 0, 0.654321987, "0.812345"]);
+  assert.deepEqual(rows.map(row => row.renewal_status), ["不适用", "未填写", "待核对", "适用", "适用", "适用"]);
+  assert.equal(historicalRenewalExport(Infinity).status, "待核对");
+  assert.equal(JSON.stringify(source), before);
+});
+
+test("all 952 current FY27 source rows round-trip renewal as numeric or blank with 119 non-applicable statuses", { skip: !fs.existsSync(sourcePath) }, async () => {
+  const original = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+  const blocks = ["AI AJ AL AM AN", "AZ BA BC BD BE", "BQ BR BT BU BV", "CH CI CK CL CM"];
+  const rows = original.sheets["滚动表"].rows.filter(row => row.row >= 2 && row.row <= 239 && row.cells.A?.value != null)
+    .flatMap(row => blocks.map((block, i) => {
+      const [renewal, share, old, fresh, total] = block.split(" ");
+      return { campus: row.cells.G.value, track: row.cells.A.value, product: row.cells.B.value, grade: row.cells.D.value, subject: row.cells.F.value,
+        season: ["暑假", "秋季", "寒假", "春季"][i], renewal: row.cells[renewal]?.value ?? null, share: row.cells[share]?.value ?? null,
+        old: row.cells[old]?.value ?? null, new: row.cells[fresh]?.value ?? null, total: row.cells[total]?.value ?? null };
+    }));
+  assert.equal(rows.length, 952); assert.equal(rows.filter(row => row.renewal === "-").length, 119);
+  const before = JSON.stringify(rows), exported = historicalExportRows(3, rows), columns = historicalExportColumns(3);
+  const workbook = await budgetWorkbook(columns, exported), { default: ExcelJS } = await import("exceljs"), reopened = new ExcelJS.Workbook();
+  await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
+  const sheet = reopened.worksheets[0], numericColumn = columns.findIndex(column => column.key === "renewal") + 1,
+    statusColumn = columns.findIndex(column => column.key === "renewal_status") + 1;
+  let notApplicable = 0, retainedZeros = 0;
+  rows.forEach((row, index) => {
+    const cell = sheet.getCell(index + 2, numericColumn), status = sheet.getCell(index + 2, statusColumn).value;
+    assert.ok(cell.value === null || typeof cell.value === "number", `row ${index + 2} must not mix a status into a numeric rate`);
+    if (row.renewal === "-") { assert.equal(cell.value, null); assert.equal(status, "不适用"); notApplicable++; }
+    else { assert.equal(cell.value, row.renewal); if (row.renewal === 0) { assert.equal(cell.type, ExcelJS.ValueType.Number); retainedZeros++; } }
+  });
+  assert.equal(notApplicable, 119); assert.equal(retainedZeros, 45); assert.equal(JSON.stringify(rows), before);
 });

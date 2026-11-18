@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FY27Header } from "./FY27Header";
+import { useBudgetModuleLeaveProtection } from "./budgetNavigation";
 import { Xiaoyu } from "./Xiaoyu";
 import { forgetXiaoyuHelp, readXiaoyuHelp, readXiaoyuHelpDisplay, xiaoyuHelpPrompt, xiaoyuHelpQuestion } from "./xiaoyuHelpHandoff";
 import { xiaoyuHelpState, xiaoyuHelpTopic } from "./xiaoyuHelpTopics";
@@ -9,7 +10,12 @@ import { getAiAgentStatus, type AiAgentStatus } from "./aiAgentApi";
 import { chatIsBusy, chatMarkdown, chatRequestId, createChat, getChat, listChats, readChatResult, sendChat, stopChat, updateChat,
   type ChatContext, type ChatConversation, type ChatSummary } from "./aiChatApi";
 import { AiChatMessage, chatSafeUrl } from "./AiChatMessage";
+import { AiChatFiles } from "./AiChatFiles";
+import { groupChatFiles } from "./aiChatFilesApi";
+import { useAiChatFiles } from "./useAiChatFiles";
+import { AiChatLayout } from "./AiChatLayout";
 import { chatTaskLabel, mergeChatHistory, newChatResults } from "./aiChatActivity";
+import { aiChatDraftKey, readAiChatDraft, saveAiChatDraft, clearAiChatDraft } from "./aiChatDrafts";
 import { KnowledgeCard, KnowledgePanel } from "./AiKnowledge";
 import { useAiKnowledge } from "./useAiKnowledge";
 import type { KnowledgeSnapshot, KnowledgeSource } from "./aiKnowledgeApi";
@@ -39,11 +45,14 @@ export function AiChatPage() {
   const help = helpEntry.status === "ready" ? helpEntry.handoff : null;
   const newContext: ChatContext | null = context ? { label: `${context.moduleLabel} · ${context.versionLabel}${help ? ` · ${xiaoyuHelpTopic(help.topicId)!.title}` : ""}`,
     scope: context.scopeLabel, href: context.sourceHref, prompt: help ? xiaoyuHelpPrompt(help, context) : aiBudgetContextPrompt(context) } : null;
+  const draftScope = aiChatDraftKey(null, context?.sourceHref ?? "", helpEntry.status === "ready" ? helpEntry.token : "");
+  const keyForDraft = (id: string | null) => id ? aiChatDraftKey(id) : draftScope;
   const [status, setStatus] = useState<AiAgentStatus | null>(null), [loading, setLoading] = useState(true);
   const [chats, setChats] = useState<ChatSummary[]>([]), [selectedId, setSelectedId] = useState<string | null>(initialId);
   const [record, setRecord] = useState<ChatConversation | null>(null), [reading, setReading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 960);
-  const [search, setSearch] = useState(""), [archived, setArchived] = useState(false), [draft, setDraft] = useState(() => help ? xiaoyuHelpQuestion(help) : context?.module === "cockpit" ? "请分析驾驶舱当前范围的预算缺口、全年预计和下一年预算增长，指出值得继续下钻的业务，区分事实与待核对的业务假设。" : "");
+  const [search, setSearch] = useState(""), [archived, setArchived] = useState(false), [draft, setDraft] = useState(() => readAiChatDraft(keyForDraft(initialId()), help ? xiaoyuHelpQuestion(help) : context?.module === "cockpit" ? "请分析驾驶舱当前范围的预算缺口、全年预计和下一年预算增长，指出值得继续下钻的业务，区分事实与待核对的业务假设。" : ""));
+  const [draftStorageUnavailable, setDraftStorageUnavailable] = useState(false);
   const [error, setError] = useState(""), [readError, setReadError] = useState(""), [historyError, setHistoryError] = useState(""), [notice, setNotice] = useState("");
   const [sending, setSending] = useState(false), [stopping, setStopping] = useState(false), [menu, setMenu] = useState(false);
   const [renaming, setRenaming] = useState(false), [title, setTitle] = useState(""), [reload, setReload] = useState(0);
@@ -53,11 +62,44 @@ export function AiChatPage() {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false), [knowledgeView, setKnowledgeView] = useState<"manage" | "snapshot">("manage");
   const [knowledgeEditing, setKnowledgeEditing] = useState<string | null>(null), [knowledgeSnapshot, setKnowledgeSnapshot] = useState<KnowledgeSnapshot | null>(null);
   const knowledge = useAiKnowledge(!loading && Boolean(status), record?.messages.map(message => message.knowledge_proposal_id || "").join(",") || "", selectedId || "new");
+  const sourceDisclosure = useRef<HTMLDetailsElement>(null);
   const selected = useRef(selectedId), editor = useRef<HTMLTextAreaElement>(null), messages = useRef<HTMLDivElement>(null);
   const drafts = useRef(new Map<string, string>()), newId = useRef("");
   const composing = useRef(false), operation = useRef(false), alive = useRef(true), atBottom = useRef(true);
   const pending = useRef<{ id: string; text: string; chatId: string } | null>(null);
   const historyItems = useRef<ChatSummary[]>([]), acknowledging = useRef(new Set<string>());
+  const rememberDraft = (id: string | null, text: string) => {
+    drafts.current.set(id || "new", text);
+    setDraftStorageUnavailable(!saveAiChatDraft(keyForDraft(id), text));
+  };
+  const editDraft = (text: string) => { rememberDraft(selected.current, text); setDraft(text); };
+  const restoreDraft = (id: string | null) => drafts.current.get(id || "new") ?? readAiChatDraft(keyForDraft(id));
+  const clearAcceptedDrafts = (id: string, text: string, fromNew: boolean) => {
+    for (const target of fromNew ? ["new", id] : [id]) {
+      const key = target === "new" ? draftScope : aiChatDraftKey(target);
+      const current = drafts.current.get(target) ?? readAiChatDraft(key);
+      if (current.trim() !== text) continue;
+      drafts.current.delete(target); clearAiChatDraft(key);
+    }
+  };
+  useBudgetModuleLeaveProtection(sending || stopping || Boolean(draftStorageUnavailable && draft.trim()), () => {
+    setNotice(sending || stopping ? "当前请求尚未确认，请完成后再切换模块；不会自动重发或停止回答。" : "未发送内容暂存失败，请先复制并清空，再切换模块。");
+  });
+
+  useEffect(() => {
+    const dismiss = (event: PointerEvent | KeyboardEvent) => {
+      const disclosure = sourceDisclosure.current;
+      if (!disclosure?.open) return;
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        disclosure.open = false;
+        disclosure.querySelector("summary")?.focus();
+      } else if (event.target instanceof Node && !disclosure.contains(event.target)) disclosure.open = false;
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", dismiss);
+    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", dismiss); };
+  }, []);
 
   useEffect(() => {
     const fold = () => { if (knowledgeOpen && window.innerWidth < 1280) setSidebarOpen(false);
@@ -136,33 +178,29 @@ export function AiChatPage() {
   }, [selectedId, loading, reload, upsert]);
 
   useEffect(() => {
+    rememberDraft(selectedId, draft);
     if (!editor.current) return;
     editor.current.style.height = "auto";
     editor.current.style.height = `${Math.min(200, editor.current.scrollHeight)}px`;
-    drafts.current.set(selectedId || "new", draft);
-  }, [draft, selectedId]);
+  }, [draft, selectedId, draftScope]);
   useEffect(() => {
     if (atBottom.current && messages.current) messages.current.scrollTop = messages.current.scrollHeight;
   }, [record?.revision]);
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if ([...drafts.current.values()].some(value => value.trim())) event.preventDefault(); };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, []);
-  useEffect(() => {
     const sync = () => {
+      if (window.location.pathname !== "/budget/ai") return;
       const id = initialId(); selected.current = id; setSelectedId(id); setRecord(null); setError(""); setReadError("");
-      setDraft(drafts.current.get(id || "new") || ""); setReading(Boolean(id));
+      setDraft(restoreDraft(id)); setReading(Boolean(id));
     };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
 
   const select = (id: string | null) => {
-    drafts.current.set(selected.current || "new", draft);
+    rememberDraft(selected.current, draft);
     if (!id) { setArchived(false); setSearch(""); }
     selected.current = id; setSelectedId(id); setRecord(null); setReading(Boolean(id)); setError(""); setReadError(""); setNotice("");
-    setMenu(false); setRenaming(false); setDraft(drafts.current.get(id || "new") || "");
+    setMenu(false); setRenaming(false); setDraft(restoreDraft(id));
     atBottom.current = true; setNearBottom(true);
     const url = new URL(location.href); if (id) url.searchParams.set("chat", id); else url.searchParams.delete("chat");
     history.pushState({}, "", `${url.pathname}${url.search}`);
@@ -219,8 +257,8 @@ export function AiChatPage() {
       const next = await sendChat(id, text, attempt.id);
       if (!alive.current) return;
       apply(next); pending.current = null; newId.current = "";
-      drafts.current.delete("new"); drafts.current.delete(id);
-      if (selected.current === id) { setDraft(""); atBottom.current = true; setNearBottom(true); setReload(value => value + 1); }
+      clearAcceptedDrafts(id, text, origin === null);
+      if (selected.current === id) { setDraft(current => current.trim() === text ? "" : current); atBottom.current = true; setNearBottom(true); setReload(value => value + 1); }
     } catch (failure) {
       if (!alive.current) return;
       // A lost HTTP response is ambiguous. Read back by request ID; never auto-submit again.
@@ -229,7 +267,7 @@ export function AiChatPage() {
         try {
           const next = await getChat(id); accepted = next.messages.some(message => message.id === pending.current?.id);
           apply(next);
-          if (accepted && selected.current === id) { setDraft(""); drafts.current.delete(id); drafts.current.delete("new"); setReload(value => value + 1); }
+          if (accepted) { clearAcceptedDrafts(id, text, origin === null); if (selected.current === id) { setDraft(current => current.trim() === text ? "" : current); setReload(value => value + 1); } }
         } catch { /* Keep the editor and request ID available for a deliberate retry. */ }
       }
       if (accepted) { pending.current = null; setNotice("消息已接收，正在读取回答"); }
@@ -264,6 +302,9 @@ export function AiChatPage() {
   const busy = chatIsBusy(record?.state) || Boolean(record?.needs_stop), activeContext = record?.context ?? (!selectedId ? newContext : null);
   const helpDisplay = activeContext ? readXiaoyuHelpDisplay(activeContext.prompt) : null;
   const hasConnectionProblem = Boolean(error || readError || historyError || (!loading && status && !status.available));
+  const files = useAiChatFiles(record?.id ?? null, record?.revision ?? 0, busy);
+  const filesByMessage = useMemo(() => groupChatFiles(files.collection.files, record?.messages ?? []), [files.collection.files, record?.messages]);
+  const lastAnswer = [...(record?.messages ?? [])].reverse().find(message => message.role === "assistant" && message.state !== "cancelled")?.id;
   const latestKnowledge = [...(record?.messages ?? [])].reverse().find(message => message.knowledge)?.knowledge ?? null;
   const openKnowledge = (view: "manage" | "snapshot" = "manage", editing: string | null | undefined = undefined, snapshot: KnowledgeSnapshot | null = latestKnowledge) => {
     setKnowledgeOpen(true); setKnowledgeView(view); setKnowledgeSnapshot(snapshot); if (editing !== undefined) setKnowledgeEditing(editing);
@@ -282,8 +323,8 @@ export function AiChatPage() {
   return <div className="decision-shell ai-chat-shell">
     <a className="skip-link" href="#ai-chat-content">跳到对话内容</a>
     <FY27Header active="ai" moduleFiscalYears={context ? { [context.module]: context.fiscalYear } : undefined}><span className="ai-chat-header-model">{model}</span></FY27Header>
-    <div className={`ai-chat-layout ${sidebarOpen ? "" : "is-sidebar-closed"} ${knowledgeOpen ? "is-knowledge-open" : ""}`}>
-      <aside className="ai-chat-sidebar" hidden={!sidebarOpen} aria-label="对话历史">
+    <AiChatLayout sidebarOpen={sidebarOpen} knowledgeOpen={knowledgeOpen}>
+      <aside id="ai-chat-sidebar" className="ai-chat-sidebar" hidden={!sidebarOpen} aria-label="对话历史">
         <div className="ai-chat-sidebar-top"><strong>AI智解</strong><button className="ai-chat-icon" aria-label="收起对话列表" onClick={() => setSidebarOpen(false)}><Icon name="sidebar"/></button></div>
         <button className="ai-chat-new" onClick={() => select(null)}><Icon name="add"/>新对话</button>
         <label className="ai-chat-search"><Icon name="search"/><input aria-label="搜索对话标题" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索对话"/></label>
@@ -294,11 +335,20 @@ export function AiChatPage() {
             <span className="ai-chat-history-entry"><span className="ai-chat-history-title">{item.title}</span><small><span className={`ai-chat-task-state is-${item.state}`}>{chatTaskLabel(item)}</span><span>{item.pinned && <Icon name="pin"/>}{new Date(item.updated_at).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span></small></span>{item.unread && <span className="ai-chat-unread">未读</span>}
           </button>)}</section>) : <p>{search ? "没有匹配的对话标题" : archived ? "暂无归档对话" : "你的对话会保存在这里"}</p>}
         </nav>
-        <footer><button className="ai-knowledge-sidebar-link" aria-expanded={knowledgeOpen} onClick={() => openKnowledge()}>业务知识与偏好</button><span>本机保存 · 当前浏览器</span><details><summary>记录与数据说明</summary><p>每段新对话自动保存，可回看、继续提问或归档。清除浏览器数据后可能无法找回身份。原终端记录仍保留，不将归属不明的旧记录混入此列表。预算数据仅可读取，不会自动保存或修改预算。</p></details></footer>
+        <footer><button className="ai-knowledge-sidebar-link" aria-expanded={knowledgeOpen} onClick={() => openKnowledge()}>业务知识与偏好</button><span>本机保存 · 当前浏览器</span><details><summary>记录与数据说明</summary><p>每段新对话自动保存，可回看、继续提问或归档。未发送的问题仅在当前标签页暂存，切换模块不会自动发送。清除浏览器数据后可能无法找回身份。原终端记录仍保留，不将归属不明的旧记录混入此列表。预算数据仅可读取，不会自动保存或修改预算。</p></details></footer>
       </aside>
       <main id="ai-chat-content" className="ai-chat-main">
         <header className="ai-chat-heading">
-          <div><button className="ai-chat-icon" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-expanded={sidebarOpen} onClick={toggleSidebar}><Icon name="sidebar"/></button><h1 title={conversationTitle}>{conversationTitle || (selectedId ? reading ? "正在读取对话" : "对话暂不可用" : "新对话")}</h1></div>
+          <div><button className="ai-chat-icon" aria-label={sidebarOpen ? "收起对话列表" : "展开对话列表"} aria-expanded={sidebarOpen} onClick={toggleSidebar}><Icon name="sidebar"/></button><div className="ai-chat-heading-text"><h1 title={conversationTitle}>{conversationTitle || (selectedId ? reading ? "正在读取对话" : "对话暂不可用" : "新对话")}</h1>{(activeContext || latestKnowledge) && <div className="ai-chat-metadata">
+        {activeContext && <details key={selectedId || "new-source"} ref={sourceDisclosure} className="ai-chat-source"><summary title={`引用来源：${activeContext.label}`}><span>引用来源</span><strong>{activeContext.label}</strong></summary><div className="ai-chat-source-content"><p>{activeContext.scope}</p>{chatSafeUrl(activeContext.href) && <a href={activeContext.href} target="_blank" rel="noreferrer">打开来源页面</a>}
+          {activeContext.prompt.startsWith("【小予讲解｜") ? <div className="ai-chat-help-context"><strong>已带入小予讲解上下文</strong><p>{record ? "这里保留的是提问时的页面快照，后续预算调整不会自动同步到这段对话。" : "问题已准备好，点击发送后才会调用 AI。原预算页及未保存修改仍保留。"}</p>
+              {helpDisplay && <details><summary>查看带入的页面状态与修改摘要</summary><p>{xiaoyuHelpState(helpDisplay.snapshot)}</p><p>编制基准：{helpDisplay.snapshot.basisLabel} · 数据截至 {helpDisplay.snapshot.basisAsOf || "待核对"}</p><p>采集于 {new Date(helpDisplay.capturedAt).toLocaleString("zh-CN")}</p>
+                {helpDisplay.snapshot.trackTargetAllocation && <><p>分配用全年目标（元）：{helpDisplay.snapshot.trackTargetAllocation.annualTargetYuan || "未填写"}</p><p>收入权重来源：{helpDisplay.snapshot.trackTargetAllocation.weightVersionLabel}已保存的测算结果，覆盖全部赛道。</p><ul>{helpDisplay.snapshot.trackTargetAllocation.weights.map(row => <li key={row.track}>{row.track}测算收入（元）：{row.revenueYuan}</li>)}</ul></>}
+                {helpDisplay.snapshot.changes.length > 0 ? <ul>{helpDisplay.snapshot.changes.map((change, index) => <li key={index}>{change.label}：{change.before} → {change.after}</li>)}</ul> : <p>没有带入参数改动。</p>}
+                <p>修改摘要 {helpDisplay.snapshot.changes.length} / {helpDisplay.snapshot.changeCount} 项{helpDisplay.snapshot.changes.length < helpDisplay.snapshot.changeCount ? "，未完整带入" : ""}。不包含整张预算表和预览计算结果。</p></details>}</div>
+            : <p>仅包含已保存的版本与范围，不包含其他页面未保存的改动。</p>}</div></details>}
+        {latestKnowledge && <span className="ai-knowledge-applied"><button title={`查看本轮已加载的 ${latestKnowledge.items.length} 条口径与偏好`} onClick={() => openKnowledge("snapshot")}>口径与偏好 {latestKnowledge.items.length} 条</button></span>}
+          </div>}</div></div>
           <div>{record && <span className="ai-chat-save-state" role="status">{record.archived ? "已归档" : chatTaskLabel(record)}</span>}<button className="ai-knowledge-toggle" aria-expanded={knowledgeOpen} onClick={() => knowledgeOpen ? setKnowledgeOpen(false) : openKnowledge()}>知识与偏好</button><button className="ai-chat-notification-toggle" aria-expanded={notificationsOpen} onClick={toggleNotifications}>通知{unread.length ? ` ${unread.length}` : ""}</button><button className="ai-chat-icon" aria-label="对话操作" aria-expanded={menu} disabled={!record} onClick={() => setMenu(value => !value)}><Icon name="more"/></button></div>
         </header>
         {arrival && <div className="ai-chat-arrival" role="status">{!hasConnectionProblem && <Xiaoyu pose={arrival.completion?.state === "idle" ? "done" : "notice"}/>}<div><strong>{arrival.completion?.state === "idle" ? "后台回答已完成" : "后台任务需要查看"}</strong><span>{arrival.title}</span></div><button onClick={() => openResult(arrival)}>查看结果</button><button aria-label="收起本次提醒，保留未读" onClick={() => setArrival(null)}>收起</button></div>}
@@ -306,14 +356,6 @@ export function AiChatPage() {
         {menu && record && <div className="ai-chat-options" aria-label="对话操作"><small>更新于 {new Date(record.updated_at).toLocaleString("zh-CN")}</small><button onClick={() => { setRenaming(true); setTitle(conversationTitle || record.title); }}>重命名</button><button onClick={() => { void change({ pinned: !record.pinned }); }}>{record.pinned ? "取消置顶" : "置顶对话"}</button><button onClick={exportChat}>导出对话</button><button disabled={busy} onClick={() => { void change({ archived: !record.archived }); }}>{record.archived ? "恢复对话" : "归档对话"}</button></div>}
         {renaming && <form className="ai-chat-rename" onSubmit={event => { event.preventDefault(); void change({ title: title.trim() }); }}><label>对话名称<input autoFocus maxLength={80} value={title} onChange={event => setTitle(event.target.value)}/></label><button type="submit" disabled={!title.trim()}>保存名称</button><button type="button" onClick={() => setRenaming(false)}>取消</button></form>}
         {helpEntry.status === "unavailable" && !selectedId && <div className="ai-chat-error" role="alert">{helpEntry.reason}</div>}
-        {activeContext && <details key={selectedId || "new-source"} className="ai-chat-source"><summary><span>引用来源</span><strong>{activeContext.label}</strong></summary><p>{activeContext.scope}</p>{chatSafeUrl(activeContext.href) && <a href={activeContext.href} target="_blank" rel="noreferrer">打开来源页面</a>}
-          {activeContext.prompt.startsWith("【小予讲解｜") ? <div className="ai-chat-help-context"><strong>已带入小予讲解上下文</strong><p>{record ? "这里保留的是提问时的页面快照，后续预算调整不会自动同步到这段对话。" : "问题已准备好，点击发送后才会调用 AI。原预算页及未保存修改仍保留。"}</p>
-              {helpDisplay && <details><summary>查看带入的页面状态与修改摘要</summary><p>{xiaoyuHelpState(helpDisplay.snapshot)}</p><p>编制基准：{helpDisplay.snapshot.basisLabel} · 数据截至 {helpDisplay.snapshot.basisAsOf || "待核对"}</p><p>采集于 {new Date(helpDisplay.capturedAt).toLocaleString("zh-CN")}</p>
-                {helpDisplay.snapshot.trackTargetAllocation && <><p>分配用全年目标（元）：{helpDisplay.snapshot.trackTargetAllocation.annualTargetYuan || "未填写"}</p><p>收入权重来源：{helpDisplay.snapshot.trackTargetAllocation.weightVersionLabel}已保存的测算结果，覆盖全部赛道。</p><ul>{helpDisplay.snapshot.trackTargetAllocation.weights.map(row => <li key={row.track}>{row.track}测算收入（元）：{row.revenueYuan}</li>)}</ul></>}
-                {helpDisplay.snapshot.changes.length > 0 ? <ul>{helpDisplay.snapshot.changes.map((change, index) => <li key={index}>{change.label}：{change.before} → {change.after}</li>)}</ul> : <p>没有带入参数改动。</p>}
-                <p>修改摘要 {helpDisplay.snapshot.changes.length} / {helpDisplay.snapshot.changeCount} 项{helpDisplay.snapshot.changes.length < helpDisplay.snapshot.changeCount ? "，未完整带入" : ""}。不包含整张预算表和预览计算结果。</p></details>}</div>
-            : <p>仅包含已保存的版本与范围，不包含其他页面未保存的改动。</p>}</details>}
-        {latestKnowledge && <div className="ai-knowledge-applied"><button onClick={() => openKnowledge("snapshot")}>本轮已加载 {latestKnowledge.items.length} 条口径与偏好 · 查看</button></div>}
         {knowledge.error && !knowledgeOpen && <div className="ai-chat-error" role="alert"><span>{knowledge.error}</span><button onClick={() => openKnowledge()}>查看知识</button></div>}
         {(error || readError || historyError) && <div className="ai-chat-error xiaoyu-feedback" role="alert"><Xiaoyu pose="notice"/><span>{error || readError || historyError}</span><button onClick={() => { setError(""); setReadError(""); setReload(value => value + 1); void load(); }}>重新连接</button></div>}
         {!loading && status && !status.available && <div className="ai-chat-error xiaoyu-feedback" role="status">{!(error || readError || historyError) && <Xiaoyu pose="notice"/>}<span>{status.reason || "AI运行环境暂不可用"}。历史对话仍可回看，输入内容会保留。</span></div>}
@@ -325,19 +367,23 @@ export function AiChatPage() {
             {message.knowledge_notice && !candidate && <p className="ai-knowledge-inline-note">{message.knowledge_notice}</p>}
             {message.role === "assistant" && message.state === "complete" && !message.knowledge_proposal_id && <button className="ai-knowledge-text-action" disabled={busy || Boolean(knowledge.workingId)} onClick={() => { if (record) void knowledge.propose(record.id, message.id).then(() => setReload(value => value + 1)); }}>记住这次纠正</button>}
             {message.knowledge && <button className="ai-knowledge-text-action" onClick={() => openKnowledge("snapshot", undefined, message.knowledge!)}>查看本条回答的口径依据</button>}
-          </div>; })}</div> : !selectedId || record ? <div className="ai-chat-empty">{!hasConnectionProblem && !arrival && <Xiaoyu pose={help ? "focus" : "hello"} size="welcome"/>}<h2>{help ? `先把“${xiaoyuHelpTopic(help.topicId)!.title}”弄明白。` : "把预算问题，聊清楚。"}</h2><p>{help ? "问题和上下文都准备好了，可以直接发送，也可以改写。" : "我是小予，陪你看结构、查差异、找下一步。"}</p>{!help && <div className="ai-chat-suggestions">{suggestions.map((question, index) => <button key={question} onClick={() => { setDraft(question); editor.current?.focus(); }}><span>{["看预算结构", "找预测缺口", "拆经营目标"][index]}</span><small>{question}</small></button>)}</div>}<p className="ai-chat-empty-note">先准备问题，点击发送后才会调用AI。</p></div> : null}
+            {message.role === "assistant" && <AiChatFiles key={`${record.id}:${message.id}`} conversationId={record.id}
+              collection={{ files: filesByMessage.get(message.id) ?? [], writing: files.collection.writing, truncated: message.id === lastAnswer && files.collection.truncated }}
+              busy={busy} loading={files.loading} listError={message.id === lastAnswer ? files.error : ""} onRefresh={files.onRefresh}/>}
+          </div>; })}</div> : !selectedId || record ? <div className="ai-chat-empty">{!hasConnectionProblem && !arrival && <Xiaoyu pose={help ? "focus" : "hello"} size="welcome"/>}<h2>{help ? `先把“${xiaoyuHelpTopic(help.topicId)!.title}”弄明白。` : "把预算问题，聊清楚。"}</h2><p>{help ? "问题和上下文都准备好了，可以直接发送，也可以改写。" : "我是小予，陪你看结构、查差异、找下一步。"}</p>{!help && <div className="ai-chat-suggestions">{suggestions.map((question, index) => <button key={question} onClick={() => { editDraft(question); editor.current?.focus(); }}><span>{["看预算结构", "找预测缺口", "拆经营目标"][index]}</span><small>{question}</small></button>)}</div>}<p className="ai-chat-empty-note">先准备问题，点击发送后才会调用AI。</p></div> : null}
         </div>
         {!nearBottom && <button className="ai-chat-latest" onClick={() => { if (messages.current) messages.current.scrollTop = messages.current.scrollHeight; atBottom.current = true; setNearBottom(true); }}>回到最新消息</button>}
         <div className="ai-chat-composer-wrap"><div className="ai-chat-composer">
           <label className="sr-only" htmlFor="ai-chat-input">向AI智解提问</label><textarea id="ai-chat-input" ref={editor} value={draft} maxLength={32_000} placeholder={record?.archived ? "此对话已归档，恢复后可继续提问" : "问一个预算问题，也可以继续追问…"} rows={2} disabled={record?.archived} enterKeyHint="send"
-            onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+            onChange={event => editDraft(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
             onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); void send(); } }}/>
           <div className="ai-chat-composer-tools"><span title="使用现有Pi模型配置">{model}</span><div>{busy || stopping ? <button className="ai-chat-send" aria-label={record?.state === "queued" ? "取消排队" : "停止回答"} disabled={stopping} onClick={() => { void stop(); }}><Icon name="stop"/></button> : <button className="ai-chat-send" aria-label="发送消息" disabled={!draft.trim() || sending || reading || loading || !status?.available || record?.archived || Boolean(selectedId && !record)} onClick={() => { void send(); }}><Icon name="send"/></button>}</div></div>
-        </div><div className="ai-chat-composer-note"><span>预算只读 · AI回答请核对来源</span><span className="ai-chat-key-hint">Enter发送，Shift+Enter换行</span></div><p className="ai-chat-notice" role="status">{knowledge.notice || notice}</p></div>
+        </div><div className="ai-chat-composer-note"><span>预算只读 · AI回答请核对来源</span><span className="ai-chat-key-hint">Enter发送，Shift+Enter换行</span></div><p className="ai-chat-notice" role="status">{draftStorageUnavailable && draft.trim() ? "当前标签页暂存不可用，请先复制并清空未发送内容，再切换模块。" : knowledge.notice || notice}</p></div>
       </main>
       <KnowledgePanel open={knowledgeOpen} collection={knowledge.collection} error={knowledge.error} loading={knowledge.loading} workingId={knowledge.workingId}
         editingId={knowledgeEditing} snapshot={knowledgeSnapshot} view={knowledgeView} onClose={() => { setKnowledgeOpen(false); document.querySelector<HTMLButtonElement>(".ai-knowledge-toggle")?.focus(); }} onView={setKnowledgeView}
-        onRefresh={() => { void knowledge.refresh(); }} onEditing={setKnowledgeEditing} onAction={knowledge.action} onCreate={knowledge.create} onSave={knowledge.save} onSource={openKnowledgeSource}/>
-    </div>
+        onRefresh={() => { void knowledge.refresh(); }} onEditing={setKnowledgeEditing} onAction={knowledge.action} onCreate={knowledge.create} onSave={knowledge.save} onSource={openKnowledgeSource}
+        onNavigationBlocked={() => { setKnowledgeOpen(true); setKnowledgeView("manage"); }}/>
+    </AiChatLayout>
   </div>;
 }

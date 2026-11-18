@@ -2,10 +2,11 @@ export type ChatState = "idle" | "queued" | "preparing" | "running" | "stopping"
 export type ChatContext = { label: string; scope: string; href: string; prompt: string };
 import type { KnowledgeSnapshot } from "./aiKnowledgeApi";
 export type ChatActivity = { id: string; tool: string; summary: string; state: string; output: string };
+export type ChatSnapshotSource = { resource: string; label: string; captured_at: string; files: string[] };
 export type ChatMessage = { id: string; role: "user" | "assistant"; text: string; created_at: string; state: string;
   activities?: ChatActivity[]; error?: string; progress?: string; model?: string; knowledge?: KnowledgeSnapshot;
   knowledge_proposal_id?: string; knowledge_notice?: string;
-  validation?: { state: "limited" | "needs_review"; warnings: string[]; notice: string; resources: string[]; tables_examined: number } };
+  validation?: { state: "limited" | "needs_review"; warnings: string[]; notice: string; resources: string[]; tables_examined: number; snapshots?: ChatSnapshotSource[]; rechecked_at?: string } };
 export type ChatSummary = { id: string; title: string; created_at: string; updated_at: string; pinned: boolean;
   archived: boolean; state: ChatState; context: ChatContext | null; revision: number; message_count: number; needs_stop?: boolean;
   queue_position?: number | null; progress?: string; unread?: boolean; completion?: { id: string; state: ChatState; at: string } | null };
@@ -66,7 +67,12 @@ function conversation(value: unknown): ChatConversation {
     || message.validation !== undefined && (!message.validation || !["limited", "needs_review"].includes(message.validation.state)
       || !Array.isArray(message.validation.warnings) || message.validation.warnings.some(value => typeof value !== "string")
       || typeof message.validation.notice !== "string" || !Array.isArray(message.validation.resources)
-      || message.validation.resources.some(value => typeof value !== "string"))
+      || message.validation.resources.some(value => typeof value !== "string")
+      || message.validation.rechecked_at !== undefined && (typeof message.validation.rechecked_at !== "string" || !Number.isFinite(Date.parse(message.validation.rechecked_at)))
+      || message.validation.snapshots !== undefined && (!Array.isArray(message.validation.snapshots)
+        || message.validation.snapshots.some(source => !source || typeof source.resource !== "string"
+          || typeof source.label !== "string" || typeof source.captured_at !== "string" || !Number.isFinite(Date.parse(source.captured_at))
+          || !Array.isArray(source.files) || source.files.some(value => typeof value !== "string"))))
     || message.activities !== undefined && (!Array.isArray(message.activities) || message.activities.some(activity =>
       !activity || ["id", "tool", "summary", "state", "output"].some(key => typeof activity[key as keyof ChatActivity] !== "string"))))) {
     throw new Error("消息记录不完整，未替换已有内容");
@@ -94,9 +100,18 @@ export async function readChatResult(id: string, completionId: string) {
   return conversation(await request(`${identifier(id)}/read`, "POST", { completion_id: completionId }));
 }
 
+export function chatSnapshotNote(message: ChatMessage): string {
+  const snapshots = message.validation?.snapshots;
+  if (!snapshots?.length) return "";
+  const time = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+  if (message.validation?.rechecked_at) return `历史回答来源已补核对（${time(message.validation.rechecked_at)}）：${snapshots.map(source => source.label).join("；")}。回答生成时沿用此前快照，未重新读取接口；不代表当前最新数据。`;
+  return `沿用此前接口快照：${snapshots.map(source => `${source.label}（原读取时间 ${time(source.captured_at)}）`).join("；")}。本轮未重新读取这些快照，不代表当前最新数据。`;
+}
+
 export function chatMarkdown(record: ChatConversation): string {
   return `# ${record.title}\n\n保存于本机 · ${record.updated_at}\n${record.context ? `\n引用：${record.context.label}\n范围：${record.context.scope}\n来源：${record.context.href}\n` : ""}`
     + record.messages.map(message => `\n## ${message.role === "user" ? "我" : "AI智解"}\n\n${message.validation?.state === "needs_review" ? `> 待核实：${message.validation.warnings.join("；")}\n\n` : ""}${message.text}\n${message.state === "cancelled" ? "\n> 已取消排队，未调用模型。\n" : message.state === "queued" ? "\n> 排队中，尚未调用模型。\n" : message.state === "interrupted" ? "\n> 回答已停止，已收到的内容保留。\n" : ["preparing", "running", "stopping"].includes(message.state) ? "\n> 本轮尚未完成，此为已收到的内容。\n" : ""}${message.error ? `\n> ${message.error}\n` : ""}`
       + (message.knowledge ? `\n> 本轮已加载口径与偏好：${message.knowledge.items.map(item => `${item.title}（修订${item.revision}）`).join("；")}。此为回答时快照，不代表预算已核验。\n` : "")
+      + (chatSnapshotNote(message) ? `\n> ${chatSnapshotNote(message)}\n` : "")
       + (message.activities?.length ? `\n<details>\n<summary>执行过程</summary>\n\n${message.activities.map(activity => `- ${activity.tool} · ${activity.state}\n\n\`\`\`text\n${activity.summary}\n${activity.output}\n\`\`\`\n`).join("\n")}\n</details>\n` : "")).join("\n");
 }

@@ -267,10 +267,10 @@ test("drawer open state keeps children mounted and does not invent new navigatio
 });
 
 // This harness calls the page's real event handlers over controlled top-level
-// hook values. Effects are deliberately not run: it is not a DOM renderer,
-// does not call the network, and cannot establish focus/modal/layout behavior.
-const pageStateNames = ["identity", "data", "busy", "error", "notice", "drawerOpen", "drawerTab", "assumptions", "reason",
-  "mapping", "adjustment", "showConfirm", "confirmationReason", "trialDraftChanged", "pendingNavigation", "selectedVersionId", "failure", "versionsOpen"];
+// hook values. Only external-store synchronization runs automatically; DOM
+// effects remain explicit. This cannot establish focus/modal/layout behavior.
+const pageStateNames = ["identity", "data", "operationBusy", "error", "notice", "drawerOpen", "drawerTab", "assumptions", "reason",
+  "mapping", "peopleDraft", "showConfirm", "confirmationReason", "trialDraftChanged", "pendingNavigation", "selectedVersionId", "failure", "versionsOpen"];
 function pageHarness(overrides = {}) {
   const assumptions = { states: { ...defaultForecastStates }, minimum_sample: 30, mappings: [], adjustments: [], forecast_scopes: [], fixed_rules_version: fixedForecastRulesVersion, trial_mode: false };
   const current = version({ states: { ...defaultForecastStates }, as_of: "2026-10-06 12:00:00", assumptions,
@@ -280,18 +280,28 @@ function pageHarness(overrides = {}) {
   const state = { identity: { ...owner, roles: ["DATA_MAINTAINER", "DEPARTMENT_BUDGET_OWNER"] }, data: { version: current, history: [current] },
     busy: "", error: "", notice: "", drawerOpen: false, drawerTab: "people", assumptions, reason: "",
     mapping: { source: { track: "", campus: "", product: "", grade: "", subject: "" }, target: { track: "", campus: "", product: "", grade: "", subject: "" }, reason: "" },
-    adjustment: { season: "秋季", campus: "", kind: "additional", value: "", reason: "" },
+    peopleDraft: { invalid: false, previewBusy: false, previewError: false },
     showConfirm: false, confirmationReason: "", trialDraftChanged: false, pendingNavigation: "", selectedVersionId: "", failure: null, versionsOpen: false, ...overrides };
-  let cursor = 0, refCursor = 0;
+  state.operationBusy = state.busy;
+  let cursor = 0, refCursor = 0, readRefresh = () => null, unsubscribeRefresh;
+  Object.defineProperty(state, "busy", { get: () => readRefresh()?.state === "running" ? "更新预测" : state.operationBusy, set: value => { state.operationBusy = value; }, configurable: true });
   const refs = [], effects = [];
   const exports = loadPage(name => name === "react" ? { ...require(name),
+    useSyncExternalStore(subscribe, read) {
+      readRefresh = read;
+      unsubscribeRefresh ??= subscribe(() => { page(); });
+      return read();
+    },
     useState(initial) {
       const key = pageStateNames[cursor++];
       assert.ok(key, "a new top-level state must be explicitly modeled rather than silently bypassed");
       return [state[key], update => { state[key] = typeof update === "function" ? update(state[key]) : update; }];
     }, useRef: value => refs[refCursor++] ??= { current: value }, useEffect(effect) { effects.push(effect); }, useMemo: compute => compute(),
   } : require(name));
-  const page = () => { cursor = 0; refCursor = 0; effects.length = 0; const tree = exports.ForecastPage(); assert.equal(cursor, pageStateNames.length); return tree; };
+  const page = () => { cursor = 0; refCursor = 0; effects.length = 0; let tree = exports.ForecastPage(); assert.equal(cursor, pageStateNames.length);
+    effects.find(effect => effect.toString().includes("observedRefresh.current"))?.();
+    cursor = 0; refCursor = 0; effects.length = 0; tree = exports.ForecastPage(); return tree;
+  };
   return { state, page, current, mountVersionHistory() { const effect = effects.find(effect => effect.toString().includes("popstate")); assert.ok(effect); return effect(); } };
 }
 const elementText = node => Array.isArray(node) ? node.map(elementText).join("") : node && typeof node === "object" ? elementText(node.props?.children) : node == null || typeof node === "boolean" ? "" : String(node);
@@ -394,7 +404,7 @@ test("closing and reopening preserves pending drafts and tab state, and updates 
 
 test("one unified save cannot skip unfinished people, mapping or independent-business input", () => {
   for (const unfinished of [
-    { trialDraftChanged: true }, { adjustment: { season: "秋季", campus: "西直门", kind: "additional", value: "12", reason: "待加入" } },
+    { trialDraftChanged: true }, { peopleDraft: { invalid: true, previewBusy: false, previewError: false } },
     { mapping: { source: dims(), target: dims({ campus: "目标校区" }), reason: "待加入对应" } },
   ]) {
     const h = pageHarness({ drawerOpen: true, reason: "本次修改", ...unfinished });
@@ -414,6 +424,18 @@ test("one unified save cannot skip unfinished people, mapping or independent-bus
     ready.state.assumptions = { ...ready.state.assumptions, minimum_sample };
     assert.equal(buttons(component(ready.page(), "ForecastSettingsDrawer").props.footer, "保存并重算")[0].props.disabled, true);
   }
+});
+
+test("one-shot campus changes require a completed trial and export as an unsaved preview of the exact saved parent", () => {
+  const h = pageHarness({ drawerOpen: true, reason: "校区试算", peopleDraft: { invalid: false, previewBusy: true, previewError: false } });
+  h.state.assumptions = { ...h.state.assumptions, adjustments: [{ season: "秋季", campus: "清河", kind: "additional", value: 10, reason: "one shot", one_shot: true }] };
+  let tree = h.page();
+  assert.equal(buttons(component(tree, "ForecastSettingsDrawer").props.footer, "保存并重算")[0].props.disabled, true);
+  const panel = find(tree, node => node.props?.id === "forecast-panel-people")[0];
+  const context = JSON.parse(panel.props["data-budget-export-context"]);
+  assert.equal(context.preview, true); assert.equal(context.id, h.current.id);
+  h.state.peopleDraft = { invalid: false, previewBusy: false, previewError: false };
+  assert.equal(buttons(component(h.page(), "ForecastSettingsDrawer").props.footer, "保存并重算")[0].props.disabled, false);
 });
 
 test("page navigation uses the real pending-edit guard, while modified clicks and clean navigation stay ordinary", () => {
@@ -436,11 +458,11 @@ test("page navigation uses the real pending-edit guard, while modified clicks an
 test("continuing from the leave modal returns directly to the last editing tab without dropping pending input", () => {
   for (const drawerTab of ["people", "business", "data"]) {
     const h = pageHarness({ drawerTab, drawerOpen: false, reason: "本次尚未保存的修改", trialDraftChanged: drawerTab === "business",
-      adjustment: { season: "秋季", campus: "西直门", kind: "additional", value: "17", reason: "保留的人数草稿" },
+      peopleDraft: { invalid: true, previewBusy: false, previewError: false },
       mapping: { source: dims(), target: dims({ campus: "预算校区" }), reason: "保留的对应草稿" } });
     h.state.assumptions = { ...h.state.assumptions, minimum_sample: 31 };
     const before = JSON.stringify({ assumptions: h.state.assumptions, reason: h.state.reason,
-      adjustment: h.state.adjustment, mapping: h.state.mapping, trialDraftChanged: h.state.trialDraftChanged });
+      peopleDraft: h.state.peopleDraft, mapping: h.state.mapping, trialDraftChanged: h.state.trialDraftChanged });
     let prevented = 0;
     component(h.page(), "FY27Header").props.onBeforeLeave({ button: 0, currentTarget: { href: "http://127.0.0.1:5188/budget/workspace?archive=fy27&step=5" }, preventDefault() { prevented++; } });
     assert.equal(prevented, 1); assert.notEqual(h.state.pendingNavigation, "");
@@ -449,7 +471,7 @@ test("continuing from the leave modal returns directly to the last editing tab w
     assert.equal(h.state.pendingNavigation, ""); assert.equal(h.state.drawerOpen, true); assert.equal(h.state.drawerTab, drawerTab);
     const resumed = component(h.page(), "ForecastSettingsDrawer"); assert.equal(resumed.props.open, true); assert.equal(resumed.props.tab, drawerTab);
     assert.equal(JSON.stringify({ assumptions: h.state.assumptions, reason: h.state.reason,
-      adjustment: h.state.adjustment, mapping: h.state.mapping, trialDraftChanged: h.state.trialDraftChanged }), before);
+      peopleDraft: h.state.peopleDraft, mapping: h.state.mapping, trialDraftChanged: h.state.trialDraftChanged }), before);
   }
 });
 

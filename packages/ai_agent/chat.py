@@ -30,6 +30,7 @@ from packages.ai_agent.knowledge import (
 )
 from packages.ai_agent.knowledge_checks import check_answer
 from packages.ai_agent.runtime import RuntimeCapacityError, RuntimeManager, Session
+from packages.ai_agent.snapshots import matching_snapshots, snapshot_prompt, used_snapshots
 
 ID = re.compile(r"[a-f0-9]{32}\Z")
 OWNER = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
@@ -474,6 +475,7 @@ class ChatService:
         message = record["messages"][-1]
         prefix, partial, last_save = "", "", 0.0
         proposal: KnowledgeDraft | None = None
+        tool_commands: dict[str, dict[str, Any]] = {}
         failed, settled = False, False
         try:
             runtime = await self.manager()
@@ -485,6 +487,10 @@ class ChatService:
                 record["state"], message["state"] = "running", "running"
                 self._save_current(owner, record)
             context = record.get("context")
+            prior_evidence = record.get("budget_evidence", [])
+            snapshots = await asyncio.to_thread(
+                matching_snapshots, self.store.root.parent, session.workspace_id, prior_evidence
+            )
             related_text = "\n".join(
                 item["text"] for item in record["messages"][:-2][-6:] if item["role"] == "user"
             )
@@ -497,7 +503,15 @@ class ChatService:
                 if context
                 else text
             )
-            prompt = knowledge_prompt(snapshot) + "\n" + PROPOSAL_INSTRUCTIONS + "\n\n" + prompt
+            prompt = (
+                knowledge_prompt(snapshot)
+                + "\n"
+                + PROPOSAL_INSTRUCTIONS
+                + "\n\n"
+                + snapshot_prompt(snapshots)
+                + "\n"
+                + prompt
+            )
             response = await runtime.rpc_command(session_id, "prompt", message=prompt)
             if response.get("disposition") == "handled":
                 raise ChatError("这条输入未产生回答，请使用普通问题而不是终端命令")
@@ -524,11 +538,19 @@ class ChatService:
                         raw = content_text(final.get("content"))
                         proposal = proposal_from_answer(raw) or proposal
                         message["text"] = (prefix + visible_answer(raw))[:200_000]
-                        failed = failed or final.get("stopReason") == "error"
+                        # Pi may emit failed attempts before an automatic retry succeeds.
+                        # Only an explicit normal answer end clears that failure;
+                        # retry notifications or tool calls are not completion evidence.
+                        if final.get("stopReason") in {"error", "stop"}:
+                            failed = final["stopReason"] == "error"
                         message["model"] = plain(final.get("responseModel") or final.get("model"), 120)
                     elif kind == "tool_execution_start" and len(message["activities"]) < 200:
                         message["progress"] = "正在执行分析工具"
                         arguments = event.get("args") or {}
+                        tool_commands[plain(event.get("toolCallId"), 120)] = {
+                            "summary": plain(arguments.get("command") or arguments.get("path"), 65_536),
+                            "state": "running",
+                        }
                         message["activities"].append(
                             {
                                 "id": plain(event.get("toolCallId"), 120),
@@ -542,6 +564,9 @@ class ChatService:
                         )
                     elif kind == "tool_execution_end":
                         message.pop("progress", None)
+                        command = tool_commands.get(plain(event.get("toolCallId"), 120))
+                        if command is not None:
+                            command["state"] = "error" if event.get("isError") else "complete"
                         for activity in message["activities"]:
                             if activity["id"] == event.get("toolCallId"):
                                 activity["state"] = "error" if event.get("isError") else "complete"
@@ -580,9 +605,22 @@ class ChatService:
             if not settled:
                 raise ChatError("本轮尚未完成，已保留收到的内容")
             if message["state"] == "complete":
-                message["validation"] = check_answer(
-                    message["text"], getattr(session, "_budget_evidence", [])
+                evidence = getattr(session, "_budget_evidence", [])
+                after = await asyncio.to_thread(
+                    matching_snapshots, self.store.root.parent, session.workspace_id, prior_evidence
                 )
+                message["validation"] = check_answer(
+                    message["text"],
+                    evidence,
+                    used_snapshots(snapshots, after, list(tool_commands.values())),
+                    require_fresh=bool(re.search(r"最新|当前|刷新|重新读取|更新后|现在", text)),
+                )
+                # Keep the provenance outside the guest mount and public API.
+                record["budget_evidence"] = list(
+                    {
+                        item["sha256"]: item for item in [*prior_evidence, *evidence] if item.get("sha256")
+                    }.values()
+                )[-24:]
             if message["state"] == "complete" and memory_intent(text):
                 try:
                     self._remember(owner, record, message, record["messages"][-2], proposal)

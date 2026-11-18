@@ -114,3 +114,21 @@ test("quarter and renewal table transfers stay outside the scroll viewport while
   }
   assert.equal(JSON.stringify(facts), before);
 });
+
+test("people summary exports preserve precise native rates, zero counts and null quarters in independent columns", () => {
+  const Board = load(name => name === "react" ? { Fragment, useMemo: compute => compute() } : require(name));
+  const facts = [fact({ old: 0, new: 0, total: 0, renewalNumerator: 1, renewalDenominator: 3 })], before = JSON.stringify(facts);
+  const tree = Board(props(facts));
+  const [quarter] = findElements(tree, node => node.type?.name === "ActionTable" && node.props["aria-label"] === "季度招生预算表");
+  const data = quarter.props.exportData;
+  assert.equal(data.rows.length, 4); assert.equal(data.rows[0].old, 0); assert.equal(data.rows[0].new, 0); assert.equal(data.rows[0].total, 0);
+  assert.equal(data.rows[0].renewal, 1 / 3); assert.equal(data.rows[0].renewal_stage, "春续暑");
+  assert.equal(data.rows[1].old, null); assert.equal(data.rows[1].renewal, null);
+  assert.equal(data.columns.find(column => column.key === "renewal").format, "rate");
+  const [renewal] = findElements(tree, node => node.type?.name === "ActionTable" && node.props["aria-label"] === "赛道年级跨季续班率表");
+  const grouped = renewal.props.exportData;
+  assert.equal(grouped.rows.length, 2); assert.equal(grouped.rows[0].track, "智慧空间"); assert.equal(grouped.rows[0].grade, "七年级");
+  assert.equal(grouped.rows[0]["暑假"], 1 / 3); assert.equal(grouped.rows[0]["秋季"], null);
+  assert.equal(grouped.rows[1].track, "合计"); assert.equal(grouped.rows[1].grade, null);
+  assert.equal(JSON.stringify(facts), before);
+});

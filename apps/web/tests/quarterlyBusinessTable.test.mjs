@@ -32,8 +32,9 @@ test("cross-quarter table is a compact metric-by-season reader with one full-ran
   assert.equal(typeof table.props.scrollRef, "function");
   assert.equal(table.props.scrollLabel, "招生参数，四季横排，可横向滚动");
   assert.equal(table.props.exportData.rows.length, 31, "not just the 11 visible businesses");
-  assert.equal(table.props.copyRows.length, 63, "all 31 businesses times two metrics plus header");
-  assert.deepEqual(table.props.copyRows[0], ["业务", "指标", "暑假", "秋季", "寒假", "春季"]);
+  assert.equal(table.props.copyRows.length, 32, "all 31 businesses plus header, independently of the visible page");
+  assert.deepEqual(table.props.copyRows[0], ["校区", "暑假 / 续班率", "暑假 / 人次", "秋季 / 续班率", "秋季 / 人次", "寒假 / 续班率", "寒假 / 人次", "春季 / 续班率", "春季 / 人次"]);
+  assert.equal(table.props.copyRows[1][3], "65%"); assert.equal(table.props.copyRows[1][4], "0.123456");
   const [head] = find(table, node => node.type === "thead");
   assert.equal(find(head, node => node.type === "th").length, 6, "four seasons do not explode into 20 metric columns");
   const [body] = find(table, node => node.type === "tbody");
@@ -41,6 +42,22 @@ test("cross-quarter table is a compact metric-by-season reader with one full-ran
   assert.equal(find(body, node => node.type === "input" || node.type === "select").length, 0, "no second editor");
   assert.equal(table.props.exportData.rows[0]["quarter-1-1"], .123456, "exports keep unrounded source precision");
   assert.equal(JSON.stringify(rows), before);
+});
+
+test("compact business cells export raw five dimensions and independent quarter values without splitting display labels", () => {
+  const source = { id: "sku", campus: "校区 / 原名", track: "赛道 / 原名", product: "产品 / 原名", grade: "八年级", subject: "数学", season: "秋季", count: 0, rate: -.123456789 };
+  const rows = [source], before = JSON.stringify(rows);
+  const tree = render({ ...base, rows, businessColumns: [{ key: "label", label: "业务", value: row => `${row.campus} / ${row.track} / ${row.product}` }],
+    exportBusinessColumns: ["campus", "track", "product", "grade", "subject"].map((key, index) => ({ key, label: ["校区", "赛道", "产品", "年级", "科目"][index], value: row => row[key] })),
+    exportMetrics: [...base.metrics, { key: "status", label: "数据状态", value: () => "已保存值" }] });
+  const [table] = find(tree, node => node.type?.name === "ActionTable"), exportData = table.props.exportData;
+  assert.deepEqual(exportData.columns.slice(0, 5).map(column => column.label), ["校区", "赛道", "产品", "年级", "科目"]);
+  assert.deepEqual(Object.values(exportData.rows[0]).slice(0, 5), [source.campus, source.track, source.product, source.grade, source.subject]);
+  assert.equal(exportData.rows[0]["quarter-1-0"], -.123456789); assert.equal(exportData.rows[0]["quarter-1-1"], 0); assert.equal(exportData.rows[0]["quarter-1-2"], "已保存值");
+  assert.equal(exportData.rows[0]["quarter-0-1"], null); assert.equal(exportData.rows[0]["quarter-0-2"], null);
+  assert.equal(find(table, node => node.type === "tbody").flatMap(node => find(node, item => item.type === "tr")).length, 2, "export-only status metrics never add frontend metric rows");
+  assert.equal(find(table, node => node.props?.className === "qbt-business-cell")[0].props.children[0].length, 1, "the compact UI keeps its original one-cell identity");
+  assert.equal(table.props.copyRows.length, 2); assert.equal(table.props.copyRows[1][0], "校区 / 原名"); assert.equal(JSON.stringify(rows), before);
 });
 
 test("cell actions locate exact original row and metric; missing quarters have no action", () => {

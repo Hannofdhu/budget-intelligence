@@ -1,7 +1,7 @@
 UV_CACHE_DIR ?= $(CURDIR)/.cache/uv
 UV := UV_CACHE_DIR=$(UV_CACHE_DIR) uv
 
-.PHONY: sync db-up db-down migrate migrate-check api worker test test-db lint typecheck audit web-install web-build web-test container-build check
+.PHONY: sync db-up db-down migrate migrate-check api worker test test-db lint typecheck audit web-install web-build web-test container-build ai-analysis-test check
 
 sync:
 	$(UV) sync --extra dev --frozen
@@ -54,5 +54,9 @@ web-test:
 
 container-build:
 	bash scripts/build-containers.sh
+
+ai-analysis-test:
+	docker build -t budget-pi-agent:analysis-test apps/ai-agent
+	BUDGET_AI_ANALYSIS_IMAGE=budget-pi-agent:analysis-test $(UV) run pytest tests/integration/test_ai_analysis_image.py
 
 check: lint typecheck test web-build web-test

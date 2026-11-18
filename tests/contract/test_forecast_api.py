@@ -25,6 +25,119 @@ def _ledger() -> ForecastStore:
     return ledger
 
 
+@pytest.mark.asyncio
+async def test_preview_reuses_save_inputs_without_extracting_or_writing(
+    setup_route: tuple[Request, Actor], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    request, actor = setup_route
+    first = await route.refresh(request, route.Refresh(reason="first"), actor, "request-1")
+    before = _event_bytes(tmp_path)
+    assumptions = route.Assumptions.model_validate(first["version"]["assumptions"])
+    assumptions.adjustments = [
+        route.Adjustment(
+            season="秋季", campus="example", kind="additional", value=5, reason="one shot", one_shot=True
+        )
+    ]
+
+    async def forbidden(_: Any) -> None:
+        raise AssertionError("preview must never query BI")
+
+    seen = []
+
+    def calculate(_: Any, snapshot: Any, values: Any) -> dict[str, Any]:
+        seen.append(deepcopy(values))
+        assert snapshot["as_of"] == first["version"]["as_of"]
+        return {
+            "ready": True,
+            "annual": {"forecast_revenue": str(len(values["adjustments"]))},
+            "campuses": [{"campus": "example", "additional": len(values["adjustments"])}],
+        }
+
+    monkeypatch.setattr(route, "extract_forecast_source", forbidden)
+    monkeypatch.setattr(route, "calculate_forecast", calculate)
+    body = route.Preview(parent_id=first["version"]["id"], assumptions=assumptions)
+    result = await route.preview(request, body, actor)
+    assert result["preview"] is True
+    assert result["parent_id"] == first["version"]["id"]
+    assert result["calculation"]["annual"]["forecast_revenue"] == "1"
+    assert result["system_campuses"][0]["additional"] == 0
+    assert "snapshot" not in result and "history" not in result
+    assert _event_bytes(tmp_path) == before
+    saved = await route.revise(request, route.Revise(**body.model_dump(), reason="save"), actor, "request-2")
+    assert saved["version"]["calculation"] == result["calculation"]
+    assert seen[0] == seen[2], "save and preview use the same complete normalized assumptions"
+    assert saved["version"]["status"] == "DRAFT"
+    assert all(path.read_bytes() == value for path, value in before.items())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automatic", [False, True])
+async def test_both_refresh_paths_retire_only_one_shot_inputs_and_leave_history_immutable(
+    setup_route: tuple[Request, Actor], tmp_path: Path, automatic: bool
+) -> None:
+    request, actor = setup_route
+    first = await route.refresh(request, route.Refresh(reason="first"), actor, "request-1")
+    assumptions = route.Assumptions.model_validate(first["version"]["assumptions"])
+    legacy = route.Adjustment(season="秋季", campus="legacy", kind="additional", value=2, reason="prior")
+    assumptions.adjustments = [
+        legacy,
+        *(
+            route.Adjustment(
+                season="秋季", campus="example", kind=kind, value=5, reason="one shot", one_shot=True
+            )
+            for kind in ("additional", "new_withdrawal", "old_withdrawal")
+        ),
+    ]
+    revised = await route.revise(
+        request,
+        route.Revise(parent_id=first["version"]["id"], assumptions=assumptions, reason="one shot"),
+        actor,
+        "request-2",
+    )
+    before = _event_bytes(tmp_path)
+    refreshed = await route._refresh_from_source(
+        {"sha256": "immutable", "rows": []},
+        route.Refresh(reason="next update"),
+        actor,
+        "request-3",
+        "refresh-3",
+        automatic=automatic,
+    )
+    assert refreshed["version"]["assumptions"]["adjustments"] == [legacy.model_dump()]
+    assert len(revised["version"]["assumptions"]["adjustments"]) == 4
+    assert all(path.read_bytes() == value for path, value in before.items())
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_stale_parent_state_permission_and_duplicate_adjustments(
+    setup_route: tuple[Request, Actor], tmp_path: Path
+) -> None:
+    request, actor = setup_route
+    first = await route.refresh(request, route.Refresh(reason="first"), actor, "request-1")
+    before = _event_bytes(tmp_path)
+    assumptions = route.Assumptions.model_validate(first["version"]["assumptions"])
+    body = route.Preview(parent_id="stale", assumptions=assumptions)
+    with pytest.raises(HTTPException, match="409"):
+        await route.preview(request, body, actor)
+    body.parent_id = first["version"]["id"]
+    owner = Actor("owner", "department", frozenset({Role.DEPARTMENT_BUDGET_OWNER}))
+    assumptions.minimum_sample = 31
+    with pytest.raises(HTTPException, match="403"):
+        await route.preview(request, body, owner)
+    assumptions.minimum_sample = 30
+    adjustment = route.Adjustment(
+        season="暑假", campus="example", kind="additional", value=5, reason="one shot", one_shot=True
+    )
+    assumptions.adjustments = [adjustment]
+    with pytest.raises(HTTPException, match="409"):
+        await route.preview(request, body, actor)
+    adjustment.season = "秋季"
+    assumptions.adjustments = [adjustment, adjustment]
+    with pytest.raises(HTTPException, match="422"):
+        await route.preview(request, body, actor)
+    assert _event_bytes(tmp_path) == before
+
+
 def _legacy_version(actor: Actor, *, trial: bool = False) -> dict[str, Any]:
     """Historical versions predate automatic fixed-policy refreshes."""
     return _ledger().append_version(

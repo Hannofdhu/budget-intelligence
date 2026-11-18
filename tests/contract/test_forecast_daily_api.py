@@ -79,7 +79,19 @@ async def test_automatic_refresh_does_not_replace_good_version_with_incomplete_d
 
     def calculate(_baseline: Any, _snapshot: Any, effective: dict[str, Any]) -> dict[str, Any]:
         seen.append(effective)
-        return {"ready": ready}
+        return {
+            "ready": ready,
+            "issues": [
+                {
+                    "code": "FINALIZED_ACTUAL_MISSING",
+                    "season": "暑假",
+                    "severity": "BLOCKING",
+                    "dims": {"campus": "private-business-row"},
+                    "amount": "private-amount",
+                },
+                {"code": "BASELINE_NEGATIVE_VALUE", "season": "暑假", "severity": "WARNING"},
+            ],
+        }
 
     monkeypatch.setattr(route, "store", ledger)
     monkeypatch.setattr(route, "extract_forecast_source", source)
@@ -105,6 +117,12 @@ async def test_automatic_refresh_does_not_replace_good_version_with_incomplete_d
             )
         assert isinstance(exc.value.detail, dict)
         assert exc.value.detail["code"] == "FORECAST_DAILY_DATA_INCOMPLETE"
+        assert exc.value.detail["blocking_issues"] == [
+            {"code": "FINALIZED_ACTUAL_MISSING", "season": "暑假", "count": 1}
+        ]
+        assert "private-business-row" not in repr(exc.value.detail) and "private-amount" not in repr(
+            exc.value.detail
+        )
         assert ledger.current(department)["version"]["status"] == "CONFIRMED"
         assert _event_bytes(tmp_path) == original
     assert seen[0]["states"]["秋季"] == "ENDED"  # never reverted to stale job body OPEN

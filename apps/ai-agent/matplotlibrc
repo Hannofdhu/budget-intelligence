@@ -1,0 +1,12 @@
+# Headless, Chinese-capable defaults. Scripts may override presentation settings.
+backend: Agg
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK JP, Noto Sans CJK SC, DejaVu Sans
+axes.unicode_minus: False
+figure.facecolor: faf9f5
+axes.facecolor: faf9f5
+text.color: 141413
+axes.labelcolor: 141413
+savefig.dpi: 144
+pdf.fonttype: 42
+ps.fonttype: 42

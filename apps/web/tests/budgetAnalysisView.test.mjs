@@ -528,14 +528,14 @@ test("a supplied saved-version export identity labels details and inherited boar
 test("pivot copy adds the exact saved-version provenance while keeping its existing numeric yuan values", async () => {
   const browser = hookBrowser("baView=pivot&baRows=campus&baColumn=season&baMetrics=revenue");
   try {
-    const h = analysisHarness({ facts: fourQuarters, versionExportContext: { fiscalYear: 2028, object: "预算编制", sequence: 12, createdAt: "2026-10-13T11:34:42Z", id: "exact-N12", asOf: "2026-10-08", sourceId: "exact-P17", sourceLabel: "FY27全年预测 · 第17版" } });
+    const h = analysisHarness({ facts: fourQuarters, versionExportContext: { fiscalYear: 2028, object: "预算编制", sequence: 12, createdAt: "2026-10-13T11:34:42Z", id: "exact-N12", asOf: "2026-10-08", sourceId: "exact-P17", sourceLabel: "FY27全年预测 · 第17版", sourceFiscalYear: 2027, sourceObject: "全年预测", sourceSequence: 17 } });
     await findButton(h.render(), "复制透视").props.onClick();
     assert.equal(browser.clipboard.length, 1);
     const copied = browser.clipboard[0];
-    assert.match(copied, /来源模块\t结果版本\t精确版本标识\t保存时间（北京时间）\t数据截至/);
-    assert.match(copied, /FY28预算编制\t第12版\texact-N12\t2026-10-13 19:34\t2026-10-08/);
-    assert.match(copied, /数据截至\t编制基准\t精确来源标识/);
-    assert.match(copied, /2026-10-08\tFY27全年预测 · 第17版\texact-P17/);
+    assert.match(copied, /来源财年\t来源模块\t结果版本\t结果数据状态\t精确版本标识\t保存时间（北京时间）\t数据截至/);
+    assert.match(copied, /2028\t预算编制\t第12版\t已保存\texact-N12\t2026-10-13 19:34\t2026-10-08/);
+    assert.match(copied, /数据截至\t来源说明\t精确来源标识\t基准财年\t基准模块\t基准版本序号/);
+    assert.match(copied, /2026-10-08\tFY27全年预测 · 第17版\texact-P17\t2027\t全年预测\t17/);
     assert.match(copied, /10000/); assert.doesNotMatch(copied, /未保存预览/);
     h.dispose();
   } finally { browser.restore(); }

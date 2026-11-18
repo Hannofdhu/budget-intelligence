@@ -15,7 +15,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -25,6 +25,7 @@ from packages.ai_agent.bridge import BridgeHandler
 from packages.ai_agent.chat import ChatError, ChatService, ChatStore, public_chat
 from packages.ai_agent.chat_title import generate_chat_title
 from packages.ai_agent.config import ModelConfigError, load_model_config
+from packages.ai_agent.files import WorkspaceFileError, WorkspaceFiles
 from packages.ai_agent.knowledge import KnowledgeConflict, KnowledgeDraft, KnowledgeError
 from packages.ai_agent.runtime import RuntimeErrorSafe, RuntimeManager
 from packages.config.settings import get_settings
@@ -442,6 +443,74 @@ async def update_conversation(request: Request, conversation_id: str, body: Chat
         )
     except ChatError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+FILE_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+}
+
+
+def _conversation_files(request: Request, conversation_id: str) -> tuple[WorkspaceFiles, dict[str, Any]]:
+    _guard(request)
+    service = _service(request)
+    owner = service.browser(request)
+    chats = service.chats()
+    try:
+        # Reading generated files must not recover/restart a model or modify chat state.
+        record = chats.store.read(owner, conversation_id)
+    except ChatError as exc:
+        raise HTTPException(404, "对话不存在或不属于当前浏览器", headers=FILE_HEADERS) from exc
+    return WorkspaceFiles(chats.store.root.parent), record
+
+
+@router.get("/conversations/{conversation_id}/files")
+async def conversation_files(request: Request, response: Response, conversation_id: str) -> dict[str, Any]:
+    files, record = _conversation_files(request, conversation_id)
+    response.headers.update(FILE_HEADERS)
+    try:
+        result = await asyncio.to_thread(files.list, record.get("workspace_id"))
+        return {**result, "writing": record["state"] in {"queued", "preparing", "running", "stopping"}}
+    except WorkspaceFileError as exc:
+        raise HTTPException(exc.status, str(exc), headers=FILE_HEADERS) from exc
+
+
+async def _conversation_file(request: Request, conversation_id: str, file_id: str, preview: bool) -> Response:
+    files, record = _conversation_files(request, conversation_id)
+    if record["state"] in {"queued", "preparing", "running", "stopping"}:
+        raise HTTPException(409, "本轮正在生成文件，请完成后刷新下载", headers=FILE_HEADERS)
+    try:
+        item, content = await asyncio.to_thread(
+            files.read, record.get("workspace_id"), file_id, preview=preview
+        )
+    except WorkspaceFileError as exc:
+        raise HTTPException(exc.status, str(exc), headers=FILE_HEADERS) from exc
+    disposition = "inline" if preview else "attachment"
+    suffix = Path(item.parts[-1]).suffix.lower()
+    return Response(
+        content,
+        media_type=item.public()["media_type"],
+        headers={
+            **FILE_HEADERS,
+            "Content-Disposition": (
+                f'{disposition}; filename="analysis{suffix}"; '
+                f"filename*=UTF-8''{quote(item.parts[-1], safe='')}"
+            ),
+        },
+    )
+
+
+@router.get("/conversations/{conversation_id}/files/{file_id}/download")
+async def conversation_file_download(request: Request, conversation_id: str, file_id: str) -> Response:
+    return await _conversation_file(request, conversation_id, file_id, False)
+
+
+@router.get("/conversations/{conversation_id}/files/{file_id}/preview")
+async def conversation_file_preview(request: Request, conversation_id: str, file_id: str) -> Response:
+    return await _conversation_file(request, conversation_id, file_id, True)
 
 
 @router.post("/conversations/{conversation_id}/messages", status_code=202)

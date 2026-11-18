@@ -1,6 +1,7 @@
 import { ActionTable } from "./ActionTable";
 import { useState } from "react";
-import { tableExportData } from "./tableTransfer";
+import type { ExportColumn } from "./budgetExport";
+import { skuDetailColumns, skuDetailValues } from "./budgetDetailExport";
 
 export type Value = null | boolean | string | number | Value[] | { [key: string]: Value };
 export type Schema = { [key: string]: any };
@@ -80,10 +81,33 @@ export function BusinessForm({ schema, value, onChange, root = schema, name = ""
   </label>;
 }
 
+const hiddenResultKeys = new Set(["current_season_revenue_yuan", "next_season_carryover_revenue_yuan"]);
+/** Flatten source object leaves for Excel; display strings never become data. */
+export function readResultDetailExport(rows: Record<string, Value>[]) {
+  const flatten = (record: Record<string, Value>, prefix = "", output: Record<string, Value> = {}) => {
+    for (const [key, value] of Object.entries(record)) {
+      if (hidden(key) || hiddenResultKeys.has(key)) continue;
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (value !== null && typeof value === "object") flatten(value as Record<string, Value>, path, output);
+      else output[path] = value;
+    }
+    return output;
+  };
+  const withIdentity = rows.some(row => skuDetailColumns.some(column => Object.hasOwn(row, column.key)));
+  const values = rows.map(row => ({ ...(withIdentity ? skuDetailValues(row) : {}), ...flatten(row) }));
+  const keys = [...new Set(values.flatMap(row => Object.keys(row)))];
+  const columns: ExportColumn[] = keys.map(key => {
+    const parts = key.split("."), leaf = parts.at(-1)!;
+    const label = parts.map(part => /^\d+$/.test(part) ? `第 ${Number(part) + 1} 项` : labels[part] ?? part).join(" · ");
+    return { key, label: leaf.endsWith("_ppm") ? `${label}（ppm）` : label,
+      ...(/_yuan$/.test(leaf) ? { format: "money" as const } : leaf.endsWith("_ppm") ? { format: "count" as const } : {}) };
+  });
+  return { columns, rows: values, filename: "结果明细" };
+}
+
 export function ReadTable({ rows }: { rows: Record<string, Value>[] }) {
   const [query, setQuery] = useState(""); const [page, setPage] = useState(0);
   if (!rows.length) return <p>暂无明细。</p>;
-  const hiddenResultKeys = new Set(["current_season_revenue_yuan", "next_season_carryover_revenue_yuan"]);
   const keys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => !hidden(k) && !hiddenResultKeys.has(k) && rows.some(r => r[k] !== null && typeof r[k] !== "object"));
   const filtered = rows.filter(r => keys.some(key => typeof r[key] !== "object" && String(r[key]).includes(query)));
   const n = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
@@ -96,7 +120,7 @@ export function ReadTable({ rows }: { rows: Record<string, Value>[] }) {
     if (/_at$/.test(key) && !Number.isNaN(new Date(text).getTime())) return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(text));
     return text;
   };
-  const transfer = { ...tableExportData(keys.map(key => labels[key] ?? key), filtered.map(row => keys.map(key => displayValue(key, row[key]).replace(/ 元$/, "")))), filename: "结果明细" };
+  const transfer = readResultDetailExport(filtered);
   const numericKeys = new Set(keys.filter(key => !/(_id|_hash)$/.test(key) && rows.some(row => typeof row[key] === "number" || typeof row[key] === "string" && /^-?\d+(?:\.\d+)?$/.test(row[key] as string))));
   const toolbar = <label className="trial-read-search"><span>筛选结果明细</span><input aria-label="筛选结果明细" placeholder="筛选校区、科目或状态" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} /></label>;
   return <><ActionTable exportData={transfer} keyboardNavigation tableLabel="结果明细" aria-label="结果明细表" toolbarStart={toolbar} scrollClassName="trial-table" scrollLabel="结果明细表，可横向滚动"><thead><tr>{keys.map(k => <th scope="col" className={numericKeys.has(k) ? "budget-cell-number" : undefined} key={k}>{labels[k] ?? k}</th>)}</tr></thead><tbody>{filtered.slice(n * 25, (n + 1) * 25).map((r, i) => <tr key={i}>{keys.map(k => <td className={numericKeys.has(k) ? "budget-cell-number" : undefined} key={k}>{displayValue(k, r[k])}</td>)}</tr>)}</tbody></ActionTable><div className="trial-pager"><button disabled={n === 0} onClick={() => setPage(n - 1)}>上一页</button><span>{filtered.length} 条 · 第 {n + 1} 页</span><button disabled={(n + 1) * 25 >= filtered.length} onClick={() => setPage(n + 1)}>下一页</button></div></>;

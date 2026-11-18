@@ -182,3 +182,32 @@ test("readonly workspace keeps rate copy/export outside disabled ancestors but d
     assert.ok(ordinaryInput); assert.equal(effectivelyDisabled(ordinaryInput), true, "ordinary business fields retain their disabled fieldset");
   }
 });
+
+test("opening detail exports split all source dimensions and target/exclusion with raw counts, nulls and ppm", () => {
+  const h = openingHarness(), before = JSON.stringify(h.data);
+  let tables = find(h.render(), node => node.type?.name === "ActionTable");
+  let data = tables[0].props.exportData;
+  assert.deepEqual(data.columns.slice(0, 5).map(column => column.key), ["campus", "track", "product", "grade", "subject"]);
+  assert.equal(data.rows.length, 2); assert.equal(data.rows[0].grade, "七年级"); assert.equal(data.rows[0].target_grade, "八年级");
+  assert.equal(data.rows[0].enrollment, 12); assert.equal(data.rows[0].renewal_rate_ppm, 650000);
+  assert.equal(data.rows[0].theoretical_old_students, 7.8); assert.equal(data.rows[0].exclusion, null); assert.equal(data.rows[0].source_batch, "batch");
+  assert.equal(tables[1].props.exportData.rows[0].zero_confirmed, false);
+  find(tables[0].props.toolbarStart, node => node.type === "input")[0].props.onChange({ target: { value: "西直门南" } });
+  tables = find(h.render(), node => node.type?.name === "ActionTable");
+  assert.equal(tables[0].props.exportData.rows.length, 1); assert.equal(tables[0].props.exportData.rows[0].campus, "西直门南");
+  assert.equal(JSON.stringify(h.data), before);
+  const invalid = openingHarness({ valid: false });
+  data = find(invalid.render(), node => node.type?.name === "ActionTable")[0].props.exportData;
+  assert.equal(data.rows[0].enrollment, null); assert.equal(data.rows[0].theoretical_old_students, null);
+});
+
+test("candidate changes export exact native values and a separate unit without parsing object keys", () => {
+  const changes = [{ scenario_change_id: "r", object_type: "RATE", object_stable_key: "opaque / stable:key", original_value: 812345, suggested_value: 812346, adjustment: 1 },
+    { scenario_change_id: "e", object_type: "ENTRY", object_stable_key: "entry-key", original_value: 0, suggested_value: 0, adjustment: 0 }];
+  const before = JSON.stringify(changes), { ChangeTable } = rebalance(), data = ChangeTable({ changes }).props.exportData;
+  assert.equal(data.rows[0].object_stable_key, "opaque / stable:key");
+  assert.equal(data.rows[0].original_value, 812345); assert.equal(data.rows[0].suggested_value, 812346);
+  assert.equal(data.rows[0].adjustment, 1); assert.equal(data.rows[0].unit, "ppm");
+  assert.equal(data.rows[1].original_value, 0); assert.equal(data.rows[1].unit, "人次");
+  assert.equal(JSON.stringify(changes), before);
+});

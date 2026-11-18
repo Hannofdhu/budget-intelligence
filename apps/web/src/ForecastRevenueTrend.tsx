@@ -21,6 +21,8 @@ const datePosition = (value: string) => Date.parse(`${value}T00:00:00+08:00`);
 const trendPlotHeight = 230;
 export type ForecastTrendMode = "total" | "change";
 type RevenueKey = "forecast_revenue" | "actual_revenue";
+const revenueKeys: readonly RevenueKey[] = ["forecast_revenue", "actual_revenue"];
+const revenueLabels = { forecast_revenue: "预计结转收入", actual_revenue: "截至当日实际结转收入" };
 
 /** Subtract the original saved decimal amounts before converting to display units. */
 export function forecastTrendDifference(current: string | null | undefined, previous: string | null | undefined) {
@@ -81,16 +83,27 @@ export function forecastTrendTransfer(data: ForecastRevenueTrendEnvelope, period
 }
 
 /** Geometry uses chronological spacing and breaks at nulls; it never invents earlier observations. */
-export function forecastTrendGeometry(points: ForecastRevenueTrendPoint[], period: ForecastTrendPeriod, width = 900, mode: ForecastTrendMode = "total") {
-  const left = 72, right = Math.max(left + 1, width - 24), top = 14, bottom = trendPlotHeight - 38;
+export function forecastTrendGeometry(points: ForecastRevenueTrendPoint[], period: ForecastTrendPeriod, width = 900, mode: ForecastTrendMode = "total", keys: readonly RevenueKey[] = revenueKeys) {
+  const top = 14, bottom = trendPlotHeight - 38;
   const valueAt = (index: number, key: RevenueKey) => mode === "change"
     ? forecastTrendDifference(points[index]?.periods[period]?.[key], points[0]?.periods[period]?.[key])
     : (() => { const number = forecastNumber(points[index]?.periods[period]?.[key]); return number === null ? null : number / 10000; })();
-  const values = points.flatMap((_, index) => [valueAt(index, "forecast_revenue"), valueAt(index, "actual_revenue")])
+  const values = points.flatMap((_, index) => keys.map(key => valueAt(index, key)))
     .filter((value): value is number => value !== null);
   const low = Math.min(0, ...values), high = Math.max(0, ...values), span = high - low || 1;
-  const min = mode === "change" && low === 0 && high === 0 ? -1 : low < 0 ? low - span * .06 : 0;
-  const max = high > 0 ? high + span * .06 : low < 0 ? 0 : 1;
+  let min = mode === "change" && low === 0 && high === 0 ? -1 : low < 0 ? low - span * .06 : 0;
+  let max = high > 0 ? high + span * .06 : low < 0 ? 0 : 1;
+  if (mode === "total" && values.length) {
+    const dataMin = Math.min(...values), dataMax = Math.max(...values);
+    // Focus each total chart on its saved observations; flat/single-point series stay centered.
+    const padding = dataMax > dataMin ? (dataMax - dataMin) * .1 : Math.max(Math.abs(dataMin) * .001, .01);
+    min = dataMin - padding; max = dataMax + padding;
+  }
+  const axisDigits = mode === "total" ? Math.min(8, Math.max(0, Math.ceil(-Math.log10((max - min) / 4)) + 1))
+    : max - min < 10 ? Math.min(6, Math.max(2, Math.ceil(-Math.log10(max - min)) + 1)) : 0;
+  const ticks = Array.from({ length: 5 }, (_, index) => min + (max - min) * index / 4);
+  const left = mode === "total" ? Math.max(72, ...ticks.map(tick => tick.toLocaleString("zh-CN", { maximumFractionDigits: axisDigits }).length * 7 + 12)) : 72;
+  const right = Math.max(left + 1, width - 24);
   const first = datePosition(points[0]?.date ?? ""), last = datePosition(points.at(-1)?.date ?? "");
   const x = (index: number) => points.length === 1 ? (left + right) / 2 : left + (datePosition(points[index].date) - first) / (last - first || 1) * (right - left);
   const y = (value: number) => bottom - (value - min) / (max - min) * (bottom - top);
@@ -102,8 +115,7 @@ export function forecastTrendGeometry(points: ForecastRevenueTrendPoint[], perio
       const part = `${connected ? "L" : "M"}${x(index)},${y(value)}`; connected = true; return part;
     }).filter(Boolean).join(" ");
   };
-  return { left, right, top, bottom, height: trendPlotHeight, dateY: trendPlotHeight - 10, min, max, x, y, series, valueAt,
-    ticks: Array.from({ length: 5 }, (_, index) => min + (max - min) * index / 4) };
+  return { left, right, top, bottom, height: trendPlotHeight, dateY: trendPlotHeight - 10, min, max, x, y, series, valueAt, axisDigits, ticks };
 }
 
 interface ViewProps {
@@ -120,7 +132,9 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
   const selectedIndex = Math.max(0, points.findIndex(point => point.version_id === selectedId) < 0 ? points.length - 1 : points.findIndex(point => point.version_id === selectedId));
   const selected = points[selectedIndex], value = selected?.periods[period];
   const geometry = useMemo(() => forecastTrendGeometry(points, period, chartWidth, mode), [points, period, chartWidth, mode]);
-  const axisDigits = mode === "change" && geometry.max - geometry.min < 10 ? Math.min(6, Math.max(2, Math.ceil(-Math.log10(geometry.max - geometry.min)) + 1)) : 0;
+  // Match the total-mode grid's two 360px panels and 24px gap; measure the shared container on resize.
+  const totalPlotWidth = chartWidth >= 744 ? (chartWidth - 24) / 2 : chartWidth;
+  const totalGeometries = useMemo(() => revenueKeys.map(key => forecastTrendGeometry(points, period, totalPlotWidth, "total", [key])), [points, period, totalPlotWidth]);
   const transfer = useMemo(() => data ? forecastTrendTransfer(data, period) : null, [data, period]);
   const visibleColumns = transfer?.columns.filter(column => column.key !== "version_id" && column.key !== "previous_version_id") ?? [];
   const selectIndex = (index: number) => { if (points[index]) setSelectedId(points[index].version_id); };
@@ -135,8 +149,30 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(element);
     return () => observer?.disconnect();
-  }, [hasPlotNumbers]);
-  const dayIndices = [...new Set(chartWidth < 500 ? [0, points.length - 1] : [0, Math.floor((points.length - 1) / 3), Math.floor((points.length - 1) * 2 / 3), points.length - 1])].filter(index => index >= 0);
+  }, [hasPlotNumbers, mode]);
+  const renderPlot = (shape: ReturnType<typeof forecastTrendGeometry>, keys: readonly RevenueKey[], width: number, id: string, title: string) => {
+    if (!points.some((_, index) => keys.some(key => shape.valueAt(index, key) !== null))) return <p className="forecast-trend-plot forecast-trend-empty-series">这些历史快照未提供{title}，不补零或编造曲线。</p>;
+    const dayIndices = [...new Set(width < 500 ? [0, points.length - 1] : [0, Math.floor((points.length - 1) / 3), Math.floor((points.length - 1) * 2 / 3), points.length - 1])].filter(index => index >= 0);
+    return <div className="forecast-trend-plot">
+      <svg viewBox={`0 0 ${width} ${shape.height}`} role="img" aria-labelledby={`${id}-title ${id}-description`} onPointerDown={event => {
+        const bounds = event.currentTarget.getBoundingClientRect(), relative = (event.clientX - bounds.left) / bounds.width * width;
+        const index = points.reduce((nearest, _, candidate) => Math.abs(shape.x(candidate) - relative) < Math.abs(shape.x(nearest) - relative) ? candidate : nearest, 0);
+        selectIndex(index);
+      }}>
+        <title id={`${id}-title`}>{`${period}${title}${mode === "change" ? "变化" : "总量"}趋势（万元）`}</title>
+        <desc id={`${id}-description`}>{keys.map(key => key === "forecast_revenue" ? "预计结转收入为深陶土色虚线。" : "截至当日实际结转收入为深蓝实线。").join("")}{mode === "change" ? `两条线分别以 ${points[0].date} 的各自保存值为基准，纵轴为增减金额。` : "纵轴为绝对金额，按各自数据范围自动缩放，不必从零开始；两张图独立刻度，共用选中日期，不直接比较折线高度或坡度。"}横轴为北京时间快照保存日期，缺失数据不连线。可在下方使用日期选择滑块或展开趋势数据读取每个值。</desc>
+        {shape.ticks.map((tick, index) => <g key={index} className="forecast-trend-grid"><line x1={shape.left} x2={shape.right} y1={shape.y(tick)} y2={shape.y(tick)}/><text x={shape.left - 10} y={shape.y(tick) + 4} textAnchor="end">{tick.toLocaleString("zh-CN", { maximumFractionDigits: shape.axisDigits })}</text></g>)}
+        {mode === "change" && <line className="forecast-trend-zero" x1={shape.left} x2={shape.right} y1={shape.y(0)} y2={shape.y(0)}/>}
+        {keys.map(key => <path key={key} className={`forecast-trend-line ${key === "forecast_revenue" ? "is-forecast" : "is-actual"}`} d={shape.series(key)}/>)}
+        {points.map((point, index) => <g key={point.version_id}>{keys.map(key => {
+          const numeric = shape.valueAt(index, key);
+          return numeric === null ? null : <circle key={key} className={`forecast-trend-dot ${key === "forecast_revenue" ? "is-forecast" : "is-actual"}`} cx={shape.x(index)} cy={shape.y(numeric)} r={index === selectedIndex ? 4.5 : points.length <= 31 ? 2.5 : 1.5}/>;
+        })}</g>)}
+        {selected && <line className="forecast-trend-cursor" x1={shape.x(selectedIndex)} x2={shape.x(selectedIndex)} y1={shape.top} y2={shape.bottom}/>}
+        {dayIndices.map(index => <text className="forecast-trend-date" key={index} x={shape.x(index)} y={shape.dateY} textAnchor={points.length === 1 ? "middle" : index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}>{points[index].date.slice(5)}</text>)}
+      </svg>
+    </div>;
+  };
   const scheduleFailure = schedule?.last_run?.error;
   const scheduleFailureMessage = typeof scheduleFailure === "string" ? scheduleFailure : scheduleFailure?.message;
   const scheduleFailed = schedule?.last_run?.state === "FAILED", scheduleRunning = schedule?.last_run?.state === "RUNNING", scheduleQueued = schedule?.last_run?.state === "QUEUED";
@@ -169,27 +205,13 @@ export function ForecastRevenueTrendView({ data, versionId, loading, error, days
     {error && <div className="forecast-trend-error" role="status"><span>趋势读取未完成。{data ? `仍显示${rangeLabel(shownDays)}的上次结果，其他预测内容已保留。` : "其他预测内容已保留。"} {error}</span><button type="button" disabled={loading} onClick={onRetry}>重新读取趋势</button></div>}
     {!loading && !error && !points.length && <p className="forecast-trend-message">当前范围还没有可用的历史快照；后续成功更新后将在这里积累趋势。</p>}
     {points.length > 0 && <>
-      <div className="forecast-trend-chart-heading"><span>{period} · 单位：万元{mode === "change" ? ` · 较 ${points[0].date} 保存值增减` : " · 绝对金额，纵轴含 0"}</span><div className="forecast-trend-legend"><span className="is-forecast">预计结转收入</span><span className="is-actual">截至当日实际结转收入</span></div></div>
+      <div className="forecast-trend-chart-heading"><span>{period} · 单位：万元{mode === "change" ? ` · 较 ${points[0].date} 保存值增减` : " · 绝对金额 · 两图独立自动缩放，纵轴不必从 0 开始"}</span>{mode === "change" && <div className="forecast-trend-legend"><span className="is-forecast">预计结转收入</span><span className="is-actual">截至当日实际结转收入</span></div>}</div>
       <p className="forecast-trend-window">{rangeLabel(shownDays)} · {points.length} 个保存日 · 同日取最后成功一版</p>
-      {hasPlotNumbers ? <div className="forecast-trend-plot" ref={plot}>
-        <svg viewBox={`0 0 ${chartWidth} ${geometry.height}`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`} onPointerDown={event => {
-          const bounds = event.currentTarget.getBoundingClientRect(), relative = (event.clientX - bounds.left) / bounds.width * chartWidth;
-          const index = points.reduce((nearest, _, candidate) => Math.abs(geometry.x(candidate) - relative) < Math.abs(geometry.x(nearest) - relative) ? candidate : nearest, 0);
-          selectIndex(index);
-        }}>
-          <title id={`${chartId}-title`}>{`${period}结转收入${mode === "change" ? "变化" : "总量"}趋势（万元）`}</title>
-          <desc id={`${chartId}-description`}>预计结转收入为深陶土色虚线，截至当日实际结转收入为深蓝实线。{mode === "change" ? `两条线分别以 ${points[0].date} 的各自保存值为基准，纵轴为增减金额。` : "纵轴为绝对金额，包含零。"}横轴为北京时间快照保存日期，缺失数据不连线。可在下方使用日期选择滑块或展开趋势数据读取每个值。</desc>
-          {geometry.ticks.map((tick, index) => <g key={index} className="forecast-trend-grid"><line x1={geometry.left} x2={geometry.right} y1={geometry.y(tick)} y2={geometry.y(tick)}/><text x={geometry.left - 10} y={geometry.y(tick) + 4} textAnchor="end">{tick.toLocaleString("zh-CN", { maximumFractionDigits: axisDigits })}</text></g>)}
-          {mode === "change" && <line className="forecast-trend-zero" x1={geometry.left} x2={geometry.right} y1={geometry.y(0)} y2={geometry.y(0)}/>}
-          <path className="forecast-trend-line is-forecast" d={geometry.series("forecast_revenue")}/>
-          <path className="forecast-trend-line is-actual" d={geometry.series("actual_revenue")}/>
-          {points.map((point, index) => <g key={point.version_id}>{(["forecast_revenue", "actual_revenue"] as const).map(key => {
-            const numeric = geometry.valueAt(index, key);
-            return numeric === null ? null : <circle key={key} className={`forecast-trend-dot ${key === "forecast_revenue" ? "is-forecast" : "is-actual"}`} cx={geometry.x(index)} cy={geometry.y(numeric)} r={index === selectedIndex ? 4.5 : points.length <= 31 ? 2.5 : 1.5}/>;
-          })}</g>)}
-          {selected && <line className="forecast-trend-cursor" x1={geometry.x(selectedIndex)} x2={geometry.x(selectedIndex)} y1={geometry.top} y2={geometry.bottom}/>}
-          {dayIndices.map(index => <text className="forecast-trend-date" key={index} x={geometry.x(index)} y={geometry.dateY} textAnchor={points.length === 1 ? "middle" : index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}>{points[index].date.slice(5)}</text>)}
-        </svg>
+      {hasPlotNumbers ? <div ref={plot}>
+        {mode === "total" ? <div className="forecast-trend-total-plots">{revenueKeys.map((key, index) => <figure key={key}>
+          <figcaption className="forecast-trend-legend"><span className={key === "forecast_revenue" ? "is-forecast" : "is-actual"}>{revenueLabels[key]}</span></figcaption>
+          {renderPlot(totalGeometries[index], [key], totalPlotWidth, `${chartId}-${key}`, revenueLabels[key])}
+        </figure>)}</div> : renderPlot(geometry, revenueKeys, chartWidth, chartId, "结转收入")}
       </div> : <p className="forecast-trend-message">{hasNumbers && mode === "change" ? "首个保存日缺少基准值，暂不能展示变化；可切换“看总量”读取已有记录。" : `这些历史快照未提供${period}结转收入，不补零或编造曲线。`}</p>}
       {hasPlotNumbers && missingBaselines.length > 0 && <p className="forecast-trend-hint">首个保存日未提供{missingBaselines.map(key => key === "forecast_revenue" ? "预计结转收入" : "实际结转收入").join("、")}，对应变化线不显示；可在“看总量”或趋势数据中查看已有记录。</p>}
       {points.length === 1 && <p className="forecast-trend-hint">目前只有一个保存日，先展示真实数据点；不补造历史趋势。</p>}

@@ -99,7 +99,7 @@ export function prepareForecastMapping(source: ForecastDimensions): ForecastMapp
   return { source: { ...source }, target: { ...source }, reason: "" };
 }
 export type ForecastAdjustmentKind = "additional" | "new_withdrawal" | "old_withdrawal";
-export interface ForecastAdjustment { season: string; campus: string; kind: ForecastAdjustmentKind; value: number; reason: string }
+export interface ForecastAdjustment { season: string; campus: string; kind: ForecastAdjustmentKind; value: number; reason: string; one_shot?: boolean }
 export interface TrialFinancial {
   price: ForecastNumber; discount: ForecastNumber; recognition: ForecastNumber;
   renewal?: ForecastNumber; share?: ForecastNumber; method: string;
@@ -119,6 +119,9 @@ export interface ForecastCalculation {
   trial_ready?: boolean; trial_assumptions?: TrialAssumption[];
   fixed_rules_version?: string; forecast_complete?: boolean; rule_notes?: TrialAssumption[];
   confirmation_policy_version?: string; confirmation_checks?: ForecastConfirmationCheck[];
+}
+export interface ForecastPreview {
+  preview: true; parent_id: string; as_of: string; calculation: ForecastCalculation; system_campuses: ForecastCampus[];
 }
 /** Saved server checks only. The browser never qualifies missing actuals itself. */
 export interface ForecastConfirmationCheck {
@@ -402,6 +405,15 @@ export function refreshForecast(identity: ApiIdentity, states: Record<ForecastSe
 }
 export function reviseForecast(identity: ApiIdentity, parentId: string, assumptions: ForecastAssumptions, reason: string): Promise<ForecastEnvelope> {
   return commandForecast("/revise", identity, { parent_id: parentId, reason, assumptions });
+}
+/** Ephemeral calculation only: no mutation request key, cache invalidation or saved-read replacement. */
+export async function previewForecast(identity: ApiIdentity, parentId: string, assumptions: ForecastAssumptions, signal?: AbortSignal): Promise<ForecastPreview> {
+  const result = await forecastResponse<ForecastPreview>(await fetch(`${base}/preview`, {
+    method: "POST", headers: { ...identityHeaders(identity), "Content-Type": "application/json" },
+    body: JSON.stringify({ parent_id: parentId, assumptions }), signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(20000)]),
+  }));
+  if (!result.preview || result.parent_id !== parentId) throw new ForecastRequestError("试算与当前版本不一致，请重新核对。", 409);
+  return result;
 }
 export function confirmForecast(identity: ApiIdentity, id: string, reason: string): Promise<ForecastEnvelope> {
   return commandForecast(`/${encodeURIComponent(id)}/confirm`, identity, { reason });

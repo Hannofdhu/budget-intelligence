@@ -1,9 +1,36 @@
 import { ActionTable } from "./ActionTable";
 import { useEffect, useMemo, useState } from "react";
 import { meanings, type Value } from "./BusinessForm";
+import { skuDetailColumns, skuDetailValues } from "./budgetDetailExport";
+import type { ExportColumn } from "./budgetExport";
 
 type RecordValue = Record<string, Value>;
 type RateAction = "lock" | "unlock";
+const rateDetailFields = [
+  { key: "system_value_ppm", label: "历史参考" }, { key: "current_value_ppm", label: "当前值" },
+  { key: "lower_bound_ppm", label: "允许下限" }, { key: "upper_bound_ppm", label: "允许上限" },
+] as const;
+const rateDetailColumns: ExportColumn[] = [...skuDetailColumns,
+  { key: "fiscal_year", label: "财年" }, { key: "quarter_name", label: "季度" }, { key: "target_fiscal_season", label: "适用财季" },
+  { key: "rate_type", label: "指标" }, ...rateDetailFields.flatMap(({ key, label }): ExportColumn[] => [
+    { key, label: `${label}（ppm）`, format: "count" }, { key: `${key}_status`, label: `${label}输入状态` },
+    { key: `${key}_raw_input`, label: `${label}原始输入` },
+  ]),
+  { key: "boundary_reason", label: "范围依据" }, { key: "manual_reason", label: "人工调整原因" },
+  { key: "locked", label: "已锁定" }, { key: "boundary_confirmed", label: "范围已确认" },
+];
+
+/** Export validity is distinct from business validation and never changes an editor value. */
+function rateDetailValue(value: Value | undefined) {
+  const blank = value === null || value === undefined || typeof value === "string" && !value.trim();
+  const numeric = typeof value === "number" ? value
+    : typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) ? Number(value) : NaN;
+  const finite = Number.isFinite(numeric);
+  const raw = value === null || value === undefined ? null
+    : typeof value === "number" && !Number.isFinite(value) ? String(value)
+    : typeof value === "object" ? JSON.stringify(value) : value;
+  return { value: finite ? value as number | string : null, status: blank ? "未填写" : finite ? "数值" : "无效输入", raw };
+}
 
 function toPercent(value: Value): string {
   if (typeof value !== "number") return String(value ?? "");
@@ -46,6 +73,16 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
 
   const rows = items.map((item, index) => ({ item, index, key: rowKey(item, index), meta: metadata.get(rowKey(item, index)) ?? {} }));
   const filtered = rows.filter(({ item, meta }) => [meta.quarter_name, meta.target_fiscal_season, meta.campus, meta.track, meta.product, meta.grade, meta.rate_type, item.boundary_reason, item.manual_reason].map(String).join(" ").toLowerCase().includes(query.trim().toLowerCase()));
+  const transfer = { columns: rateDetailColumns, filename: "比例参数", rows: filtered.map(({ item, meta }) => ({
+    ...skuDetailValues(meta), fiscal_year: meta.fiscal_year ?? null, quarter_name: meta.quarter_name ?? null,
+    target_fiscal_season: meta.target_fiscal_season ?? null, rate_type: meta.rate_type ?? null,
+    ...Object.fromEntries(rateDetailFields.flatMap(({ key }) => {
+      const projected = rateDetailValue(key === "system_value_ppm" ? meta[key] : item[key]);
+      return [[key, projected.value], [`${key}_status`, projected.status], [`${key}_raw_input`, projected.raw]];
+    })),
+    boundary_reason: item.boundary_reason ?? null, manual_reason: item.manual_reason ?? null,
+    locked: meta.locked ?? null, boundary_confirmed: meta.boundary_confirmed ?? null,
+  })) };
   const complete = items.filter(item => ["current_value_ppm", "lower_bound_ppm", "upper_bound_ppm"].every(key => typeof item[key] === "number")).length;
   const updateRow = (index: number, key: string, next: Value) => onChange({ ...object, items: items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: next } : item) });
   const applyBatch = () => {
@@ -74,7 +111,7 @@ export function RateTableEditor({ value, referenceRows, disabled, dirty, onChang
       <label>上限<input disabled={disabled} inputMode="decimal" placeholder="例如 90" value={batchUpper} onChange={event => setBatchUpper(event.target.value)} /></label>
       <button type="button" disabled={disabled || (!batchCurrent && !batchLower && !batchUpper)} onClick={applyBatch}>应用到选中项</button>
     </section>}
-    <ActionTable className="rate-table" tableLabel="比例参数" aria-label="比例参数明细表" toolbarStart={toolbar} scrollClassName="rate-table-wrap" scrollLabel="比例参数明细表，可横向滚动"><thead><tr>
+    <ActionTable exportData={transfer} exportLabel="导出当前表格" className="rate-table" tableLabel="比例参数" aria-label="比例参数明细表" toolbarStart={toolbar} scrollClassName="rate-table-wrap" scrollLabel="比例参数明细表，可横向滚动"><thead><tr>
       <th scope="col" className="budget-cell-center"><input type="checkbox" aria-label="选择当前筛选结果" checked={allVisibleSelected} onChange={() => setSelected(current => { const next = new Set(current); for (const row of filtered) allVisibleSelected ? next.delete(row.key) : next.add(row.key); return next; })} /></th>
       <th scope="col">季节</th><th scope="col">校区与业务</th><th scope="col">年级</th><th scope="col">指标</th><th scope="col" className="budget-cell-number">历史参考</th><th scope="col" className="budget-cell-number">当前值</th><th scope="col" className="budget-cell-number">允许范围</th><th scope="col">调整依据</th><th scope="col">状态</th>
     </tr></thead><tbody>{filtered.map(({ item, index, key, meta }) => <tr key={key}>

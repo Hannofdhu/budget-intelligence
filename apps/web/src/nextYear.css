@@ -1,5 +1,14 @@
 @import "./budgetTokens.css";
 
+/* Two compact evidence groups in the existing SKU table; numeric surfaces stay solid. */
+#next-year-sku .ny-sku-evidence { min-width: 13rem; }
+#next-year-sku .ny-sku-evidence > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+#next-year-sku .ny-sku-evidence > div + div { margin-top: var(--budget-space-1); }
+#next-year-sku .ny-sku-evidence > div > span:first-child { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); white-space: nowrap; }
+#next-year-sku .ny-sku-evidence > div > span:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#next-year-sku .ny-sku-source { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--budget-selection-surface); color: var(--budget-text-secondary); }
+#next-year-sku .ny-sku-no-history { color: var(--budget-text-secondary); }
+
 .next-year-shell { min-height: 100dvh; color: var(--budget-text); font-family: var(--budget-font-family); font-size: var(--budget-body-size); line-height: 1.57143; }
 .ny-task-subtitle { color: var(--budget-text-secondary); font-size: .875rem; margin: -8px 0 20px; }
 .ny-progress strong { line-height: 1.5; }
@@ -528,3 +537,28 @@
   .ny-action-bar { position: static; margin-top: 1.5rem; padding-inline: 0; }
   .next-year-shell:has(.ny-action-bar) .decision-workspace { padding-bottom: 1.5rem; }
 }
+
+/* The shared batch editor stays inside the existing utility panel and save flow. */
+.ny-bulk-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 18px 0 12px; }
+.ny-bulk-heading > .budget-subsection-title, .ny-bulk-heading > .ny-range-note { margin: 0; }
+.ny-bulk-heading > .ny-range-note { flex: 1 1 280px; }
+.ny-bulk-editor > .ny-bulk-scope { margin: 0 0 4px; color: var(--budget-text); font-weight: 600; }
+.ny-bulk-editor > .ny-bulk-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 12px; font-variant-numeric: tabular-nums; }
+.ny-bulk-editor > .ny-bulk-scope-note { margin: 0 0 12px; }
+.ny-bulk-notes { margin: 0 0 16px; padding-inline-start: 18px; color: var(--budget-text-secondary); font-size: var(--budget-body-size); line-height: 1.7; overflow-wrap: anywhere; }
+.ny-bulk-notes li + li { margin-top: 4px; }
+.ny-bulk-editor .ny-bulk-modes { margin-bottom: 16px; }
+.ny-bulk-editor .ny-bulk-controls { gap: 12px; }
+.ny-bulk-editor .ny-bulk-controls label { min-width: 0; }
+.ny-bulk-editor .ny-bulk-controls select { max-width: 100%; }
+.ny-bulk-editor .ny-bulk-value-help, .ny-bulk-editor .ny-bulk-action-help { margin: 12px 0 0; }
+.ny-bulk-paste { margin-top: 12px; }
+.ny-bulk-paste p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.ny-bulk-paste .ny-tool-entries { margin-bottom: 12px; }
+.ny-bulk-paste-field { margin: 12px 0; }
+.ny-bulk-paste-field > span { display: block; margin-bottom: 8px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ny-bulk-editor > .ny-bulk-submit-help { margin: 16px 0 0; font-size: var(--budget-caption-size); }
+.ny-bulk-editor > .ny-bulk-error { margin: 12px 0 0; color: var(--budget-error); overflow-wrap: anywhere; }
+.ny-bulk-reference-columns { margin: 0 0 12px; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.ny-bulk-reference-columns > summary { cursor: pointer; }
+.ny-bulk-reference-columns > p { margin: 8px 0 0; line-height: 1.7; }

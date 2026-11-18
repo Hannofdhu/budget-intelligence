@@ -5,12 +5,13 @@ The context also marks the established HTTP refresh stages without a new engine.
 """
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 STAGES = frozenset(
     {
@@ -100,7 +101,50 @@ def safe_diagnostic(value: object) -> dict[str, Any]:
         result["retry"] = value["retry"]
     if "error_code" in value:
         result["error_code"] = safe_error_code(value["error_code"])
+    issues = value.get("blocking_issues")
+    if isinstance(issues, list):
+        checked = []
+        for issue in issues[:12]:
+            if not isinstance(issue, dict):
+                continue
+            code, count, season = issue.get("code"), issue.get("count"), issue.get("season")
+            if not isinstance(code, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", code):
+                continue
+            if type(count) is not int or not 0 < count <= 1_000_000:
+                continue
+            checked.append(
+                {
+                    "code": code,
+                    "count": count,
+                    **({"season": season} if season in ("暑假", "秋季", "寒假", "春季") else {}),
+                }
+            )
+        if checked:
+            result["blocking_issues"] = checked
     return result
+
+
+def blocking_issue_summary(calculation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Retain the reason for rejection, without business rows, amounts or exception text."""
+    counts = Counter(
+        (issue.get("code"), issue.get("season"))
+        for issue in calculation.get("issues", [])
+        if isinstance(issue, dict)
+        and issue.get("severity") == "BLOCKING"
+        and isinstance(issue.get("code"), str)
+        and (issue.get("season") is None or isinstance(issue.get("season"), str))
+    )
+    return cast(
+        list[dict[str, Any]],
+        safe_diagnostic(
+            {
+                "blocking_issues": [
+                    {"code": code, "season": season, "count": count}
+                    for (code, season), count in counts.most_common(12)
+                ]
+            }
+        ).get("blocking_issues", []),
+    )
 
 
 def attempt_history(result: object) -> list[dict[str, Any]]:

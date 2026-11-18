@@ -40,6 +40,12 @@ export interface VersionExportContext {
   asOf?: string | null;
   sourceId?: string | null;
   sourceLabel?: string | null;
+  sourceFiscalYear?: number | null;
+  sourceObject?: string | null;
+  sourceSequence?: number | null;
+  sourceFiscalSeason?: number | null;
+  sourceDataset?: string | null;
+  sourcePartition?: string | null;
 }
 export function versionFileStem(context: VersionExportContext): string {
   const year = Number.isInteger(context.fiscalYear) ? `FY${String(context.fiscalYear).slice(-2)}` : "财年未记录";

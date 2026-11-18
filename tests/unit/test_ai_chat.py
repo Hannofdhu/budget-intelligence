@@ -264,6 +264,107 @@ async def test_provider_error_is_not_success_and_never_auto_resubmits(tmp_path: 
     assert len(runtime.prompts) == 1 and runtime.stops
 
 
+def assistant_end(reason: str, text: str = "") -> dict[str, Any]:
+    return {
+        "type": "message_end",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": text}],
+            "model": "fixture",
+            "stopReason": reason,
+        },
+    }
+
+
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_successful_native_retry_clears_only_the_recovered_failure(
+    tmp_path: Path,
+    with_tools: bool,
+) -> None:
+    chats, runtime = service(tmp_path)
+    runtime.events = [
+        {"type": "message_start", "message": {"role": "assistant"}},
+        assistant_end("error"),
+        {"type": "auto_retry_start"},
+        assistant_end("error"),
+        {"type": "auto_retry_end", "success": True},
+    ]
+    if with_tools:
+        runtime.events += [
+            {"type": "message_start", "message": {"role": "assistant"}},
+            assistant_end("toolUse"),
+            {"type": "tool_execution_start", "toolCallId": "recovered-tool", "toolName": "bash"},
+            {"type": "tool_execution_end", "toolCallId": "recovered-tool", "isError": False},
+        ]
+    runtime.events += [
+        {"type": "message_start", "message": {"role": "assistant"}},
+        assistant_end("stop", "重试后的完整回答"),
+        {"type": "agent_settled", "aborted": False},
+    ]
+    record = chats.store.create(OWNER)
+    await chats.send(OWNER, record["id"], "原问题", MESSAGE_ID)
+    await chats.tasks[(OWNER, record["id"])]
+    saved = chats.store.read(OWNER, record["id"])
+    answer = saved["messages"][-1]
+    assert saved["state"] == "idle" and answer["state"] == "complete"
+    assert answer["text"] == "重试后的完整回答" and "error" not in answer
+    assert "progress" not in answer and saved["completion"]["state"] == "idle"
+    assert len(runtime.prompts) == 1 and len(runtime.calls) == 1
+    assert len(runtime.stops) == 1
+
+
+@pytest.mark.parametrize("later_reason", [None, "toolUse", "length", "error"])
+async def test_retry_notice_or_tool_result_does_not_clear_an_unrecovered_model_failure(
+    tmp_path: Path,
+    later_reason: str | None,
+) -> None:
+    chats, runtime = service(tmp_path)
+    runtime.events = [
+        assistant_end("error", "已收到的片段"),
+        {"type": "auto_retry_start"},
+        {"type": "auto_retry_end", "success": True},
+    ]
+    if later_reason is not None:
+        runtime.events.append(assistant_end(later_reason, "仍未完整结束"))
+    runtime.events.append({"type": "agent_settled", "aborted": False})
+    record = chats.store.create(OWNER)
+    await chats.send(OWNER, record["id"], "原问题", MESSAGE_ID)
+    await chats.tasks[(OWNER, record["id"])]
+    saved = chats.store.read(OWNER, record["id"])
+    assert saved["state"] == "error" and saved["messages"][-1]["state"] == "error"
+    assert saved["messages"][-1]["error"] and saved["messages"][-1]["text"]
+    assert len(runtime.prompts) == 1
+
+
+@pytest.mark.parametrize("ending", ["error", "abort", "notice", "gap"])
+async def test_failure_or_interruption_after_recovery_is_not_reported_as_complete(
+    tmp_path: Path,
+    ending: str,
+) -> None:
+    chats, runtime = service(tmp_path)
+    runtime.events = [assistant_end("error"), assistant_end("stop", "恢复后的回答")]
+    if ending == "error":
+        runtime.events.append(assistant_end("error", "最后失败片段"))
+    runtime.events.append({"type": "agent_settled", "aborted": ending == "abort"})
+    original_output = runtime.output
+
+    async def interrupted_output(identifier: str):  # type: ignore[no-untyped-def]
+        async for frame in original_output(identifier):
+            if frame["data"].get("type") == "agent_settled" and ending in {"notice", "gap"}:
+                yield {"type": ending}
+            else:
+                yield frame
+
+    runtime.output = interrupted_output  # type: ignore[method-assign]
+    record = chats.store.create(OWNER)
+    await chats.send(OWNER, record["id"], "原问题", MESSAGE_ID)
+    await chats.tasks[(OWNER, record["id"])]
+    saved = chats.store.read(OWNER, record["id"])
+    assert saved["state"] == ("interrupted" if ending == "abort" else "error")
+    assert saved["messages"][-1]["state"] != "complete" and saved["messages"][-1]["text"]
+    assert len(runtime.prompts) == 1
+
+
 def test_restart_marks_orphaned_generation_interrupted_without_losing_text(tmp_path: Path) -> None:
     chats, _ = service(tmp_path)
     record = chats.store.create(OWNER)

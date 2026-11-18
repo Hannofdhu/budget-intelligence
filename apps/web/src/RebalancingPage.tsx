@@ -245,8 +245,15 @@ function CandidateCard({
 }
 
 export function ChangeTable({ changes }: { changes: ScenarioChange[] }) {
+  const transfer = { filename: "候选方案参数变更", columns: [
+    { key: "object_type", label: "杠杆" }, { key: "object_stable_key", label: "对象键" },
+    { key: "original_value", label: "原值" }, { key: "suggested_value", label: "建议值" },
+    { key: "adjustment", label: "变化" }, { key: "unit", label: "数值单位" },
+  ], rows: changes.map(change => ({ object_type: change.object_type, object_stable_key: change.object_stable_key,
+    original_value: change.original_value, suggested_value: change.suggested_value, adjustment: change.adjustment,
+    unit: change.object_type === "ENTRY" ? "人次" : "ppm" })) };
   return (
-    <ActionTable tableLabel="候选方案参数变更" aria-label="候选方案参数变更" keyboardNavigation scrollClassName="budget-auxiliary-table-scroll" className="budget-auxiliary-table">
+    <ActionTable exportData={transfer} exportLabel="导出当前表格" tableLabel="候选方案参数变更" aria-label="候选方案参数变更" keyboardNavigation scrollClassName="budget-auxiliary-table-scroll" className="budget-auxiliary-table">
       <thead><tr>{["杠杆", "对象键", "原值", "建议值", "变化"].map(label => <th scope="col" key={label} className={["原值", "建议值", "变化"].includes(label) ? "budget-cell-number" : "budget-cell-text"}>{label}</th>)}</tr></thead>
       <tbody>
       {changes.map((change) => (

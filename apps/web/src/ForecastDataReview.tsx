@@ -2,6 +2,7 @@ import { ActionTable } from "./ActionTable";
 import { skuText } from "./budgetDisplay";
 import { BudgetDataSection } from "./BudgetDataSection";
 import { skuIdentityCells, skuIdentityHeaders } from "./SkuIdentity";
+import { skuDetailColumns, skuDetailValues } from "./budgetDetailExport";
 import type { ApiIdentity } from "./api";
 import { canConfirmForecast, forecastDimensionLabels, forecastSeasons, groupForecastIssues, type ForecastDimension, type ForecastDimensions, type ForecastIssue, type ForecastVersion } from "./forecastApi";
 import "./forecastReview.css";
@@ -99,6 +100,16 @@ const recordValue = (record: ForecastWarningRecord) => {
   return `${value}${unit}`;
 };
 
+/** One source issue per row; compact identity and evidence cells are presentation only. */
+export function forecastMissingActualTransfer(group: ForecastMissingActualGroup) {
+  return { columns: [{ key: "season", label: "季度" }, ...skuDetailColumns,
+    { key: "revenue_status", label: "结转收入状态" }, { key: "headcount_status", label: "招生人次状态" },
+    { key: "code", label: "问题代码" }, { key: "severity", label: "问题级别" }, { key: "message", label: "问题说明" }],
+  rows: group.issues.map(issue => ({ season: issue.season ?? null, ...skuDetailValues(issue.dims ?? {}),
+    revenue_status: "待核对", headcount_status: "待核对", code: issue.code, severity: issue.severity, message: issue.message })),
+  filename: `${group.campus}待核对实际` };
+}
+
 export function ForecastDataReview({ issues, onUpdate, busy = false }: { issues: ForecastIssue[]; onUpdate?: () => void; busy?: boolean }) {
   const missingGroups = groupForecastMissingActuals(issues), missingCount = missingGroups.reduce((sum, group) => sum + group.issues.length, 0);
   const otherGroups = groupForecastIssues(issues.filter(issue => issue.severity === "BLOCKING" && issue.code !== missingActualCode));
@@ -107,7 +118,7 @@ export function ForecastDataReview({ issues, onUpdate, busy = false }: { issues:
   return <div className="forecast-data-review">
     {missingCount > 0 && <BudgetDataSection id="forecast-review-missing" className="forecast-review-missing" title="已定版实际" count={missingCount} countLabel="项待核对" headingLevel={3}>
       <div className="forecast-review-next"><p>目前按0展示；核对来源后更新预测。此处不能补录已定版实际。</p>{onUpdate && <button type="button" className="forecast-primary" disabled={busy} onClick={onUpdate}>{busy ? "正在更新…" : "更新预测"}</button>}</div>
-      <div className="forecast-review-campus-list">{missingGroups.map(group => <details className="forecast-review-campus" key={group.campus}><summary><strong>{group.campus}</strong><span>{group.issues.length}项</span></summary><div aria-label={`${group.campus}待核对实际`}><ActionTable keyboardNavigation tableLabel={`${group.campus}待核对实际`} aria-label={`${group.campus}待核对实际表`} scrollClassName="forecast-review-table-wrap"><thead><tr><th scope="col">季度</th>{skuIdentityHeaders.map(label => <th scope="col" key={label}>{label}</th>)}<th scope="col">缺少数据</th></tr></thead><tbody>{group.issues.map((issue, index) => <tr key={index}><td>{issue.season || "未填写"}</td>{skuIdentityCells(Object.fromEntries(dimensions.map(key => [key, issue.dims?.[key] || `${forecastDimensionLabels[key]}未填写`])) as ForecastDimensions, <IssueEvidence issues={[issue]}/>)}<td>结转收入、人次</td></tr>)}</tbody></ActionTable></div></details>)}</div>
+      <div className="forecast-review-campus-list">{missingGroups.map(group => <details className="forecast-review-campus" key={group.campus}><summary><strong>{group.campus}</strong><span>{group.issues.length}项</span></summary><div aria-label={`${group.campus}待核对实际`}><ActionTable keyboardNavigation tableLabel={`${group.campus}待核对实际`} aria-label={`${group.campus}待核对实际表`} exportData={forecastMissingActualTransfer(group)} exportLabel="导出当前表格" scrollClassName="forecast-review-table-wrap"><thead><tr><th scope="col">季度</th>{skuIdentityHeaders.map(label => <th scope="col" key={label}>{label}</th>)}<th scope="col">缺少数据</th></tr></thead><tbody>{group.issues.map((issue, index) => <tr key={index}><td>{issue.season || "未填写"}</td>{skuIdentityCells(Object.fromEntries(dimensions.map(key => [key, issue.dims?.[key] || `${forecastDimensionLabels[key]}未填写`])) as ForecastDimensions, <IssueEvidence issues={[issue]}/>)}<td>结转收入、人次</td></tr>)}</tbody></ActionTable></div></details>)}</div>
     </BudgetDataSection>}
     {otherGroups.length > 0 && <BudgetDataSection id="forecast-review-other" className="forecast-review-other" title="其他待核对数据" count={otherGroups.reduce((sum, group) => sum + group.issues.length, 0)} countLabel="项待核对" headingLevel={3}>{otherGroups.map(group => <details className="forecast-review-problem" key={group.key}><summary><strong>{forecastReviewIssueTitle(group.code)}</strong>{group.season && <span>{group.season}</span>}<span>{group.issues.length}项</span></summary><ul>{group.issues.map((issue, index) => <li key={index}><span>{issue.dims ? dimensionText(issue.dims) : "部门数据"}</span><IssueEvidence issues={[issue]}/></li>)}</ul></details>)}</BudgetDataSection>}
     {warnings.length > 0 && <details className="forecast-review-records"><summary><strong>{warningTitle}</strong><span>{warnings.length}项</span></summary>{warnings.map(record => <article key={record.id}><h3>{record.dims ? dimensionText(record.dims) : record.title}</h3><dl><div><dt>季度</dt><dd>{record.seasons.join("、") || "未填写"}</dd></div>{record.field && <div><dt>{fieldLabels[record.field] ?? (record.code === "BASELINE_NEGATIVE_VALUE" ? "原预算字段" : "相关字段")}</dt><dd>{recordValue(record)}</dd></div>}{!record.field && <div><dt>记录</dt><dd>{record.title}</dd></div>}</dl><IssueEvidence issues={record.issues}/></article>)}</details>}

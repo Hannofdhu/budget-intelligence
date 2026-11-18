@@ -3,11 +3,11 @@ export type BudgetModuleYears = Record<BudgetModule, number>;
 
 // These are the existing data destinations, not new fiscal-year routing.
 export const budgetModules = [
+  { key: "ai", href: "/budget/ai" },
   { key: "cockpit", href: "/budget/cockpit" },
   { key: "budget", href: "/budget/workspace?archive=fy27&step=5" },
   { key: "forecast", href: "/budget/forecast?archive=fy27" },
   { key: "next-year", href: "/budget/next-year" },
-  { key: "ai", href: "/budget/ai" },
 ] as const;
 
 const archiveYear = (href: string) => {

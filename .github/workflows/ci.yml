@@ -89,6 +89,7 @@ jobs:
         run: |
           docker build -t budget-pi-agent:ci apps/ai-agent
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --user node --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 --entrypoint pi budget-pi-agent:ci --version
+          BUDGET_AI_ANALYSIS_IMAGE=budget-pi-agent:ci uv run pytest tests/integration/test_ai_analysis_image.py
       - name: Run Python and PostgreSQL tests
         id: python-tests
         if: ${{ !cancelled() && steps.migrations.outcome == 'success' }}

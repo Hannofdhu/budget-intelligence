@@ -12,6 +12,9 @@ export type QuarterlyBusinessTableProps<Row> = {
   season: (row: Row) => string;
   businessColumns: readonly QuarterlyBusinessColumn<Row>[];
   metrics: readonly QuarterlyBusinessColumn<Row>[];
+  /** Explicit source dimensions/metrics for a flat detail export; compact UI cells remain unchanged. */
+  exportBusinessColumns?: readonly QuarterlyValueColumn<Row>[];
+  exportMetrics?: readonly QuarterlyValueColumn<Row>[];
   filename: string;
   tableLabel: string;
   seasons?: readonly string[];
@@ -33,15 +36,13 @@ const displayed = <Row,>(row: Row, column: QuarterlyBusinessColumn<Row>) => {
     : value.toLocaleString("zh-CN", { maximumFractionDigits: column.format === "count" ? 8 : 2 });
 };
 
-export function QuarterlyBusinessTable<Row>({ rows, rowKey, season, businessColumns, metrics, filename, tableLabel,
+export function QuarterlyBusinessTable<Row>({ rows, rowKey, season, businessColumns, metrics, exportBusinessColumns, exportMetrics, filename, tableLabel,
   seasons, pageSize = 20, onCellAction, canCellAction, actionLabel = "定位编辑" }: QuarterlyBusinessTableProps<Row>) {
   const [page, setPage] = useState(0);
   const arrangement = useMemo(() => arrangeQuarterlyBusiness(rows, rowKey, season, seasons), [rows, rowKey, season, seasons]);
-  const transfer = useMemo(() => quarterlyBusinessExport(arrangement.groups, arrangement.seasons, businessColumns, metrics), [arrangement, businessColumns, metrics]);
-  const copyRows = useMemo(() => [["业务", "指标", ...arrangement.seasons], ...arrangement.groups.flatMap(group => metrics.map(metric => [
-    businessColumns.map(column => quarterlyBusinessCopyValue(group.sample, column)).join(" / "), metric.label,
-    ...arrangement.seasons.map(value => quarterlyBusinessCopyValue(group.bySeason.get(value), metric)),
-  ]))], [arrangement, businessColumns, metrics]);
+  const transfer = useMemo(() => quarterlyBusinessExport(arrangement.groups, arrangement.seasons, exportBusinessColumns ?? businessColumns, exportMetrics ?? metrics), [arrangement, businessColumns, metrics, exportBusinessColumns, exportMetrics]);
+  const copyRows = useMemo(() => [transfer.columns.map(column => column.label), ...transfer.rows.map(row => transfer.columns.map(column =>
+    quarterlyBusinessCopyValue(row, { ...column, value: source => source[column.key] })))], [transfer]);
   const size = Math.max(1, Math.floor(pageSize));
   const pageCount = Math.ceil(arrangement.groups.length / size);
   const currentPage = Math.min(page, Math.max(0, pageCount - 1));

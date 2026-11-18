@@ -1,0 +1,51 @@
+@import "./budgetTokens.css";
+.forecast-campus-rates { min-width: 0; }
+.forecast-rate-intro > strong { font-size: var(--budget-section-title-size); }
+.forecast-rate-intro p, .forecast-rate-context, .forecast-rate-caption, .forecast-rate-hint, .forecast-rate-details > p { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); line-height: 1.7; }
+.forecast-rate-intro p { margin: 6px 0 16px; }
+.forecast-rate-scope { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 16px; }
+.forecast-rate-context { margin: 10px 0 14px; }
+.forecast-rate-controls { border-block: 1px solid var(--budget-divider); }
+.forecast-rate-control { padding: 14px 0; }
+.forecast-rate-control + .forecast-rate-control { border-top: 1px solid var(--budget-divider); }
+.forecast-rate-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.forecast-rate-title > label { color: var(--budget-text); font-weight: 600; }
+.forecast-rate-number { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.budget-shell.forecast-shell .forecast-rate-number input[type="number"] { width: 100px; min-height: 36px; margin: 0; padding: 6px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+.forecast-rate-track { position: relative; margin: 4px 0 0; }
+.budget-shell.forecast-shell .forecast-rate-track input[type="range"] { display: block; width: 100%; height: 36px; min-height: 36px; padding: 0; margin: 0; accent-color: var(--budget-accent); background: transparent; box-shadow: none; border: 0; cursor: ew-resize; }
+.forecast-rate-track i { pointer-events: none; position: absolute; left: clamp(5px, var(--rate-recommendation), calc(100% - 5px)); top: 26px; width: 2px; height: 7px; background: var(--budget-text-secondary); }
+.forecast-rate-caption { display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; }
+.forecast-rate-conversion { margin: 10px 0 0; font-size: var(--budget-body-size); font-variant-numeric: tabular-nums; }
+.forecast-rate-conversion strong { font-size: 1.125rem; }
+.forecast-rate-conversion > span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.forecast-rate-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.forecast-rate-preview { padding: 20px; margin: 22px 0; border: 1px solid var(--budget-divider); border-radius: var(--budget-radius-lg); background: var(--budget-surface); }
+.forecast-rate-preview header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.forecast-rate-preview header > strong { font-size: var(--budget-subsection-title-size); }
+.forecast-rate-preview header span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); font-weight: 400; }
+.forecast-rate-preview header > strong span { margin-left: 8px; color: var(--budget-warning); }
+.forecast-rate-preview dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; margin: 20px 0 0; }
+.forecast-rate-preview dl > div { min-width: 0; }
+.forecast-rate-preview dt { font-size: var(--budget-caption-size); color: var(--budget-text-secondary); overflow-wrap: anywhere; }
+.forecast-rate-preview dd { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+.forecast-rate-preview dd > span { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.forecast-rate-preview dd > strong { font-size: 1.125rem; }
+.forecast-rate-preview small { color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
+.forecast-rate-preview details { border-top: 1px solid var(--budget-divider); margin-top: 20px; padding-top: 12px; font-size: var(--budget-caption-size); }
+.forecast-rate-preview .forecast-rate-hint { color: var(--budget-warning); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.forecast-rate-hint { margin: 10px 0 0; color: var(--budget-warning); }
+.forecast-rate-details { margin-top: 22px; font-size: var(--budget-caption-size); }
+.forecast-rate-details > summary { cursor: pointer; margin-bottom: 14px; }
+@media (max-width: 500px) {
+  .forecast-rate-title { align-items: center; gap: 8px; }
+  .forecast-rate-title > label { max-width: 11em; }
+  .budget-shell.forecast-shell .forecast-rate-number input[type="number"] { width: 90px; }
+  .forecast-rate-scope { grid-template-columns: 1fr; gap: 12px; }
+  .forecast-rate-preview { padding: 16px; }
+  .forecast-rate-preview dl { grid-template-columns: 1fr; gap: 18px; }
+}
+@media (pointer: coarse) {
+  .budget-shell.forecast-shell .forecast-rate-track input[type="range"], .budget-shell.forecast-shell .forecast-rate-number input[type="number"] { min-height: 44px; }
+  .forecast-rate-track i { top: 34px; }
+}

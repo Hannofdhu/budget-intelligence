@@ -344,6 +344,12 @@ async def execute_job(job: AsyncJob, repository: JobRepository, settings: Settin
                 else getattr(exc, "diagnostic_id", None)
             )
             diagnostic.update(safe_diagnostic({"diagnostic_id": source_id}))
+            details = exc.detail if isinstance(exc, HTTPException) else getattr(exc, "diagnostics", None)
+            diagnostic.update(
+                safe_diagnostic({"blocking_issues": details.get("blocking_issues")})
+                if isinstance(details, dict)
+                else {}
+            )
         diagnostic["stage"] = progress.stage
     finished = datetime.now(UTC)
     retry = bool(
@@ -479,7 +485,7 @@ async def schedule_status(
                 "message": last.last_error_safe,
                 **{
                     key: diagnostic[key]
-                    for key in ("stage", "diagnostic_id", "exception_type")
+                    for key in ("stage", "diagnostic_id", "exception_type", "blocking_issues")
                     if key in diagnostic
                 },
             }

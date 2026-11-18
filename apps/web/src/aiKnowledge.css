@@ -1,17 +1,18 @@
 @import "./budgetTokens.css";
 
-.ai-chat-layout.is-knowledge-open { grid-template-columns: 264px minmax(420px,1fr) minmax(320px,384px); }
+.ai-chat-layout.is-knowledge-open { grid-template-columns: var(--ai-chat-sidebar-width,264px) minmax(420px,1fr) minmax(320px,384px); }
 .ai-chat-layout.is-knowledge-open.is-sidebar-closed { grid-template-columns: minmax(420px,1fr) minmax(320px,384px); }
 .ai-knowledge-toggle, .ai-knowledge-sidebar-link { color: var(--budget-text); background: var(--budget-surface); border: 1px solid var(--budget-control-border); border-radius: 8px; min-height: 36px; padding: 6px 9px; font-size: var(--budget-caption-size); }
 .ai-knowledge-toggle { flex-shrink: 0; white-space: nowrap; }
-.ai-chat-heading > div:first-child { flex: 1; min-width: 0; }
-.ai-chat-heading > div:last-child { flex-shrink: 0; }
+.ai-chat-heading > div:first-child { flex: 1 1 300px; min-width: 0; }
+.ai-chat-heading > div:last-child { flex-shrink: 0; margin-left: auto; }
 .ai-knowledge-toggle:hover, .ai-knowledge-sidebar-link:hover,
 .ai-knowledge-toggle[aria-expanded="true"], .ai-knowledge-sidebar-link[aria-expanded="true"] { background: var(--budget-selection-surface); border-color: var(--budget-text-secondary); }
 .ai-knowledge-toggle:focus-visible, .ai-knowledge-sidebar-link:focus-visible { outline: 2px solid var(--budget-text); outline-offset: 3px; }
 .ai-knowledge-sidebar-link { width: 100%; text-align: left; margin-bottom: 12px; padding: 11px 12px; font-weight: 500; }
-.ai-knowledge-applied { display: flex; align-items: center; justify-content: flex-end; min-height: 36px; padding: 4px 28px; border-bottom: 1px solid var(--budget-divider); background: var(--budget-page-background); flex: 0 0 auto; }
-.ai-knowledge-applied button { padding: 4px 0; border: 0; color: var(--budget-text-secondary); background: transparent; font-size: var(--budget-caption-size); text-align: right; }
+.ai-knowledge-applied { display: inline-flex; flex: 0 0 auto; }
+.ai-knowledge-applied button { padding: 0; border: 0; color: var(--budget-text-secondary); background: transparent; font-size: var(--budget-caption-size); white-space: nowrap; }
+.ai-knowledge-applied button:hover { color: var(--budget-text); text-decoration: underline; text-underline-offset: 3px; }
 .ai-knowledge-card { max-width: 43.75rem; margin: 12px 0 0; padding: 24px 26px; border: 1px solid var(--budget-divider); border-radius: 10px; background: var(--budget-page-background); }
 .ai-knowledge-card-label { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--budget-text-secondary); font-size: var(--budget-caption-size); }
 .ai-knowledge-card h3 { margin: 14px 0 10px; font-size: 24px; line-height: 1.5; font-weight: 600; }
@@ -92,6 +93,7 @@
 @media (max-width: 1279px) and (min-width: 960px) {
   .ai-chat-layout.is-knowledge-open { grid-template-columns: minmax(420px,1fr) 340px; }
   .ai-chat-layout.is-knowledge-open .ai-chat-sidebar { display: none; }
+  .ai-chat-layout.is-knowledge-open .ai-chat-sidebar-resizer { display: none; }
 }
 @media (max-width: 959px) {
   .ai-chat-layout.is-knowledge-open, .ai-chat-layout.is-knowledge-open.is-sidebar-closed { grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto; height: auto; }
@@ -107,7 +109,6 @@
   .ai-chat-heading > div:first-child { flex: 1 1 100%; }
   .ai-chat-heading > div:last-child { width: 100%; justify-content: flex-end; }
   .ai-knowledge-toggle { padding-inline: 4px; font-size: 12px; }
-  .ai-knowledge-applied { padding-inline: 16px; }
   .ai-knowledge-card { padding: 18px 16px; }
   .ai-knowledge-card h3 { font-size: 19px; }
   .ai-knowledge-actions { gap: 7px; }

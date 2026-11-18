@@ -104,7 +104,8 @@ test("switch, read-back and scroll contracts protect drafts and prevent duplicat
   assert.match(source, /setRecord\(null\)/);
   assert.match(source, /pending\.current\?\.chatId === id/);
   assert.match(source, /messages\.some\(message => message\.id === pending\.current\?\.id\)/);
-  assert.match(source, /drafts\.current\.get/); assert.match(source, /beforeunload/);
+  assert.match(source, /drafts\.current\.get/); assert.doesNotMatch(source, /beforeunload/);
+  for (const operation of ["readAiChatDraft", "saveAiChatDraft", "clearAiChatDraft"]) assert.ok(source.includes(operation));
   assert.match(source, /if \(!id\) \{ setArchived\(false\); setSearch\(""\); \}/);
   assert.match(source, /record\.archived \? "已归档"/);
   assert.match(source, /if \(atBottom\.current && messages\.current\)/);

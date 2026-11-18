@@ -23,6 +23,9 @@ const seasons = ["暑假", "秋季", "寒假", "春季"];
 const filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
 const source = { id: "forecast-P16", sequence: 16, as_of: "2026-10-06", status: "CONFIRMED", fiscal_year: 2027, forecast_revenue: "400000", forecast_total: 400, calculation_hash: "forecast-hash", snapshot_hash: "source-hash", baseline_hash: "baseline-hash" };
 const combination = (overrides = {}) => ({ id: "combo-1", track: "智慧空间", product: "常规班", grade: "七年级", subject: "数学", campus: "西直门", entry: true, enabled: true, source_entry_weight: 100, source_new_by_season: Object.fromEntries(seasons.map(s => [s, 25])), opening_carryover_yuan: "0.000000", ...overrides });
+const skuDetailKeys = ["campus", "track", "product", "grade", "subject", "source_label", "history_revenue_yuan", "history_students", "history_status", "summer_old_students", "summer_status", "opening_carryover_yuan", "entry", "enabled"];
+const skuDetailHeaders = ["校区", "赛道", "产品", "年级", "科目", "来源标签", "FY27结转收入（元）", "FY27招生人次", "FY27经营基础状态", "FY28暑假老生人次", "老生承接状态", "期初结转（元）", "入口", "参与预算"];
+const copiedValues = row => Object.values(row).map(value => value === null || value === undefined ? "" : String(value));
 const inputs = (overrides = {}) => ({ fiscal_year: 2028, source_as_of: "2026-10-06", target_revenue_yuan: "400000", track_targets: { 智慧空间: "400000" }, entry_total: 100, tax_factor: "1.06", combinations: [combination()],
   rates: seasons.map((season, i) => ({ id: `rate-${i}`, season, track: "智慧空间", product: "常规班", grade: "七年级", campus: "西直门", renewal_ppm: 800000, share_ppm: 250000 })),
   finance: seasons.map((season, i) => ({ id: `finance-${i}`, combination_id: "combo-1", season, price_yuan: "1000", discount_ppm: 900000, recognition_ppm: 1000000 })),
@@ -185,7 +188,7 @@ const fakeBrowser = () => {
   return () => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; } };
 };
 const button = (tree, label) => nodes(tree).find(n => n.type === "button" && text(renderToStaticMarkup(n)) === label);
-const openIndividualEdits = harness => { button(harness.render(), "批量修改").props.onClick(); button(harness.render(), "分别设值").props.onClick(); };
+const openIndividualEdits = harness => { button(harness.render(), "批量修改").props.onClick(); button(harness.render(), "分别设值（Excel）").props.onClick(); };
 const scopeControl = harness => nodes(harness.render()).find(node => typeof node.type === "function" && node.type.name === "BudgetScopeBar");
 const openVersions = harness => button(harness.render(), "版本记录").props.onClick();
 const openProblems = harness => nodes(harness.render()).find(node => node.type === "button" && node.props.onClick && text(renderToStaticMarkup(node)).startsWith("待处理")).props.onClick();
@@ -211,8 +214,9 @@ test("version display separates a saved draft, viewing relation and frozen forec
     assert.match(html, /<summary>追溯信息<\/summary>/); assert.match(html, /精确版本标识/);
     const table = paged(h.render(), "FY28预算版本"), record = table.props.exportRow(history[0]);
     assert.equal(record.id, "exact-N12"); assert.equal(record.source_id, "exact-P17");
-    assert.equal(record.version, "第12版"); assert.equal(record.source, "FY27全年预测 · 第17版");
-    assert.equal(record.status, "草稿"); assert.equal(record.relation, "最新保存 · 正在查看");
+    assert.equal(record.version, 12); assert.equal(record.source, "FY27全年预测 · 第17版");
+    assert.equal(record.status, "草稿"); assert.equal(record.latest, "是"); assert.equal(record.viewing, "是");
+    assert.equal(record.fiscal_year, 2028); assert.equal(record.source_fiscal_year, 2027); assert.equal(record.source_sequence, 17);
     assert.equal(JSON.stringify(h.state[1]), before); assert.deepEqual(h.state[3], {});
   } finally { restore(); }
 });
@@ -285,7 +289,7 @@ test("export identity follows the displayed saved calculation or a real preview,
   try {
     const analysis = h => nodes(h.render()).find(node => node.type?.name === "BudgetAnalysisView");
     const saved = pageHarness(), savedProps = analysis(saved).props;
-    assert.deepEqual(savedProps.versionExportContext, { fiscalYear: 2028, object: "预算编制", sequence: 1, createdAt: "2026-10-07T00:00:00Z", preview: false, id: "next-year-N1", asOf: "2026-10-06", sourceId: "forecast-P16", sourceLabel: "FY27全年预测 · 第16版" });
+    assert.deepEqual(savedProps.versionExportContext, { fiscalYear: 2028, object: "预算编制", sequence: 1, createdAt: "2026-10-07T00:00:00Z", preview: false, id: "next-year-N1", asOf: "2026-10-06", sourceId: "forecast-P16", sourceLabel: "FY27全年预测 · 第16版", sourceFiscalYear: 2027, sourceObject: "全年预测", sourceSequence: 16 });
     const edited = pageHarness({ edited: { [key("entry")]: "200" } });
     assert.equal(analysis(edited), undefined, "stale entry-dependent results cannot be presented or exported as current");
     assert.equal(button(edited.render(), "导出明细").props.disabled, true);
@@ -295,7 +299,7 @@ test("export identity follows the displayed saved calculation or a real preview,
     const preview = pageHarness({ activePreview: calculation({ annual: totals({ revenue_yuan: "200000" }) }) });
     assert.equal(analysis(preview).props.versionExportContext.preview, true);
     const historical = pageHarness({ activePreview: calculation() }); historical.state[16] = envelope({ draft: draft({ id: "old-N3", sequence: 3, created_at: "2026-10-01T00:00:00Z" }), read_only: true });
-    assert.deepEqual(analysis(historical).props.versionExportContext, { fiscalYear: 2028, object: "预算编制", sequence: 3, createdAt: "2026-10-01T00:00:00Z", preview: false, id: "old-N3", asOf: "2026-10-06", sourceId: "forecast-P16", sourceLabel: "FY27全年预测 · 第16版" });
+    assert.deepEqual(analysis(historical).props.versionExportContext, { fiscalYear: 2028, object: "预算编制", sequence: 3, createdAt: "2026-10-01T00:00:00Z", preview: false, id: "old-N3", asOf: "2026-10-06", sourceId: "forecast-P16", sourceLabel: "FY27全年预测 · 第16版", sourceFiscalYear: 2027, sourceObject: "全年预测", sourceSequence: 16 });
     assert.match(text(historical.html()), /正在查看历史版本 · 第3版 · 草稿 · 只读/);
     assert.ok(button(historical.render(), "返回当前版本")); assert.doesNotMatch(historical.html(), /保存新版本/);
   } finally { restore(); }
@@ -424,7 +428,9 @@ test("a historical comparison exports both saved version identities and cannot i
     assert.equal(exported._comparison_before_id, "exact-N11"); assert.equal(exported._comparison_after_id, "exact-N12");
     assert.equal(exported._comparison_before_state, "已保存结果"); assert.equal(exported._comparison_after_state, "已保存结果");
     assert.equal(exported._comparison_before_source, "FY25全年预测 · 第7版"); assert.equal(exported._comparison_after_source_id, "forecast-P16");
-    assert.equal(exported.c3, 8); assert.equal(exported.c4, 9);
+    assert.equal(exported.before, "80000"); assert.equal(exported.after, "90000.000000");
+    assert.equal(exported.revenue_delta, 10000); assert.equal(exported.campus, "西直门"); assert.equal(exported.subject, "数学");
+    assert.equal(exported._comparison_before_source_year, 2025); assert.equal(exported._comparison_before_source_sequence, 7);
     assert.equal(h.state[1].draft.id, "exact-N12"); assert.equal(h.state[16].draft.id, "exact-N11");
     const unknown = nextYearComparisonProvenance(); assert.equal(unknown.values._comparison_before_state, "身份未记录"); assert.match(unknown.filename, /身份未记录/);
   } finally { restore(); }
@@ -835,12 +841,53 @@ test("copy parameter template covers all filtered rows beyond pagination and use
     const before = JSON.stringify([harness.state[1], harness.state[2], harness.state[3]]);
     openIndividualEdits(harness);
     assert.doesNotMatch(harness.html(), /参数ID/);
-    assert.match(text(harness.html()), /每行适用于该组业务的全部科目/);
+    assert.match(text(harness.html()), /同组所有科目共用参数/);
     await button(harness.render(), "复制编辑模板").props.onClick(); await flush();
     const lines = copied.split("\n"); assert.equal(lines.length, 32);
-    assert.equal(lines[31], "校区30\t智慧空间\t常规班\t七年级\t秋季\t58.46\t25");
+    assert.deepEqual(lines[31].split("\t").slice(0, 5), ["校区30", "智慧空间", "常规班", "七年级", "秋季"]);
+    assert.deepEqual(lines[31].split("\t").slice(-2), ["58.46", "25"]);
+    assert.ok(lines[0].split("\t").some(header => header.startsWith("参考·")), "an editing template also carries decision evidence");
     assert.doesNotMatch(copied, /copy-|outside|参数ID|其他赛道/);
     assert.equal(JSON.stringify([harness.state[1], harness.state[2], harness.state[3]]), before); assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator); else delete globalThis.navigator; restore(); }
+});
+
+test("SKU editing clipboard includes frozen operating and next-year opening evidence, while reference-only changes never write", async () => {
+  const restore = fakeBrowser(), previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator"), originalFetch = globalThis.fetch;
+  let copied = "", calls = 0;
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async value => { copied = value; } } } });
+  try {
+    globalThis.fetch = async () => { calls++; throw new Error("编辑模板不能写入预算或更新预测"); };
+    const first = combination({ opening_carryover_yuan: "1.234560" }), second = combination({ id: "other", grade: "八年级", subject: "语文", entry: false });
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations: [first, second] }), calculation: calculation({ rows: [row({ old_students: 3 })] }) }) });
+    const h = pageHarness({ stateData: fixture, activeTask: 1 }); h.render();
+    const basisRows = seasons.map((season, index) => ({ ...first, season, method: "TERMINAL_FORECAST", forecast_revenue: ["100", "-12.34567", "0", "-100"][index], forecast_total: index + 1 }));
+    h.state[41] = { key: JSON.stringify([identity.userId, identity.departmentId, identity.roles, source.id]), status: "ready", rows: basisRows, issues: [] };
+    const before = JSON.stringify([h.state[1], h.state[2], h.state[3]]);
+    openIndividualEdits(h); await button(h.render(), "复制编辑模板").props.onClick(); await flush();
+    const table = copied.split("\n").map(line => line.split("\t")), headers = table[0];
+    assert.equal(table.length, 3); assert.deepEqual(headers.slice(0, 5), ["校区", "赛道", "产品", "年级", "科目"]);
+    assert.equal(headers.at(-1), "参与预算");
+    const column = pattern => { const index = headers.findIndex(value => pattern.test(value)); assert.ok(index >= 0, pattern.source); return index; };
+    assert.equal(Number(table[1][column(/参考.*FY27.*结转收入.*元/)]), -12.34567);
+    assert.equal(Number(table[1][column(/参考.*FY27.*招生人次/)]), 10);
+    assert.equal(Number(table[1][column(/参考.*FY28.*暑假老生.*人次/)]), 3);
+    assert.equal(table[1][column(/参考.*FY28.*期初结转.*元/)], "1.234560");
+    assert.equal(table[2][column(/参考.*FY27.*结转收入.*元/)], "", "missing history is not a made-up zero");
+    assert.match(table[2].join("\t"), /无同年级经营基础/);
+    assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), before);
+    for (const cells of table.slice(1)) for (let index = 5; index < headers.length - 1; index++) cells[index] = "仅在Excel中参考，不得写回";
+    const paste = () => table.map(cells => cells.join("\t")).join("\n");
+    nodes(h.render()).find(node => node.type === "textarea").props.onChange({ target: { value: paste() } });
+    button(h.render(), "校验并应用").props.onClick();
+    assert.deepEqual(h.state[3], {}); assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), before);
+    table[2][headers.length - 1] = "不参与";
+    nodes(h.render()).find(node => node.type === "textarea").props.onChange({ target: { value: paste() } });
+    button(h.render(), "校验并应用").props.onClick();
+    assert.equal(h.state[2].combinations.find(item => item.id === "other").enabled, false);
+    assert.equal(h.state[2].combinations[0].opening_carryover_yuan, "1.234560");
+    assert.equal(h.state[2].combinations[0].enabled, true); assert.deepEqual(h.state[3], {});
+    assert.ok(button(h.render(), "改动 1 项")); assert.equal(calls, 0);
   } finally { globalThis.fetch = originalFetch; if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator); else delete globalThis.navigator; restore(); }
 });
 
@@ -956,9 +1003,9 @@ test("entry setup has one SKU membership editor and names assignment versus summ
     const grades = paged(tree, "年级入口分配");
     assert.deepEqual(grades.props.headers, ["年级", "指定入口人次", "已分配人次", "入口SKU数"]);
     const table = nodes(grades.type(grades.props)).find(node => node.type?.name === "ActionTable");
-    assert.deepEqual(table.props.copyRows[0], grades.props.headers);
-    assert.deepEqual(table.props.exportData.columns.map(column => column.label), grades.props.headers);
-    assert.deepEqual(table.props.exportData.rows[0], { c0: "七年级", c1: "", c2: 20, c3: 1 });
+    assert.deepEqual(table.props.copyRows[0], ["年级", "指定入口人次", "指定入口人次输入状态", "指定入口人次原始输入", "已分配人次", "入口SKU数", "分配结果状态"]);
+    assert.deepEqual(table.props.exportData.columns.map(column => column.label), table.props.copyRows[0]);
+    assert.deepEqual(table.props.exportData.rows[0], { grade: "七年级", assigned: null, assigned_input_status: "未填写", assigned_raw_input: null, allocated: 20, sku_count: 1, allocation_status: "已计算" });
     assert.ok(nodes(table.props.children).find(node => node.type === "th" && node.props.children === "入口SKU数").props.className.includes("budget-cell-number"));
     assert.ok(nodes(pagedRow(tree, "入口分配明细")).some(node => node.type === "input" && node.props.type === "checkbox" && node.props.onChange));
     assert.equal(JSON.stringify(fixture), before);
@@ -1036,14 +1083,17 @@ test("M1 real SKU section preserves full filtered transfers, search paging and e
     assert.equal(button(current.tree, "新增校区 / 产品").props.disabled, false);
     assert.equal(transfer(current.tree).props.exportData.rows.length, 61);
     assert.equal(transfer(current.tree).props.copyRows.length, 62, "one header plus every current filtered SKU, not just page one");
-    assert.deepEqual(transfer(current.tree).props.copyRows[0], ["校区 / 赛道 / 产品", "年级 / 科目", "入口", "参与预算"]);
+    assert.deepEqual(transfer(current.tree).props.copyRows[0], skuDetailHeaders);
     for (const [index, row] of transfer(current.tree).props.exportData.rows.entries()) {
-      assert.deepEqual(Object.keys(row), ["c0", "c1", "c2", "c3"]);
-      assert.equal(row.c1, `七年级 数学${index}`, "the second identity column does not swallow the entry column");
-      assert.equal(row.c2, index % 3 === 0 ? "是" : "否");
-      assert.equal(row.c3, index % 2 === 0 ? "是" : "否", "participation remains in column four even beyond the visible page");
-      assert.equal(transfer(current.tree).props.copyRows[index + 1].length, 4);
-      assert.equal(transfer(current.tree).props.copyRows[index + 1][3], row.c3);
+      assert.deepEqual(Object.keys(row), skuDetailKeys);
+      assert.equal(row.grade, "七年级"); assert.equal(row.subject, `数学${index}`, "identity dimensions are independently filterable");
+      assert.equal(row.history_revenue_yuan, null); assert.equal(row.history_students, null); assert.equal(row.history_status, "读取中");
+      assert.equal(row.summer_old_students, null); assert.equal(row.summer_status, index % 2 === 0 ? "待核对" : "未参与预算");
+      assert.equal(row.opening_carryover_yuan, "0.000000");
+      assert.equal(row.entry, index % 3 === 0 ? "是" : "否");
+      assert.equal(row.enabled, index % 2 === 0 ? "是" : "否", "participation remains its own field beyond the visible page");
+      assert.equal(transfer(current.tree).props.copyRows[index + 1].length, 14);
+      assert.deepEqual(transfer(current.tree).props.copyRows[index + 1], copiedValues(row));
     }
     assert.equal(visible(current.tree).length, 25);
     button(current.tree, "下一页").props.onClick(); current = section(h);
@@ -1088,7 +1138,7 @@ test("M1 real SKU section preserves full filtered transfers, search paging and e
   } finally { globalThis.fetch = original; restore(); }
 });
 
-test("FY28 SKU uses the same long-label identity hierarchy while preserving only entry and editable participation columns", () => {
+test("FY28 SKU preserves long-label identity and its existing controls beside exactly two read-only evidence groups", () => {
   const restore = fakeBrowser();
   try {
     const dimensions = { campus: "百学汇学习机教学区与中关村联合长名称校区", track: "智慧伴学跨学段课程赛道",
@@ -1097,34 +1147,213 @@ test("FY28 SKU uses the same long-label identity hierarchy while preserving only
     const fixture = envelope({ draft: draft({ inputs: inputs({ combinations: [item] }) }) });
     const saved = JSON.stringify(fixture), h = pageHarness({ stateData: fixture, activeTask: 1 });
     const owner = paged(h.render(), "FY28SKU");
-    assert.deepEqual(owner.props.headers, ["校区 / 赛道 / 产品", "年级 / 科目", "入口", "参与预算"]);
+    assert.deepEqual(owner.props.headers, ["校区 / 赛道 / 产品", "年级 / 科目", "FY27经营基础", "FY28承接基础", "入口", "参与预算"]);
     const shell = owner.type(owner.props), tree = shell.type(shell.props);
     const table = nodes(tree).find(node => typeof node.type === "function" && node.type.name === "ActionTable");
     const body = nodes(table.props.children).find(node => node.type === "tbody");
     const cells = nodes(body.props.children[0]).filter(node => node.type === "th" || node.type === "td");
     const label = node => text(renderToStaticMarkup(node));
-    assert.equal(cells.length, 4, "identity alignment must not add a revenue or extra business column");
-    assert.deepEqual(cells.map(cell => cell.type), ["th", "td", "td", "td"]);
+    assert.equal(cells.length, 6, "only the two approved read-only evidence groups are added");
+    assert.deepEqual(cells.map(cell => cell.type), ["th", "td", "td", "td", "td", "td"]);
     assert.equal(cells[0].props.scope, "row");
     assert.equal(label(nodes(cells[0]).find(node => node.type === "strong")), dimensions.campus);
-    assert.deepEqual(nodes(cells[0]).filter(node => node.type === "small").map(label), [`${dimensions.track} / ${dimensions.product}`, "新业务"]);
+    assert.deepEqual(nodes(cells[0]).filter(node => node.type === "small").map(label), [`${dimensions.track} / ${dimensions.product}`, "手工新增"]);
     assert.equal(label(nodes(cells[1]).find(node => node.type === "small")), dimensions.subject);
     assert.ok(label(cells[1]).includes(dimensions.grade));
-    assert.equal(label(cells[2]), "否");
-    const checkbox = nodes(cells[3]).find(node => node.type === "input" && node.props.type === "checkbox");
+    for (const cell of cells.slice(2, 4)) {
+      assert.ok(cell.props.className.includes("budget-cell-text"), "composite groups are text columns, not numeric metric columns");
+      assert.ok(cell.props.className.includes("ny-sku-evidence"));
+      assert.equal(nodes(cell).filter(node => node.type === "div").length, 2, "each group stays a compact pair of information lines");
+      assert.equal(nodes(cell).filter(node => ["input", "button", "select", "details"].includes(node.type)).length, 0);
+    }
+    assert.equal(label(cells[4]), "否");
+    const checkbox = nodes(cells[5]).find(node => node.type === "input" && node.props.type === "checkbox");
     assert.equal(checkbox.props.checked, true); assert.equal(checkbox.props.disabled, false);
     assert.equal(nodes(cells).filter(node => node.type === "input").length, 1);
     const projected = table.props.exportData.rows[0];
-    assert.deepEqual(Object.keys(projected), ["c0", "c1", "c2", "c3"]);
-    for (const value of [dimensions.campus, dimensions.track, dimensions.product]) assert.ok(projected.c0.includes(value), value);
-    assert.equal(projected.c1, `${dimensions.grade} ${dimensions.subject}`);
-    assert.equal(projected.c2, "否"); assert.equal(projected.c3, "是");
-    assert.deepEqual(table.props.copyRows[0], owner.props.headers);
-    assert.deepEqual(table.props.copyRows[1], [projected.c0, projected.c1, "否", "是"]);
+    assert.deepEqual(Object.keys(projected), skuDetailKeys);
+    for (const [key, value] of Object.entries(dimensions)) assert.equal(projected[key], value);
+    assert.equal(projected.source_label, "手工新增"); assert.equal(projected.history_status, "读取中");
+    assert.equal(projected.history_revenue_yuan, null); assert.equal(projected.history_students, null);
+    assert.equal(projected.summer_old_students, 80); assert.equal(projected.opening_carryover_yuan, "0.000000");
+    assert.equal(projected.entry, "否"); assert.equal(projected.enabled, "是");
+    assert.deepEqual(table.props.copyRows[0], skuDetailHeaders);
+    assert.deepEqual(table.props.copyRows[1], copiedValues(projected));
     h.state[9] = 2;
     assert.deepEqual(paged(h.render(), "入口分配明细").props.headers, ["校区 / 赛道 / 产品", "年级 / 科目", "入口", "指定人次", "已分配人次", "分配方式"],
       "the full rollout reuses identity columns without appending another module's business columns");
     assert.equal(JSON.stringify(fixture), saved);
+  } finally { restore(); }
+});
+
+test("SKU evidence transfers retain raw yuan precision and source labels without adding an editing flow", () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("Reading SKU evidence cannot write a budget"); };
+  try {
+    const item = combination({ opening_carryover_yuan: "1.234560" });
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations: [item] }), calculation: calculation({ rows: [row({ old_students: 3 })] }) }) });
+    const h = pageHarness({ stateData: fixture, activeTask: 1 }), before = JSON.stringify(fixture);
+    h.render();
+    const basisRows = seasons.map((season, index) => ({ ...item, season, method: "TERMINAL_FORECAST", budget_revenue: "999999", budget_total: 999,
+      forecast_revenue: ["100", "-12.34567", "0", "-100"][index], forecast_total: index + 1 }));
+    h.state[41] = { key: JSON.stringify([identity.userId, identity.departmentId, identity.roles, source.id]), status: "ready", rows: basisRows, issues: [] };
+    const owner = paged(h.render(), "FY28SKU"), shell = owner.type(owner.props), tree = shell.type(shell.props);
+    const table = nodes(tree).find(node => node.type?.name === "ActionTable"), output = table.props.exportData.rows[0];
+    assert.equal(output.history_revenue_yuan, -12.34567); assert.equal(output.history_students, 10);
+    assert.equal(output.summer_old_students, 3); assert.equal(output.opening_carryover_yuan, "1.234560");
+    assert.equal(output.source_label, "基准已有"); assert.deepEqual(table.props.copyRows[1], copiedValues(output));
+    const cells = nodes(nodes(table.props.children).find(node => node.type === "tbody").props.children[0]).filter(node => node.type === "th" || node.type === "td");
+    assert.match(text(renderToStaticMarkup(cells[2])), /结转收入.*万元.*招生人次.*10 人次/);
+    assert.match(text(renderToStaticMarkup(cells[3])), /暑假老生.*3 人次.*期初结转.*万元/);
+    assert.equal(nodes(cells).filter(node => node.type === "input").length, 1);
+    assert.equal(nodes(cells).filter(node => ["button", "details", "select"].includes(node.type)).length, 0);
+    assert.equal(JSON.stringify(fixture), before); assert.deepEqual(h.state[3], {}); assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("SKU evidence distinguishes unpreviewed local headcounts, fresh preview, exclusions and failed frozen history", () => {
+  const restore = fakeBrowser();
+  try {
+    const h = pageHarness({ activeTask: 1 }); h.render();
+    const basisRows = seasons.map(season => ({ ...combination(), season, method: "TERMINAL_FORECAST", budget_revenue: "0", budget_total: 0, forecast_revenue: "10000", forecast_total: 10 }));
+    const basisKey = JSON.stringify([identity.userId, identity.departmentId, identity.roles, source.id]);
+    h.state[41] = { key: basisKey, status: "ready", rows: basisRows, issues: [] };
+    const output = () => { const owner = paged(h.render(), "FY28SKU"); return nextYearTableData(owner.props.rows, owner.props.headers, owner.props.render)[0]; };
+    assert.equal(output().c3, "暑假老生 80 人次；期初结转 0.000000 元");
+    for (const [path, value] of [[key("entry"), "120"], [key("rates", "rate-0", "renewal_ppm"), "75"], [key("plan", "combo-1", "暑假"), "30"]]) {
+      h.state[3] = { [path]: value }; h.state[7] = null;
+      assert.match(output().c3, /^暑假老生 待重算；/);
+      assert.equal(output().c2, "结转收入 40000 元；招生人次 40 人次", "local edits cannot rewrite a frozen prior-year basis");
+    }
+    h.state[7] = calculation({ rows: [row({ old_students: 7 })] });
+    assert.match(output().c3, /^暑假老生 7 人次；/);
+    h.state[7] = null; h.state[2].combinations[0].enabled = false;
+    assert.match(output().c3, /^暑假老生 未参与预算；/);
+    h.state[41] = { key: basisKey, status: "error", rows: null, issues: [] };
+    assert.equal(output().c2, "结转收入 读取失败；招生人次 读取失败");
+    assert.match(output().c0, /来源待核对/); assert.equal(h.state[1].draft.inputs.combinations[0].enabled, true);
+  } finally { restore(); }
+});
+
+test("SKU history unifies 28 promoted missing records, 15 reviewed empty slots and one promoted actual zero in full-scope transfers", () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("History presentation must not mutate or refresh budgets"); };
+  try {
+    const makeSku = (id, campus) => combination({ id, campus, grade: "八年级", entry: false });
+    const missing = Array.from({ length: 28 }, (_, index) => makeSku(`missing-${index}`, `无同年级基础校区${index}`));
+    const reviewed = Array.from({ length: 15 }, (_, index) => makeSku(`reviewed-${index}`, `已核准空占位校区${index}`));
+    const promotedZero = makeSku("promoted-zero", "完整实际零升年级校区");
+    const existingZero = makeSku("existing-zero", "已有业务真实零校区"), unavailable = makeSku("unavailable", "未核准缺失校区");
+    const realMoney = makeSku("nonzero-money", "负数结转校区"), incomplete = makeSku("incomplete", "缺少春季校区");
+    const members = [...missing, ...reviewed, promotedZero, existingZero, unavailable, realMoney, incomplete];
+    const openingSources = members.filter(item => item !== existingZero).map(item => ({ ...item, grade: "七年级", target_id: item.id, students: 10, exclusion: null }));
+    const zeroRows = item => seasons.map(season => ({ ...item, season, method: "FROZEN_ACTUAL", budget_revenue: "0", budget_total: 0, forecast_revenue: "0", forecast_total: 0 }));
+    const emptyRows = item => zeroRows(item).map(item => item.season === "暑假"
+      ? { ...item, method: "ACTUAL_UNAVAILABLE", data_status: "ACTUAL_UNAVAILABLE", forecast_revenue: null, forecast_total: null } : item);
+    const basisRows = [...reviewed.flatMap(emptyRows), ...zeroRows(promotedZero), ...zeroRows(existingZero), ...emptyRows(unavailable),
+      ...zeroRows(realMoney).map((item, index) => index === 0 ? { ...item, forecast_revenue: "-12.34567" } : item),
+      ...zeroRows(incomplete).filter(item => item.season !== "春季")];
+    const basisIssues = reviewed.map(item => ({ code: "FINALIZED_ACTUAL_MISSING", severity: "INFO", message: "空占位已核准", season: "暑假",
+      dims: Object.fromEntries(["campus", "track", "product", "grade", "subject"].map(key => [key, item[key]])),
+      detail: { classification: "EMPTY_BUDGET_SLOT_NO_SOURCE_BUSINESS" } }));
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations: members, opening_sources: openingSources }),
+      calculation: calculation({ rows: members.map(item => row({ ...item, combination_id: item.id, old_students: 3 })) }) }) });
+    const fixtureBefore = JSON.stringify(fixture), basisBefore = JSON.stringify([basisRows, basisIssues]);
+    const h = pageHarness({ stateData: fixture, activeTask: 1 }); h.render();
+    const inputsBefore = JSON.stringify(h.state[2]);
+    h.state[41] = { key: JSON.stringify([identity.userId, identity.departmentId, identity.roles, source.id]), status: "ready", rows: basisRows, issues: basisIssues };
+    const section = () => {
+      const owner = paged(h.render(), "FY28SKU"), shell = owner.type(owner.props), tree = shell.type(shell.props);
+      return { owner, shell, tree, table: nodes(tree).find(node => node.type?.name === "ActionTable") };
+    };
+    const historyCells = tree => nodes(nodes(tree).find(node => node.type === "tbody").props.children)
+      .filter(node => node.type === "tr").map(item => nodes(item).filter(node => node.type === "th" || node.type === "td")[2]);
+    let current = section(); const output = current.table.props.exportData.rows;
+    assert.equal(current.shell.props.count, 48); assert.equal(output.length, 48); assert.equal(current.table.props.copyRows.length, 49);
+    assert.deepEqual(current.table.props.copyRows[0], skuDetailHeaders);
+    for (const [index, value] of output.entries()) {
+      assert.deepEqual(Object.keys(value), skuDetailKeys);
+      assert.deepEqual(current.table.props.copyRows[index + 1], copiedValues(value));
+      if (index < 44) {
+        assert.equal(value.history_status, "无同年级经营基础", members[index].id); assert.equal(value.source_label, "升年级承接");
+        assert.equal(current.table.props.copyRows[index + 1][8], "无同年级经营基础");
+        assert.equal(value.history_revenue_yuan, index === 43 ? 0 : null); assert.equal(value.history_students, index === 43 ? 0 : null);
+      }
+    }
+    assert.equal(output[44].history_revenue_yuan, 0); assert.equal(output[44].history_students, 0); assert.equal(output[44].history_status, "有同年级经营基础");
+    assert.match(output[45].history_status, /待核对/); assert.equal(output[45].history_revenue_yuan, null); assert.equal(output[45].history_students, null);
+    assert.equal(output[46].history_revenue_yuan, -12.34567); assert.equal(output[46].history_students, 0);
+    assert.equal(output[47].history_status, "数据待核对"); assert.equal(output[47].history_revenue_yuan, null);
+    assert.equal(historyCells(current.table.props.children).length, 25);
+    for (const cell of historyCells(current.table.props.children)) {
+      assert.equal(text(renderToStaticMarkup(cell)), "无同年级经营基础");
+      assert.equal(cell.props["data-transfer-value"], "无同年级经营基础");
+      assert.equal(nodes(cell).filter(node => node.type === "input" || node.type === "button").length, 0);
+    }
+    button(current.tree, "下一页").props.onClick(); current = section();
+    assert.equal(current.table.props.exportData.rows.length, 48, "paging never narrows a full-scope copy or export");
+    const secondPage = historyCells(current.table.props.children);
+    assert.equal(secondPage.length, 23);
+    for (const cell of secondPage.slice(0, 19)) assert.equal(text(renderToStaticMarkup(cell)), "无同年级经营基础");
+    assert.match(text(renderToStaticMarkup(secondPage[19])), /结转收入 0 万元 招生人次 0 人次/);
+    assert.equal(JSON.stringify(fixture), fixtureBefore); assert.equal(JSON.stringify(h.state[2]), inputsBefore);
+    assert.equal(JSON.stringify([basisRows, basisIssues]), basisBefore); assert.deepEqual(h.state[3], {}); assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("detail exports leave invalid count, price and rate values blank while retaining independent raw input and status", async () => {
+  const restore = fakeBrowser(), originalFetch = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("Export projection must not save or recalculate"); };
+  try {
+    const transfer = (h, label) => { const owner = paged(h.render(), label); return nodes(owner.type(owner.props)).find(node => node.type?.name === "ActionTable").props.exportData; };
+    const edits = { [key("finance", "finance-0", "price_yuan")]: "abc", [key("finance", "finance-0", "discount_ppm")]: "101", [key("finance", "finance-0", "recognition_ppm")]: "NaN" };
+    const finance = pageHarness({ activeTask: 4, edited: edits }), financeBefore = JSON.stringify([finance.state[1], finance.state[2], finance.state[3]]);
+    const data = transfer(finance, "FY28 财务参数"), first = data.rows[0];
+    for (const [field, raw] of [["price_yuan", "abc"], ["discount", "101"], ["recognition", "NaN"]]) {
+      assert.equal(first[field], null, field); assert.equal(first[`${field}_input_status`], "输入无效"); assert.equal(first[`${field}_raw_input`], raw);
+    }
+    const quarterlyFinance = nodes(finance.render()).find(node => node.type?.name === "QuarterlyBusinessTable" && node.props.tableLabel.includes("财务"));
+    const quarterSource = quarterlyFinance.props.rows[0];
+    for (const [field, raw] of [["price_yuan", "abc"], ["discount_ppm", "101"], ["recognition_ppm", "NaN"]]) {
+      assert.equal(quarterlyFinance.props.exportMetrics.find(metric => metric.key === field).value(quarterSource), null);
+      assert.equal(quarterlyFinance.props.exportMetrics.find(metric => metric.key === `${field}_raw_input`).value(quarterSource), raw);
+    }
+    const entry = pageHarness({ activeTask: 2, edited: { [key("entry-count", "combo-1")]: "1.2" } });
+    const count = transfer(entry, "入口分配明细").rows[0]; assert.equal(count.specified, null); assert.equal(count.specified_input_status, "输入无效"); assert.equal(count.specified_raw_input, "1.2");
+    const rates = pageHarness({ activeTask: 3, edited: { [key("rates", "rate-1", "renewal_ppm")]: "bad", [key("rates", "rate-1", "share_ppm")]: "125" } });
+    const rate = transfer(rates, "FY28招生参数").rows.find(item => item.season === "秋季");
+    assert.equal(rate.renewal, null); assert.equal(rate.renewal_input_status, "输入无效"); assert.equal(rate.renewal_raw_input, "bad");
+    assert.equal(rate.share, null); assert.equal(rate.share_input_status, "输入无效"); assert.equal(rate.share_raw_input, "125");
+    const quarterlyRates = nodes(rates.render()).find(node => node.type?.name === "QuarterlyBusinessTable" && node.props.tableLabel.includes("招生"));
+    const autumn = quarterlyRates.props.rows.find(item => item.season === "秋季");
+    assert.equal(quarterlyRates.props.exportMetrics.find(metric => metric.key === "renewal_ppm").value(autumn), null);
+    assert.equal(quarterlyRates.props.exportMetrics.find(metric => metric.key === "share_ppm").value(autumn), null);
+    const zero = pageHarness({ activeTask: 2, edited: { [key("entry-count", "combo-1")]: "0" } });
+    assert.equal(transfer(zero, "入口分配明细").rows[0].specified, "0");
+    const ExcelJS = require("exceljs"), workbook = await budgetWorkbook(data.columns, data.rows), recovered = new ExcelJS.Workbook();
+    await recovered.xlsx.load(await workbook.xlsx.writeBuffer()); const sheet = recovered.worksheets[0];
+    for (const field of ["price_yuan", "discount", "recognition"]) {
+      const index = data.columns.findIndex(column => column.key === field) + 1; assert.equal(sheet.getCell(2, index).value, null, `${field} must remain an empty numeric Excel cell`);
+    }
+    assert.equal(JSON.stringify([finance.state[1], finance.state[2], finance.state[3]]), financeBefore); assert.equal(requests, 0);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+test("SKU Excel detail keeps raw slash-containing dimensions, signed precision, numeric zero and separate states", async () => {
+  const restore = fakeBrowser();
+  try {
+    const item = combination({ campus: "校区 / 原名", track: "赛道 / 原名", opening_carryover_yuan: "1.234560" });
+    const fixture = envelope({ draft: draft({ inputs: inputs({ combinations: [item] }), calculation: calculation({ rows: [row({ ...item, old_students: 0 })] }) }) });
+    const h = pageHarness({ stateData: fixture, activeTask: 1 }); h.render();
+    const basisRows = seasons.map((season, index) => ({ ...item, season, method: "FROZEN_ACTUAL", forecast_revenue: index === 0 ? "-12.34567" : "0", forecast_total: 0 }));
+    h.state[41] = { key: JSON.stringify([identity.userId, identity.departmentId, identity.roles, source.id]), status: "ready", rows: basisRows, issues: [] };
+    const owner = paged(h.render(), "FY28SKU"), shell = owner.type(owner.props), data = nodes(shell.type(shell.props)).find(node => node.type?.name === "ActionTable").props.exportData;
+    const ExcelJS = require("exceljs"), workbook = await budgetWorkbook(data.columns, data.rows), recovered = new ExcelJS.Workbook();
+    await recovered.xlsx.load(await workbook.xlsx.writeBuffer()); const sheet = recovered.worksheets[0];
+    const value = field => sheet.getCell(2, data.columns.findIndex(column => column.key === field) + 1).value;
+    assert.equal(value("campus"), "校区 / 原名"); assert.equal(value("track"), "赛道 / 原名"); assert.equal(value("history_revenue_yuan"), -12.34567);
+    assert.equal(value("history_students"), 0); assert.equal(value("summer_old_students"), 0); assert.equal(value("opening_carryover_yuan"), 1.23456);
+    assert.equal(value("history_status"), "有同年级经营基础"); assert.equal(value("summer_status"), "已计算"); assert.deepEqual(h.state[3], {});
   } finally { restore(); }
 });
 const labeledInput = (tree, label) => { const accessible = nodes(tree).find(node => node.type === "input" && node.props["aria-label"] === label); if (accessible) return accessible; const item = nodes(tree).find(node => node.type === "label" && text(renderToStaticMarkup(node)) === label); assert.ok(item, label); return nodes(item).find(node => node.type === "input"); };
@@ -1140,10 +1369,12 @@ test("entry detail display, copy and export mark allocations pending until input
     const harness = pageHarness({ stateData: fixture, activeTask: 2, edited: { [key("entry-count", "combo-1")]: "79" } });
     const owner = paged(harness.render(), "入口分配明细");
     const table = nodes(owner.type(owner.props)).find(node => node.type?.name === "ActionTable");
-    assert.deepEqual(table.props.exportData.columns.map(column => column.label), owner.props.headers);
-    assert.deepEqual(table.props.exportData.rows.map(row => row.c4), ["待重算", "待重算", null]);
-    assert.deepEqual(table.props.copyRows.map(row => row[4]), ["已分配人次", "待重算", "待重算", ""]);
-    assert.equal(table.props.exportData.rows[0].c3, 79, "pending specified input is separate from the last calculation");
+    assert.deepEqual(table.props.exportData.columns.map(column => column.label), ["校区", "赛道", "产品", "年级", "科目", "入口", "指定人次", "指定人次输入状态", "指定人次原始输入", "已分配人次", "分配结果状态", "分配方式"]);
+    assert.deepEqual(table.props.exportData.rows.map(row => row.allocated), [null, null, null]);
+    assert.deepEqual(table.props.exportData.rows.map(row => row.allocation_status), ["待重算", "待重算", "无分配结果"]);
+    assert.deepEqual(table.props.copyRows.map(row => row[10]), ["分配结果状态", "待重算", "待重算", "无分配结果"]);
+    assert.equal(table.props.exportData.rows[0].specified, "79", "pending specified input is separate from the last calculation");
+    assert.equal(table.props.exportData.rows[0].specified_raw_input, "79");
     assert.equal(JSON.stringify(fixture), before);
     const preview = pageHarness({ stateData: fixture, activeTask: 2,
       activePreview: calculation({ entry_details: [{ combination_id: "combo-1", students: 30 }] }) });
@@ -1164,10 +1395,12 @@ test("removing a grade masks all coupled allocation tables and blocks stale resu
     const transfer = label => { const owner = paged(harness.render(), label); return nodes(owner.type(owner.props)).find(node => node.type?.name === "ActionTable").props; };
     const grades = paged(harness.render(), "年级入口分配");
     assert.deepEqual(grades.props.rows, ["七年级", "八年级", "九年级"], "a removed grade stays visible while its old allocation is invalid");
-    assert.deepEqual(transfer("年级入口分配").exportData.rows.map(row => row.c2), ["待重算", "待重算", "待重算"]);
-    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.c4), ["待重算", "待重算", "待重算"]);
-    assert.equal(transfer("FY28 校区入口").exportData.rows[0].c1, "待重算");
-    assert.equal(transfer("FY28 校区入口").exportData.rows[0].c2, "待重算");
+    assert.deepEqual(transfer("年级入口分配").exportData.rows.map(row => row.allocated), [null, null, null]);
+    assert.deepEqual(transfer("年级入口分配").exportData.rows.map(row => row.allocation_status), ["待重算", "待重算", "待重算"]);
+    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.allocated), [null, null, null]);
+    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.allocation_status), ["待重算", "待重算", "待重算"]);
+    assert.equal(transfer("FY28 校区入口").exportData.rows[0].students, null);
+    assert.equal(transfer("FY28 校区入口").exportData.rows[0].source_weight, null); assert.equal(transfer("FY28 校区入口").exportData.rows[0].allocation_status, "待重算");
     assert.equal(button(harness.render(), "导出明细").props.disabled, true);
     button(harness.render(), "导出明细").props.onClick();
     assert.match(harness.state[5], /先.*查看影响/);
@@ -1176,14 +1409,15 @@ test("removing a grade masks all coupled allocation tables and blocks stale resu
     harness.state[9] = 2;
     const freshDetails = [details[0], details[2]].map((item, index) => ({ ...item, students: [9942, 58][index] }));
     harness.state[7] = calculation({ entry_details: freshDetails, entry_allocations: [{ campus: "西直门", students: 10000, source_weight: 5895 }] });
-    assert.deepEqual(transfer("年级入口分配").exportData.rows.map(row => row.c2), [9942, 58]);
-    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.c4), [9942, null, 58]);
-    assert.equal(transfer("FY28 校区入口").exportData.rows[0].c1, 10000);
+    assert.deepEqual(transfer("年级入口分配").exportData.rows.map(row => row.allocated), [9942, 58]);
+    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.allocated), [9942, null, 58]);
+    assert.equal(transfer("FY28 校区入口").exportData.rows[0].students, 10000);
     assert.equal(button(harness.render(), "导出明细").props.disabled, false);
     harness.state[7] = null;
-    assert.equal(transfer("入口分配明细").exportData.rows[0].c4, "待重算", "failed or invalidated preview cannot resurrect old numbers");
+    assert.equal(transfer("入口分配明细").exportData.rows[0].allocated, null, "failed or invalidated preview cannot resurrect old numbers");
+    assert.equal(transfer("入口分配明细").exportData.rows[0].allocation_status, "待重算");
     button(harness.render(), "放弃修改").props.onClick();
-    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.c4), [9827, 116, 57]);
+    assert.deepEqual(transfer("入口分配明细").exportData.rows.map(row => row.allocated), [9827, 116, 57]);
     assert.equal(JSON.stringify(fixture), before);
   } finally { restore(); }
 });
@@ -1892,18 +2126,18 @@ test("batch editing has one launcher and switching its two modes preserves the p
     assert.equal(button(harness.render(), "粘贴表格"), undefined);
     button(harness.render(), "批量修改").props.onClick();
     assert.equal(button(harness.render(), "统一设值").props["aria-pressed"], true);
-    assert.equal(button(harness.render(), "分别设值").props["aria-pressed"], false);
+    assert.equal(button(harness.render(), "分别设值（Excel）").props["aria-pressed"], false);
     nodes(harness.render()).find(node => node.props?.["aria-label"] === "批量修改比例").props.onChange({ target: { value: "8" } });
-    button(harness.render(), "分别设值").props.onClick();
+    button(harness.render(), "分别设值（Excel）").props.onClick();
     const paste = "西直门\t智慧空间\t常规班\t七年级\t秋季\t76\t8";
     nodes(harness.render()).find(node => node.type === "textarea").props.onChange({ target: { value: paste } });
     const side = () => nodes(harness.render()).find(node => node.type?.name === "NextYearSidePanel");
     assert.equal(side().props.title, "批量修改");
     button(harness.render(), "统一设值").props.onClick();
     assert.equal(nodes(harness.render()).find(node => node.props?.["aria-label"] === "批量修改比例").props.value, "8");
-    button(harness.render(), "分别设值").props.onClick();
+    button(harness.render(), "分别设值（Excel）").props.onClick();
     side().props.onClose(); button(harness.render(), "批量修改").props.onClick();
-    assert.equal(button(harness.render(), "分别设值").props["aria-pressed"], true);
+    assert.equal(button(harness.render(), "分别设值（Excel）").props["aria-pressed"], true);
     assert.equal(nodes(harness.render()).find(node => node.type === "textarea").props.value, paste);
     const modes = nodes(harness.render()).find(node => node.props?.["aria-label"] === "批量修改方式");
     assert.equal(modes.props.role, "group"); assert.ok(nodes(modes).filter(node => node.type === "button").every(node => node.props.type === "button"));
@@ -1918,11 +2152,11 @@ test("both batch modes share the filtered scope, one change list and never write
     const harness = pageHarness({ activeTask: 3 });
     harness.state[10] = { ...filters, season: ["秋季", "寒假"], campus: "西直门" };
     const before = JSON.stringify([harness.state[1], harness.state[2], harness.state[10]]);
-    button(harness.render(), "批量修改").props.onClick(); assert.match(harness.html(), /当前筛选 · 2 条参数/);
+    button(harness.render(), "批量修改").props.onClick(); assert.match(text(harness.html()), /当前筛选 2 条 2 条适用/);
     nodes(harness.render()).find(node => node.props?.["aria-label"] === "批量修改字段").props.onChange({ target: { value: "share_ppm" } });
     nodes(harness.render()).find(node => node.props?.["aria-label"] === "批量修改比例").props.onChange({ target: { value: "8" } });
     button(harness.render(), "应用到当前筛选").props.onClick();
-    button(harness.render(), "分别设值").props.onClick(); assert.match(harness.html(), /当前筛选 · 2 条参数/);
+    button(harness.render(), "分别设值（Excel）").props.onClick(); assert.match(text(harness.html()), /当前筛选 2 条 2 条适用/);
     nodes(harness.render()).find(node => node.type === "textarea").props.onChange({ target: { value: "西直门\t智慧空间\t常规班\t七年级\t秋季\t76\t" } });
     button(harness.render(), "校验并应用").props.onClick();
     assert.deepEqual(harness.state[3], { [key("rates", "rate-1", "share_ppm")]: "8", [key("rates", "rate-2", "share_ppm")]: "8", [key("rates", "rate-1", "renewal_ppm")]: "76" });
@@ -1972,7 +2206,7 @@ test("M3 bulk applies all 50 applicable rows locally and invalid paste cannot pa
     const rates = combinations.map((combo, index) => ({ ...inputs().rates[1], id: `bulk-${index}`, campus: combo.campus }));
     const fixture = envelope({ draft: draft({ inputs: inputs({ combinations, rates }) }) });
     const harness = pageHarness({ stateData: fixture, activeTask: 3 }); button(harness.render(), "批量修改").props.onClick();
-    assert.match(harness.html(), /当前筛选 · 50 条参数/); assert.match(harness.html(), /50 条适用参数/);
+    assert.match(text(harness.html()), /当前筛选 50 条 50 条适用/);
     nodes(harness.render()).find(node => node.type === "input" && node.props["aria-label"] === "批量修改比例").props.onChange({ target: { value: "85" } });
     button(harness.render(), "应用到当前筛选").props.onClick();
     assert.equal(Object.keys(harness.state[3]).length, 50);
@@ -2000,7 +2234,7 @@ test("M3 historical tools show original read-only plans and bounds with no bulk,
     button(harness.render(), "调平范围").props.onClick();
     const bounds = nodes(pagedRow(harness.render(), "自动调平参数范围", 1)).filter(node => node.type === "input");
     assert.equal(bounds[0].props.value, "70"); assert.ok(bounds.every(node => node.props.disabled));
-    for (const label of ["批量修改", "统一设值", "分别设值", "应用到当前筛选", "校验并应用", "复制编辑模板", "加入预算范围", "生成成班方案", "保存新版本", "应用并预览"]) assert.equal(button(harness.render(), label), undefined, label);
+    for (const label of ["批量修改", "统一设值", "分别设值（Excel）", "应用到当前筛选", "校验并应用", "复制编辑模板", "加入预算范围", "生成成班方案", "保存新版本", "应用并预览"]) assert.equal(button(harness.render(), label), undefined, label);
     openProblems(harness); await flush();
     assert.equal(calls, 0); assert.deepEqual(harness.state[3], {}); assert.equal(JSON.stringify([harness.state[1], harness.state[2], historical]), saved);
   } finally { globalThis.fetch = original; restore(); }
@@ -2049,11 +2283,131 @@ test("M3 successful paste clears only its tool draft and previews exactly the st
     nodes(harness.render()).find(node => node.type === "textarea").props.onChange({ target: { value: "rate-1\t85\t25" } });
     button(harness.render(), "校验并应用").props.onClick();
     assert.equal(nodes(harness.render()).find(node => node.type === "textarea").props.value, "");
-    assert.deepEqual(harness.state[3], { [key("rates", "rate-1", "renewal_ppm")]: "85", [key("rates", "rate-1", "share_ppm")]: "25" });
+    assert.deepEqual(harness.state[3], { [key("rates", "rate-1", "renewal_ppm")]: "85" }, "unchanged shares do not create a second pending change");
     assert.equal(harness.state[2].rates[1].renewal_ppm, 800000); assert.equal(harness.state[1].draft.sequence, 1); assert.equal(requests.length, 0);
     button(harness.render(), "查看影响").props.onClick(); await flush();
     assert.equal(requests.length, 1); assert.match(requests[0].url, /\/preview$/); assert.equal(requests[0].body.inputs.rates[1].renewal_ppm, 850000);
     assert.equal(requests[0].body.inputs.rates[1].share_ppm, 250000); assert.equal(harness.state[1].draft.sequence, 1);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+const bulkLauncher = (harness, label) => nodes(harness.render()).find(node => node.type === "button" && node.props["aria-label"] === `${label}批量修改`);
+const bulkFieldControl = harness => nodes(harness.render()).find(node => node.type === "select" && node.props["aria-label"] === "批量修改字段");
+const bulkFixture = () => {
+  const second = combination({ id: "combo-2", campus: "中关村", entry: false });
+  return envelope({ draft: draft({ inputs: inputs({ combinations: [combination(), second],
+    rates: [...inputs().rates, ...inputs().rates.map((item, index) => ({ ...item, id: `second-rate-${index}`, campus: second.campus }))],
+    finance: [...inputs().finance, ...inputs().finance.map((item, index) => ({ ...item, id: `second-finance-${index}`, combination_id: second.id }))],
+    plans: [...inputs().plans, ...inputs().plans.map(item => ({ ...item, combination_id: second.id }))],
+  }), calculation: calculation({ rows: [...calculation().rows, ...seasons.map(season => row({ ...second, combination_id: second.id, season, old_students: 0, planned_new_applied: true }))] }) }) });
+};
+
+test("six additional batch entries stage into the same change list and preserve prior raw edits, reason and saved version", () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("batch editing must remain a local change"); };
+  try {
+    const cases = [
+      { label: "SKU参与预算", task: 1, field: "enabled", control: "参与预算", value: "false", check: changed => assert.equal(changed.combinations[1].enabled, false) },
+      { label: "SKU入口设置与分配", task: 2, field: "entry_override", control: "是否入口", value: "true", check: changed => assert.equal(changed.combinations[1].entry_override, true) },
+      { label: "自动调平范围", task: 3, open: "调平范围", field: "renewal_lower_ppm", control: "比例", value: "70", check: changed => assert.equal(changed.rates.find(item => item.id === "second-rate-1").renewal_lower_ppm, 700000) },
+      { label: "计划新生", task: 3, open: "计划新生", field: "planned_new", control: "计划新生", value: "31", check: changed => assert.equal(changed.plans.find(item => item.combination_id === "combo-2" && item.season === "秋季").students, 31) },
+      { label: "价格与折扣", task: 4, field: "price_yuan", control: "学费", value: "1234.567890", check: changed => assert.equal(changed.finance.find(item => item.id === "second-finance-1").price_yuan, "1234.567890") },
+      { label: "班均", task: 4, field: "minimum", control: "班均", value: "12", check: changed => assert.equal(changed.class_sizes[0].minimum, 12) },
+    ];
+    for (const scenario of cases) {
+      const fixture = bulkFixture(), h = pageHarness({ stateData: fixture, activeTask: scenario.task, edited: { [key("tax")]: "1.050" }, changedReason: "保留既有备注", activePreview: fixture.draft.calculation });
+      h.state[10] = { ...filters, campus: "中关村", season: "秋季" };
+      const saved = JSON.stringify(h.state[1]), priorRaw = h.state[3][key("tax")];
+      if (scenario.open) button(h.render(), scenario.open).props.onClick();
+      const launcher = bulkLauncher(h, scenario.label); assert.ok(launcher, scenario.label); launcher.props.onClick();
+      assert.equal(bulkFieldControl(h).props.value, scenario.field, scenario.label);
+      const control = nodes(h.render()).find(node => ["input", "select"].includes(node.type) && node.props["aria-label"] === `批量修改${scenario.control}`);
+      assert.ok(control, scenario.label); control.props.onChange({ target: { value: scenario.value } });
+      button(h.render(), "应用到当前筛选").props.onClick();
+      assert.equal(h.state[5], "", scenario.label);
+      const changed = applyNextYearEdits(h.state[2], h.state[3]); assert.ok(changed.inputs, scenario.label); scenario.check(changed.inputs);
+      assert.equal(h.state[3][key("tax")], priorRaw); assert.equal(h.state[8], "保留既有备注"); assert.equal(h.state[7], null);
+      assert.equal(JSON.stringify(h.state[1]), saved, scenario.label); assert.equal(h.state[1].draft.sequence, 1);
+      const pending = nodes(h.render()).find(node => node.type === "button" && /^改动 \d+ 项$/.test(text(renderToStaticMarkup(node))));
+      assert.ok(pending); pending.props.onClick();
+      const panels = nodes(h.render()).filter(node => node.props?.summary && node.props?.onUndo);
+      assert.equal(panels.length, 1); assert.equal(panels[0].props.summary.totalCount, 2, scenario.label);
+    }
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("the existing manual-student entry opens manual new students rather than zero-old planned students", () => {
+  const restore = fakeBrowser();
+  try {
+    const h = pageHarness({ stateData: bulkFixture(), activeTask: 5, edited: { [key("tax")]: "1.05" } });
+    h.state[10] = { ...filters, campus: "中关村", season: "秋季" };
+    button(h.render(), "手动调节").props.onClick(); bulkLauncher(h, "手动指定新生").props.onClick();
+    assert.equal(bulkFieldControl(h).props.value, "manual_new");
+    nodes(h.render()).find(node => node.type === "input" && node.props["aria-label"] === "批量修改手动指定新生").props.onChange({ target: { value: "33" } });
+    button(h.render(), "应用到当前筛选").props.onClick();
+    assert.equal(h.state[5], ""); assert.equal(h.state[3][key("manual", "combo-2", "秋季")], "33");
+    assert.equal(h.state[3][key("plan", "combo-2", "秋季")], undefined);
+    assert.equal(h.state[3][key("tax")], "1.05");
+    const changed = applyNextYearEdits(h.state[2], h.state[3]).inputs.plans.find(item => item.combination_id === "combo-2" && item.season === "秋季");
+    assert.equal(changed.students, 33); assert.equal(changed.locked, true);
+  } finally { restore(); }
+});
+
+test("a new-target Excel error is atomic and keeps the full paste, prior changes, preview and reason", () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("invalid batch must not request"); };
+  try {
+    const fixture = bulkFixture(), h = pageHarness({ stateData: fixture, activeTask: 4, edited: { [key("tax")]: "1.05" }, activePreview: fixture.draft.calculation, changedReason: "不能丢失" });
+    h.state[10] = { ...filters, campus: "中关村", season: ["秋季", "寒假"] };
+    const before = JSON.stringify([h.state[1], h.state[2], h.state[3], h.state[7], h.state[8]]);
+    bulkLauncher(h, "价格与折扣").props.onClick(); button(h.render(), "分别设值（Excel）").props.onClick();
+    const paste = "校区\t赛道\t产品\t年级\t科目\t季度\t学费（元）\n中关村\t智慧空间\t常规班\t七年级\t数学\t秋季\t1234\n中关村\t智慧空间\t常规班\t七年级\t数学\t寒假\tabc";
+    nodes(h.render()).find(node => node.type === "textarea").props.onChange({ target: { value: paste } });
+    button(h.render(), "校验并应用").props.onClick();
+    assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3], h.state[7], h.state[8]]), before);
+    assert.equal(nodes(h.render()).find(node => node.type === "textarea").props.value, paste);
+    assert.ok(h.state[5]); assert.ok(nodes(h.render()).some(node => node.props?.role === "alert")); assert.equal(requests, 0);
+  } finally { globalThis.fetch = original; restore(); }
+});
+
+test("unapplied Excel content cannot disappear through a different target or field and clearing explicitly permits switching", () => {
+  const restore = fakeBrowser();
+  try {
+    const h = pageHarness({ stateData: bulkFixture(), activeTask: 4 });
+    bulkLauncher(h, "价格与折扣").props.onClick(); button(h.render(), "分别设值（Excel）").props.onClick();
+    const paste = "保留未提交的Excel内容";
+    nodes(h.render()).find(node => node.type === "textarea").props.onChange({ target: { value: paste } });
+    bulkFieldControl(h).props.onChange({ target: { value: "discount_ppm" } });
+    assert.equal(bulkFieldControl(h).props.value, "price_yuan"); assert.match(h.state[5], /先应用或清空/);
+    bulkLauncher(h, "班均").props.onClick(); assert.match(h.state[5], /上一份分别设值表格尚未应用/);
+    assert.equal(bulkFieldControl(h).props.value, "price_yuan");
+    assert.equal(nodes(h.render()).find(node => node.type === "textarea").props.value, paste); assert.deepEqual(h.state[3], {});
+    button(h.render(), "清空表格").props.onClick(); bulkLauncher(h, "班均").props.onClick();
+    assert.equal(bulkFieldControl(h).props.value, "minimum"); assert.equal(nodes(h.render()).find(node => node.type === "textarea"), undefined);
+    assert.deepEqual(h.state[3], {}); assert.equal(h.state[1].draft.sequence, 1);
+  } finally { restore(); }
+});
+
+test("new batch entries are absent for historical and viewer scopes, and busy handlers cannot apply locally", () => {
+  const restore = fakeBrowser(), original = globalThis.fetch; let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error("readonly or busy batch must not request"); };
+  try {
+    for (const mode of ["historical", "viewer"]) for (const task of [1, 2, 3, 4, 5]) {
+      const fixture = bulkFixture(), h = pageHarness({ stateData: fixture, activeTask: task, activeIdentity: mode === "viewer" ? { ...identity, roles: [] } : identity });
+      if (mode === "historical") h.state[16] = { ...fixture, read_only: true };
+      const snapshot = JSON.stringify([h.state[1], h.state[2], h.state[3]]);
+      assert.equal(nodes(h.render()).filter(node => node.type === "button" && node.props["aria-label"]?.endsWith("批量修改")).length, 0, `${mode}/${task}`);
+      assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), snapshot);
+    }
+    const h = pageHarness({ stateData: bulkFixture(), activeTask: 4, edited: { [key("tax")]: "1.05" } });
+    bulkLauncher(h, "价格与折扣").props.onClick();
+    nodes(h.render()).find(node => node.type === "input" && node.props["aria-label"] === "批量修改学费").props.onChange({ target: { value: "1200" } });
+    h.state[4] = "preview";
+    const snapshot = JSON.stringify([h.state[1], h.state[2], h.state[3]]), apply = button(h.render(), "应用到当前筛选");
+    assert.equal(apply.props.disabled, true); apply.props.onClick();
+    bulkLauncher(h, "班均").props.onClick(); assert.equal(bulkFieldControl(h).props.value, "price_yuan");
+    assert.equal(JSON.stringify([h.state[1], h.state[2], h.state[3]]), snapshot); assert.equal(requests, 0);
   } finally { globalThis.fetch = original; restore(); }
 });
 
@@ -2193,7 +2547,8 @@ const globalFilter = (harness, label) => {
   const dimension = control.props.dimensions.find(item => item.label === label); assert.ok(dimension, label);
   return { props: { value: control.props.filters[dimension.key], onChange: event => control.props.onChange({ ...control.props.filters, [dimension.key]: event.target.value }) } };
 };
-const filterEffect = (harness, name) => { harness.render(); const fn = harness.effects.find(effect => effect.toString().includes(name)); assert.ok(fn, name); return fn; };
+const filterEffect = (harness, name) => { harness.render(); const fn = harness.effects.find(effect => effect.toString().includes(name)
+  && (name !== "AbortController" || effect.toString().includes("loadGeneration"))); assert.ok(fn, name); return fn; };
 const memorySessionStorage = () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage"), values = new Map();
   Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: { getItem(key) { return values.get(key) ?? null; }, setItem(key, value) { values.set(key, value); } } });
@@ -2550,7 +2905,7 @@ test("design rollout reuses data sections and table identity without adding a se
     const body = nodes(table.props.children).find(node => node.type === "tbody"), cells = nodes(body.props.children[0]).filter(node => node.type === "th" || node.type === "td");
     assert.equal(cells.length, 6); assert.ok(cells.slice(3).every(node => node.props.className === "budget-cell-number"));
     assert.equal(table.props.exportData.rows.length, 4); assert.equal(table.props.copyRows.length, 5);
-    assert.deepEqual(table.props.exportData.rows[0], { c0: "西直门 智慧空间  /  常规班", c1: "七年级 数学", c2: "暑假", c3: 1000, c4: 90, c5: 100 });
+    assert.deepEqual(table.props.exportData.rows[0], { campus: "西直门", track: "智慧空间", product: "常规班", grade: "七年级", subject: "数学", season: "暑假", price_yuan: "1000", price_yuan_input_status: "已保存值", price_yuan_raw_input: null, discount: .9, discount_input_status: "已保存值", discount_raw_input: null, recognition: 1, recognition_input_status: "已保存值", recognition_raw_input: null });
     const sku = pageHarness({ activeTask: 1 }), skuOwner = paged(sku.render(), "FY28SKU");
     const skuTable = nodes(skuOwner.type(skuOwner.props)).find(node => typeof node.type === "function" && node.type.name === "ActionTable");
     assert.ok(nodes(skuTable.props.children).filter(node => node.type === "th" || node.type === "td").every(node => node.props.className !== "budget-cell-number"), "entry and participation are not numeric metrics");
@@ -2633,7 +2988,7 @@ test("multi scope limits bulk parameter edits to selected campuses and quarters 
     const h = pageHarness({ stateData: fixture, activeTask: 3 }); h.state[10] = { ...filters, season: ["秋季", "寒假"], campus: ["西直门", "中关村"], subject: "英语" };
     const saved = JSON.stringify(h.state[1]);
     button(h.render(), "批量修改").props.onClick();
-    assert.match(h.html(), /当前筛选 · 4 条参数/); assert.match(h.html(), /4 条适用参数/);
+    assert.match(text(h.html()), /当前筛选 4 条 4 条适用/);
     nodes(h.render()).find(node => node.type === "input" && node.props["aria-label"] === "批量修改比例").props.onChange({ target: { value: "85" } });
     button(h.render(), "应用到当前筛选").props.onClick();
     assert.deepEqual(Object.keys(h.state[3]).sort(), ["combo-1-rate-1", "combo-1-rate-2", "c2-rate-1", "c2-rate-2"].map(id => key("rates", id, "renewal_ppm")).sort());

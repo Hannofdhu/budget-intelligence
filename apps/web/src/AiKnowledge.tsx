@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { chatRequestId } from "./aiChatApi";
+import { useBudgetModuleLeaveProtection } from "./budgetNavigation";
 import { knowledgeDate, knowledgeModuleLabel, type KnowledgeCollection, type KnowledgeDraft,
   type KnowledgeEntry, type KnowledgeSnapshot, type KnowledgeSource } from "./aiKnowledgeApi";
 import "./aiKnowledge.css";
@@ -32,30 +33,31 @@ export function KnowledgeCard({ item, working, onAction, onEdit }: {
 }
 
 export function KnowledgePanel({ open, collection, error, loading, workingId, editingId, snapshot, view,
-  onClose, onRefresh, onEditing, onAction, onCreate, onSave, onSource, onView }: {
+  onClose, onRefresh, onEditing, onAction, onCreate, onSave, onSource, onView, onNavigationBlocked }: {
   open: boolean; collection: KnowledgeCollection | null; error: string; loading: boolean; workingId: string;
   editingId: string | null; snapshot: KnowledgeSnapshot | null; view: "manage" | "snapshot";
   onClose: () => void; onRefresh: () => void; onEditing: (id: string | null) => void;
   onAction: KnowledgeAction; onCreate: (draft: KnowledgeDraft, requestId: string) => Promise<KnowledgeEntry>;
   onSave: (item: KnowledgeEntry, draft: KnowledgeDraft) => Promise<void>;
   onSource: (source: KnowledgeSource) => void; onView: (view: "manage" | "snapshot") => void;
+  onNavigationBlocked?: () => void;
 }) {
   const [search, setSearch] = useState(""), [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [creating, setCreating] = useState<NewState | null>(null);
   const editingDrafts = useRef(new Map<string, EditingState>());
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [leaveWarning, setLeaveWarning] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (open) closeButton.current?.focus(); }, [open]);
-  useEffect(() => {
-    const isChanged = (item: EditingState) => item.draft.title !== item.base.title || item.draft.content !== item.base.content
-      || item.draft.kind !== item.base.kind || item.draft.module !== item.base.module
-      || item.year !== (item.base.fiscal_year ? String(item.base.fiscal_year) : "") || item.keywords !== item.base.keywords.join("，");
-    const changed = Boolean(editing && isChanged(editing)) || [...editingDrafts.current.values()].some(isChanged)
-      || Boolean(creating && (creating.draft.title.trim() || creating.draft.content.trim() || creating.year || creating.keywords));
-    const warn = (event: BeforeUnloadEvent) => { if (changed) event.preventDefault(); };
-    window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn);
-  }, [editing, creating]);
+  const isChanged = (item: EditingState) => item.draft.title !== item.base.title || item.draft.content !== item.base.content
+    || item.draft.kind !== item.base.kind || item.draft.module !== item.base.module
+    || item.year !== (item.base.fiscal_year ? String(item.base.fiscal_year) : "") || item.keywords !== item.base.keywords.join("，");
+  const changed = Boolean(editing && isChanged(editing)) || [...editingDrafts.current.values()].some(isChanged)
+    || Boolean(creating && (creating.draft.title.trim() || creating.draft.content.trim() || creating.year || creating.keywords));
+  const leaveBlocked = changed || Boolean(workingId);
+  useBudgetModuleLeaveProtection(leaveBlocked, () => { setLeaveWarning(true); onNavigationBlocked?.(); });
+  useEffect(() => { if (!leaveBlocked) setLeaveWarning(false); }, [leaveBlocked]);
   useEffect(() => {
     if (editing) editingDrafts.current.set(editing.base.id, editing);
     if (!editingId) { if (editing) editingDrafts.current.delete(editing.base.id); setEditing(null); return; }
@@ -74,6 +76,7 @@ export function KnowledgePanel({ open, collection, error, loading, workingId, ed
   }}>
     <header><div><h2>业务知识与偏好</h2><p>管理已记住的口径与个人偏好</p></div><button ref={closeButton} onClick={onClose} className="ai-knowledge-close">关闭</button></header>
     <div className="ai-knowledge-panel-scroll">
+      {leaveWarning && leaveBlocked && <p className="ai-knowledge-warning" role="alert">{workingId ? "知识操作尚未完成，请稍后再切换模块。" : "有未保存的知识或偏好，请先保存或取消编辑，再切换模块。"}</p>}
       {error && <div className="ai-knowledge-error" role="alert"><p>{error}</p><button onClick={onRefresh} disabled={loading}>重新读取</button></div>}
       {loading && !collection && <p role="status">正在读取知识…</p>}
       {snapshot && <div className="ai-knowledge-views"><button aria-pressed={view === "manage"} onClick={() => onView("manage")}>知识管理</button><button aria-pressed={view === "snapshot"} onClick={() => onView("snapshot")}>本轮已加载</button></div>}

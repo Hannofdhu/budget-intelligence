@@ -39,6 +39,17 @@ export function BudgetPeopleBoard({ facts, unit = "wan", fiscalYear = 2027, onSe
     const column = columns.find(item => item.value === season);
     return column ? row.cells[column.key]?.[metric] ?? null : null;
   };
+  const quarterTransfer = { filename: `FY${String(fiscalYear).slice(-2)}-季度招生预算`, columns: [
+    { key: "season", label: "季度" }, ...peopleMetrics.map(key => ({ key, label: { old: "老生人次", new: "新生人次", total: "总人次" }[key], format: "count" as const })),
+    { key: "renewal_stage", label: "续班阶段" }, { key: "renewal", label: "续班率", format: "rate" as const },
+  ], rows: quarters.map(quarter => ({ season: quarter.season, old: quarter.old, new: quarter.new, total: quarter.total,
+    renewal_stage: renewalStageLabel(quarter.season), renewal: quarter.renewal })) };
+  const renewalTransfer = { filename: `FY${String(fiscalYear).slice(-2)}-赛道年级跨季续班率`, columns: [
+    { key: "track", label: "赛道" }, { key: "grade", label: "年级" },
+    ...seasons.map(season => ({ key: season, label: `${renewalStageLabel(season)}续班率`, format: "rate" as const })),
+  ], rows: [...renewalRows.map(row => ({ track: row.path.track ?? null, grade: row.path.grade ?? null,
+    ...Object.fromEntries(seasons.map(season => [season, cellValue(row, season, "renewal")])) })),
+    { track: "合计", grade: null, ...Object.fromEntries(quarters.map(quarter => [quarter.season, quarter.renewal])) }] };
   // Continuous intensity communicates only the magnitude; no performance thresholds are introduced.
   const renewalHeat = (value: number | null) => value !== null && Number.isFinite(value) && value >= 0 && value <= 1
     ? { backgroundColor: `rgba(217, 119, 87, ${0.04 + value * 0.16})` } : undefined;
@@ -67,11 +78,11 @@ export function BudgetPeopleBoard({ facts, unit = "wan", fiscalYear = 2027, onSe
         </svg>
       </section>
     </div>
-    <section className="ba-panel"><header><h3>季度招生预算</h3><small>人次 / %</small></header><ActionTable keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="季度招生预算表，可横向滚动" aria-label="季度招生预算表" className="ba-table"><thead><tr><th scope="col">季度</th><th scope="col" className="budget-cell-number">老生人次</th><th scope="col" className="budget-cell-number">新生人次</th><th scope="col" className="budget-cell-number">总人次</th><th scope="col" className="budget-cell-text">续班阶段</th><th scope="col" className="budget-cell-number">续班率</th></tr></thead><tbody>{quarters.map(quarter => <tr key={quarter.season}><th scope="row">{quarter.season}</th>{peopleMetrics.map(metric => <td key={metric}>{number(quarter[metric])}</td>)}<td className="budget-cell-text">{renewalStageLabel(quarter.season)}</td><td>{rate(quarter.renewal)}</td></tr>)}</tbody></ActionTable></section>
+    <section className="ba-panel"><header><h3>季度招生预算</h3><small>人次 / %</small></header><ActionTable exportData={quarterTransfer} exportLabel="导出当前表格" keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="季度招生预算表，可横向滚动" aria-label="季度招生预算表" className="ba-table"><thead><tr><th scope="col">季度</th><th scope="col" className="budget-cell-number">老生人次</th><th scope="col" className="budget-cell-number">新生人次</th><th scope="col" className="budget-cell-number">总人次</th><th scope="col" className="budget-cell-text">续班阶段</th><th scope="col" className="budget-cell-number">续班率</th></tr></thead><tbody>{quarters.map(quarter => <tr key={quarter.season}><th scope="row">{quarter.season}</th>{peopleMetrics.map(metric => <td key={metric}>{number(quarter[metric])}</td>)}<td className="budget-cell-text">{renewalStageLabel(quarter.season)}</td><td>{rate(quarter.renewal)}</td></tr>)}</tbody></ActionTable></section>
     <BudgetTrackSubjectBoard facts={facts} unit={unit} fiscalYear={fiscalYear} onSelect={onSelect} />
     <BudgetCampusBoard facts={facts} unit={unit} fiscalYear={fiscalYear} onSelect={onSelect} onFilterCampus={onFilterCampus} onPivot={() => onPivot("total")} />
     <section className="ba-panel"><header><h3>赛道与年级续班率</h3><div className="ba-toolbar"><small>%</small><button onClick={() => onPivot("renewal")}>透视续班率</button></div></header>
-      <ActionTable keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="赛道年级跨季续班率表，可横向滚动" aria-label="赛道年级跨季续班率表" className="ba-table ba-renewal-table">
+      <ActionTable exportData={renewalTransfer} exportLabel="导出当前表格" keyboardNavigation scrollClassName="ba-table-wrap" scrollLabel="赛道年级跨季续班率表，可横向滚动" aria-label="赛道年级跨季续班率表" className="ba-table ba-renewal-table">
         <thead><tr><th scope="col">赛道</th><th scope="col" className="budget-cell-text">年级</th>{seasons.map(season => <th scope="col" key={season}>{renewalStageLabel(season)}</th>)}</tr></thead>
         <tbody>{renewalRows.map(row => <tr key={row.key}><th scope="row">{row.path.track}</th><th scope="row" className="budget-cell-text">{row.path.grade}</th>{seasons.map(season => {
           const value = cellValue(row, season, "renewal", renewalPivot.columns);

@@ -7,8 +7,18 @@ from inspect import isawaitable
 from typing import Annotated, Any, Literal, Self, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from apps.api.auth import current_actor
 from apps.api.routes.historical_review import fy27_review
@@ -16,7 +26,7 @@ from packages.config.settings import get_settings
 from packages.domain.identity.models import Actor, Role
 from packages.forecast.calculation import calculate_forecast
 from packages.forecast.daily import schedule_status
-from packages.forecast.daily_diagnostics import mark_stage
+from packages.forecast.daily_diagnostics import blocking_issue_summary, mark_stage, safe_diagnostic
 from packages.forecast.database_store import PostgreSQLForecastStore
 from packages.forecast.refresh_lock import refresh_slot as database_refresh_slot
 from packages.forecast.rules import FIXED_RULES_VERSION, build_fixed_assumptions
@@ -102,6 +112,15 @@ class Adjustment(StrictBody):
     kind: Literal["additional", "new_withdrawal", "old_withdrawal"]
     value: StrictInt = Field(ge=0, le=10000000)
     reason: str = Field(min_length=1, max_length=1000)
+    one_shot: StrictBool = False
+
+    @model_serializer(mode="wrap")
+    def serialize_adjustment(self, handler: Any) -> Json:
+        result: Json = handler(self)
+        # Preserve the exact shape/equality of historical adjustments.
+        if not self.one_shot:
+            result.pop("one_shot", None)
+        return result
 
 
 Season = Literal["暑假", "秋季", "寒假", "春季"]
@@ -184,10 +203,13 @@ class Refresh(StrictBody):
         return self
 
 
-class Revise(StrictBody):
+class Preview(StrictBody):
     parent_id: str
-    reason: str = Field(min_length=1, max_length=1000)
     assumptions: Assumptions
+
+
+class Revise(Preview):
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class Confirmation(StrictBody):
@@ -452,6 +474,9 @@ async def _refresh_from_source(
     assumptions = Assumptions.model_validate(
         {**(parent["assumptions"] if parent else {}), "states": states}
     ).model_dump()
+    # Campus rate sliders describe this saved snapshot only. Neither manual
+    # refresh nor the daily job may carry these overrides onto fresh actuals.
+    assumptions["adjustments"] = [a for a in assumptions["adjustments"] if not a.get("one_shot")]
     assumptions = _retire_finalized_adjustments(parent, assumptions)
     _guard_change(parent, assumptions, actor)
     try:
@@ -475,6 +500,7 @@ async def _refresh_from_source(
             raise SourceAdapterError(
                 "FORECAST_DAILY_DATA_INCOMPLETE",
                 "本次来源数据检查未通过，自动更新未保存新版本；请人工查看数据问题，上次结果已保留",
+                diagnostics={"blocking_issues": blocking_issue_summary(calculation)},
             )
         mark_stage("append_version")
         result = await _store_call(
@@ -500,6 +526,7 @@ async def _refresh_from_source(
                 "retryable": getattr(exc, "retryable", False),
                 "diagnostic_id": getattr(exc, "diagnostic_id", None),
                 "stage": getattr(exc, "diagnostics", {}).get("stage"),
+                **safe_diagnostic({"blocking_issues": exc.diagnostics.get("blocking_issues")}),
                 "retained_version": {
                     key: retained[key] for key in ("id", "sequence", "as_of", "created_at", "status")
                 }
@@ -512,15 +539,13 @@ async def _refresh_from_source(
     return _safe_view(result)
 
 
-@router.post("/forecasts/fy27/revise")
-async def revise(request: Request, body: Revise, actor: ActorDep, request_id: RequestId) -> Json:
-    baseline = await _access(request, actor)
-    digest = fingerprint({"command": "revise", "body": body.model_dump()})
-    if replay := await _replay(actor, request_id, digest):
-        return replay
+async def _revision_inputs(baseline: Json, body: Preview, actor: Actor) -> tuple[Json, Json]:
+    """One preparation/permission path for ephemeral trials and saved revisions."""
     parent = (await _current(actor))["version"]
     if not parent or parent["id"] != body.parent_id:
         raise HTTPException(409, "预测版本已变化，请重新读取后操作")
+    if parent["baseline_hash"] != baseline["sha256"]:
+        raise HTTPException(409, "FY27 定版档案与预测基准不一致")
     assumptions = body.assumptions.model_dump(mode="json")
     _guard_fixed_rules(parent, assumptions)
     assumptions = _retire_finalized_adjustments(parent, assumptions)
@@ -528,6 +553,36 @@ async def revise(request: Request, body: Revise, actor: ActorDep, request_id: Re
         build_fixed_assumptions(baseline, parent["snapshot"], assumptions)
     ).model_dump(mode="json")
     _guard_change(parent, assumptions, actor)
+    return parent, assumptions
+
+
+@router.post("/forecasts/fy27/preview")
+async def preview(request: Request, body: Preview, actor: ActorDep) -> Json:
+    """Calculate from the parent's frozen snapshot, without BI reads or writes."""
+    baseline = await _access(request, actor)
+    parent, assumptions = await _revision_inputs(baseline, body, actor)
+    calculation = await run_in_threadpool(calculate_forecast, baseline, parent["snapshot"], assumptions)
+    system = await run_in_threadpool(
+        calculate_forecast, baseline, parent["snapshot"], {**assumptions, "adjustments": []}
+    )
+    if (await _current(actor))["version"]["id"] != parent["id"]:
+        raise HTTPException(409, "预测版本已变化；本次试算未保存，请保留修改并重新核对")
+    return {
+        "preview": True,
+        "parent_id": parent["id"],
+        "as_of": parent["as_of"],
+        "calculation": calculation,
+        "system_campuses": system.get("campuses", []),
+    }
+
+
+@router.post("/forecasts/fy27/revise")
+async def revise(request: Request, body: Revise, actor: ActorDep, request_id: RequestId) -> Json:
+    baseline = await _access(request, actor)
+    digest = fingerprint({"command": "revise", "body": body.model_dump()})
+    if replay := await _replay(actor, request_id, digest):
+        return replay
+    parent, assumptions = await _revision_inputs(baseline, body, actor)
     try:
         result = await _store_call(
             "append_version",

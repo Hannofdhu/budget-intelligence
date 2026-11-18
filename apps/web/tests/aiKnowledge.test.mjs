@@ -7,7 +7,7 @@ import { build } from "esbuild";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { actOnKnowledge, createKnowledge, editKnowledge, listKnowledge, proposeKnowledge } from "../src/aiKnowledgeApi.ts";
-import { chatMarkdown, getChat } from "../src/aiChatApi.ts";
+import { chatMarkdown, chatSnapshotNote, getChat } from "../src/aiChatApi.ts";
 
 const require = createRequire(import.meta.url);
 async function ui(file) {
@@ -103,10 +103,25 @@ test("proven dimension swaps keep warnings in exports and do not expose clean ta
   assert.match(chatMarkdown({ title: "口径测试", updated_at: "2026-10-24", messages: [message], context: null }), /待核实/);
 });
 
+test("follow-up snapshot sources stay visible and travel with copied and exported answers", () => {
+  const validation = { state: "limited", warnings: [], notice: "有限检查", resources: [], tables_examined: 1,
+    snapshots: [{ resource: "/budget/fy28-budget", label: "FY28预算编制 · 第30版（DRAFT）", captured_at: "2026-10-26T11:14:25Z", files: ["fy28_v30.json"] }] };
+  const message = { id: answerId, role: "assistant", text: "| 结转收入 |\n|---|\n| 100元 |", state: "complete", validation };
+  const html = renderToStaticMarkup(createElement(AiChatMessage, { message }));
+  for (const text of ["沿用此前接口快照", "第30版", "不代表当前最新数据", "文件指纹一致", "导出表格", "一键复制"]) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /待核实|本轮接口读取：|本轮未记录成功/);
+  const exported = chatMarkdown({ title: "快照追问", updated_at: "2026-10-26", messages: [message], context: null });
+  assert.ok(exported.includes(chatSnapshotNote(message)));
+  const source = fs.readFileSync(new URL("../src/AiChatMessage.tsx", import.meta.url), "utf8");
+  assert.match(source, /writeText\([^\n]+snapshotNote/);
+  const warning = renderToStaticMarkup(createElement(AiChatMessage, { message: { ...message, validation: { ...validation, state: "needs_review", warnings: ["校区列混入赛道"] } } }));
+  assert.match(warning, /待核实/); assert.doesNotMatch(warning, /导出表格|一键复制/);
+});
+
 test("docked and narrow layouts remain in document flow instead of overlaying the chat", () => {
   const css = fs.readFileSync(new URL("../src/aiKnowledge.css", import.meta.url), "utf8");
   const source = fs.readFileSync(new URL("../src/AiChatPage.tsx", import.meta.url), "utf8");
-  assert.match(css, /grid-template-columns: 264px minmax\(420px,1fr\)/);
+  assert.match(css, /grid-template-columns: var\(--ai-chat-sidebar-width,264px\) minmax\(420px,1fr\)/);
   assert.match(css, /max-width: 959px/); assert.match(css, /grid-row: 1/);
   assert.doesNotMatch(css, /position:\s*(?:fixed|absolute)|z-index/);
   assert.match(source, /setKnowledgeOpen\(false\)/); assert.match(source, /查看本条回答的口径依据/);

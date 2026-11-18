@@ -54,6 +54,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+# This executable belongs to the isolated Python 3.11 analysis image, not the API
+# environment. CI executes it in the real image with the production sandbox flags.
+exclude = ["^apps/ai-agent/analysis_smoke\\.py$"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]

@@ -50,3 +50,44 @@ test("same-source browser back invalidates an in-flight latest read instead of s
     for (const [key,value] of Object.entries(original)) if(value===undefined) delete globalThis[key]; else globalThis[key]=value;
   }
 });
+
+test("overview and quarter legends are independent, persist across display controls and never filter exports", () => {
+  const original = { window: globalThis.window, location: globalThis.location, history: globalThis.history };
+  const actor = { userId: "u", departmentId: "d", roles: [] }, slots = [];
+  let cursor = 0;
+  const facts = { ...data, rows: [{ id: "a", track: "空间", campus: "甲校区", product: "普通", grade: "七年级", subject: "数学", season: "暑假", budget: "100", actual: "40", forecast: "90", next_budget: "120", covered: { budget: true, actual: true, forecast: true, next_budget: true } }] };
+  const hooks = { ...React,
+    useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial; return [slots[i], next => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }]; },
+    useRef(value) { const i = cursor++; return slots[i] ??= { current: value }; },
+    useMemo(fn) { cursor++; return fn(); }, useEffect() { cursor++; },
+  };
+  const cache = { peekBudgetSession: () => actor, peekBudgetRead: () => facts, budgetReadKey: (_, path) => path };
+  const loaded = { exports: {} };
+  new Function("require", "module", "exports", compiled.outputFiles[0].text)(id => id === "react" ? hooks : id === "cockpit-cache-fixture" ? cache : require(id), loaded, loaded.exports);
+  globalThis.location = { search: "", pathname: "/budget/cockpit", origin: "http://budget.test" };
+  globalThis.history = { state: null, pushState() {} };
+  const render = () => { cursor = 0; return loaded.exports.BudgetCockpitPage(); };
+  const legend = (tree, label) => nodes(tree).find(node => node.props?.label === label && node.props?.onToggle);
+  try {
+    let tree = render();
+    const transferBefore = loaded.exports.cockpitTransfer(facts, slots[2], facts.rows, true);
+    legend(tree, "经营全景").props.onToggle("budget"); tree = render();
+    assert.deepEqual(legend(tree, "经营全景").props.hidden, ["budget"]);
+    assert.deepEqual(legend(tree, "季度分布").props.hidden, []);
+    legend(tree, "季度分布").props.onToggle("forecast"); tree = render();
+    assert.deepEqual(legend(tree, "经营全景").props.hidden, ["budget"]);
+    assert.deepEqual(legend(tree, "季度分布").props.hidden, ["forecast"]);
+    assert.deepEqual(loaded.exports.cockpitTransfer(facts, slots[2], facts.rows, true), transferBefore);
+    nodes(tree).find(node => node.props?.["aria-label"] === "驾驶舱金额单位").props.onChange({ target: { value: "yuan" } }); tree = render();
+    assert.deepEqual(legend(tree, "经营全景").props.hidden, ["budget"]);
+    nodes(tree).find(node => node.props?.["aria-label"] === "对比内容").props.onChange({ target: { value: "next" } }); tree = render();
+    assert.deepEqual(legend(tree, "经营全景").props.hidden, []);
+    legend(tree, "经营全景").props.onToggle("next_budget"); tree = render();
+    nodes(tree).find(node => node.props?.["aria-label"] === "对比内容").props.onChange({ target: { value: "current" } }); tree = render();
+    assert.deepEqual(legend(tree, "经营全景").props.hidden, ["budget"]);
+    assert.deepEqual(legend(tree, "季度分布").props.hidden, ["forecast"]);
+    assert.equal(facts.rows[0].budget, "100");
+  } finally {
+    for (const [key, value] of Object.entries(original)) if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+  }
+});

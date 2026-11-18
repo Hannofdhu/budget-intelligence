@@ -38,6 +38,13 @@ def test_system_prompt_uses_product_revenue_terminology_without_changing_other_m
     assert "将预算业务范围统一称为 SKU；内部字段、工具和数据键保持原样" in SYSTEM_PROMPT
 
 
+def test_system_prompt_explains_real_file_cards_without_inventing_urls_or_budget_writes() -> None:
+    assert "本对话支持的文件卡片" in SYSTEM_PROMPT
+    assert "单文件下载上限32MB，图片预览上限8MB" in SYSTEM_PROMPT
+    assert "不虚构下载URL" in SYSTEM_PROMPT
+    assert "不能修改产品预算、预测、定版或规则" in SYSTEM_PROMPT
+
+
 class Bridge:
     async def handle(self, frame: dict[str, Any]) -> Any:
         yield {"type": "response_start", "id": frame["id"], "status": 200, "headers": {}}

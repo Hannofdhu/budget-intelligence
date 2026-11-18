@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { historicalExportColumns } from "../src/historicalBudgetExport.ts";
+import { historicalExportColumns, historicalExportRows } from "../src/historicalBudgetExport.ts";
 import { tableCopyRows } from "../src/tableTransfer.ts";
 
 const require = createRequire(import.meta.url);
@@ -81,7 +81,7 @@ test("FY27 SKU identity uses shared ordered five-dimension cells without changin
     product: "云帆白金高端小班联合产品", grade: "七年级与八年级衔接年级", subject: "数学与综合实践长名称科目" };
   const rows = Array.from({ length: 61 }, (_, index) => line(index, { ...dimensions, entry: index % 2 ? "否" : "是", annual: index === 25 ? -12.123456 : index }));
   const before = JSON.stringify(rows), filters = { season: "", track: "", campus: "", product: "", grade: "", subject: "" };
-  const [table] = find(pageTree(rows, 1, filters, 1), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+  const [table] = find(pageTree(rows, 1, filters, 1), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table");
   const [head] = find(table, node => node.type === "thead"), [body] = find(table, node => node.type === "tbody");
   assert.deepEqual(find(head, node => node.type === "th").map(elementText),
     ["校区 / 赛道 / 产品", "年级 / 科目", "入口", "全年结转收入（元）"]);
@@ -119,11 +119,11 @@ test("FY27 read-only detail pages have one transfer owner for every step and kee
     assert.ok(section);
     assert.equal(find(section, node => node.type === "button" && elementText(node) === "导出明细").length, 0,
       "the page heading must not repeat the ActionTable export");
-    const transfers = find(section, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+    const transfers = find(section, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table");
     assert.equal(transfers.length, 1);
     const transfer = transfers[0].props.exportData;
     const expected = rows.filter(row => row.campus === "西直门" && row.season === "暑假" && (step !== 2 || row.entry === "是"));
-    assert.deepEqual(transfer.rows, expected);
+    assert.deepEqual(transfer.rows, historicalExportRows(step, expected));
     assert.equal(transfer.rows.length, step === 2 ? 61 : 62);
     assert.deepEqual(transfer.columns, historicalExportColumns(step));
     const [body] = find(transfers[0].props.children, node => node.type === "tbody");
@@ -137,9 +137,9 @@ test("FY27 detail transfers preserve the existing hidden quarter scope behavior 
   const rows = [line(1), line(2, { season: "秋季" })];
   const filters = { season: "秋季", track: "", campus: "", product: "", grade: "", subject: "" };
   for (const step of [1, 2, 3, 4]) {
-    const [table] = find(pageTree(rows, step, filters, 0, "detail"), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+    const [table] = find(pageTree(rows, step, filters, 0, "detail"), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table");
     assert.deepEqual(table.props.exportData.rows.map(row => row.season), [step < 3 ? "暑假" : "秋季"]);
-    const [empty] = find(pageTree(rows, step, { ...filters, campus: "不存在校区" }, 0, "detail"), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+    const [empty] = find(pageTree(rows, step, { ...filters, campus: "不存在校区" }, 0, "detail"), node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table");
     assert.deepEqual(empty.props.exportData.rows, []);
   }
 });
@@ -158,7 +158,7 @@ test("FY27 parameter and finance pages default to an exact-business, read-only c
     assert.equal(quarter.props.onCellAction, undefined, "finalized rows have no editing action");
     const controls = find(tree, node => node.type === "button" && ["跨季度对照", "逐季明细"].includes(elementText(node)));
     assert.deepEqual(controls.map(button => button.props["aria-pressed"]), [true, false]);
-    assert.equal(find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData).length, 0,
+    assert.equal(find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table").length, 0,
       "only the displayed cross-quarter table owns copy and export");
     if (step === 3) {
       const renewal = quarter.props.metrics.find(column => column.key === "renewal");
@@ -184,7 +184,7 @@ test("FY27 exact multi-value filters OR within a dimension, AND across dimension
     line(4, { campus: "中关村", subject: "物理" }), line(5, { campus: "中关村", subject: "英语", season: "春季" })];
   const before = JSON.stringify(rows), filters = { season: ["暑假", "秋季", "寒假"], track: "", campus: ["西直门", "中关村"], product: "", grade: "", subject: ["数学", "英语"] };
   const tree = pageTree(rows, 4, filters, 0, "detail");
-  const [table] = find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData);
+  const [table] = find(tree, node => typeof node.type === "function" && node.type.name === "ActionTable" && node.props.exportData && node.props.className === "history-detail-table");
   assert.deepEqual(table.props.exportData.rows, rows.slice(0, 4));
   assert.deepEqual(find(find(table, node => node.type === "thead")[0], node => node.type === "th").slice(0, 2).map(elementText),
     ["校区 / 赛道 / 产品", "年级 / 科目"]);
@@ -211,5 +211,30 @@ test("FY27 annual targets precede the explicitly local scope and hidden quarter 
   assert.equal(quarterly.props.dimensions[0].key, "season");
   assert.deepEqual(quarterly.props.dimensions[0].options, ["暑假", "秋季", "寒假", "春季"]);
   assert.equal(quarterly.props.count, 0, "an empty intersection must not widen to another campus or quarter");
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test("historical exports keep independent SKU columns and the annual target table exports native precision", () => {
+  for (const step of [1, 2, 3, 4, 5]) assert.deepEqual(historicalExportColumns(step).slice(0, 5).map(column => column.key), ["campus", "track", "product", "grade", "subject"]);
+  const rows = [line(1, { revenue: -12.123456 }), line(2, { track: "智慧伴学", revenue: 0 })];
+  const before = JSON.stringify(rows), tree = pageTree(rows, 1, { season: "", campus: "", track: "", product: "", grade: "", subject: "" });
+  const [table] = find(tree, node => node.type?.name === "ActionTable" && node.props.tableLabel === "全年目标与定版结转收入");
+  const data = table.props.exportData;
+  assert.deepEqual(data.columns.map(column => column.key), ["scope", "target", "actual", "gap"]);
+  assert.equal(data.rows[0].actual, -12.123456); assert.equal(data.rows[1].actual, 0);
+  assert.equal(data.rows[0].target, 113000000); assert.equal(data.rows[0].gap, -12.123456 - 113000000);
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test("quarterly recruitment keeps '-' on screen but exports independent numeric renewal and applicability", () => {
+  const rows = [line(1, { renewal: "-" }), line(2, { renewal: 0 }), line(3, { renewal: null }), line(4, { renewal: "unknown" })];
+  const before = JSON.stringify(rows), filters = { season: "", campus: "", track: "", product: "", grade: "", subject: "" };
+  const [quarter] = find(pageTree(rows, 3, filters), node => node.type?.name === "QuarterlyBusinessTable");
+  const visible = quarter.props.metrics.find(column => column.key === "renewal"),
+    numeric = quarter.props.exportMetrics.find(column => column.key === "renewal"),
+    status = quarter.props.exportMetrics.find(column => column.key === "renewal_status");
+  assert.equal(visible.value(rows[0]), "-"); assert.equal(visible.render(rows[0]), "-");
+  assert.equal(numeric.format, "rate"); assert.deepEqual(rows.map(numeric.value), [null, 0, null, null]);
+  assert.deepEqual(rows.map(status.value), ["不适用", "适用", "未填写", "待核对"]);
   assert.equal(JSON.stringify(rows), before);
 });

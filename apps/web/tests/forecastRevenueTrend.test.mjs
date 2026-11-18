@@ -67,7 +67,7 @@ test("change geometry uses the first saved day of the current window and each se
   assert.equal(geometry.valueAt(1, "forecast_revenue"), -10.12); assert.equal(geometry.valueAt(1, "actual_revenue"), -12.79);
   assert.ok(geometry.min < -12.79); assert.ok(geometry.max > 20.01);
   const total = forecastTrendGeometry(fixture.points, "全年", 900, "total");
-  assert.equal(total.min, 0); assert.equal(total.valueAt(1, "forecast_revenue"), 10714.29);
+  assert.ok(total.min > 0); assert.equal(total.valueAt(1, "forecast_revenue"), 10714.29);
   const narrowed = forecastTrendGeometry(fixture.points.slice(1), "全年", 900, "change");
   assert.equal(narrowed.valueAt(0, "forecast_revenue"), 0); assert.equal(narrowed.valueAt(1, "forecast_revenue"), 15.71);
   assert.equal(JSON.stringify(fixture), source);
@@ -86,7 +86,7 @@ test("change mode never invents a missing baseline, interpolate gaps, or substit
   assert.equal(descendants(tree, node => node.type === "svg").length, 0);
   assert.match(nodeText(tree), /首个保存日缺少基准值/);
   descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
-  assert.equal(descendants(tree, node => node.type === "svg").length, 1, "available later observations remain reachable in total mode");
+  assert.equal(descendants(tree, node => node.type === "svg").length, 2, "available later observations remain reachable in separate total-mode charts");
 });
 
 test("single and unchanged change-mode observations stay on zero with a non-degenerate axis", () => {
@@ -106,11 +106,110 @@ test("display switching is local, preserves exact selection and never starts ano
   let tree = app.render(); descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.onChange({ target: { value: "1" } });
   tree = app.render(); descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
   assert.equal(descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props["aria-pressed"], true);
-  assert.match(nodeText(tree), /绝对金额，纵轴含 0/);
+  assert.match(nodeText(tree), /绝对金额 · 两图独立自动缩放，纵轴不必从 0 开始/);
   assert.equal(descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.value, 1);
   descendants(tree, node => node.type === "button" && nodeText(node) === "看变化")[0].props.onClick(); tree = app.render();
   assert.match(nodeText(tree), /较 2026-10-01 保存值增减/); assert.deepEqual(callbacks, []);
   assert.equal(descendants(tree, node => node.type === "svg").length, 1); assert.equal(JSON.stringify(fixture), before);
+});
+
+test("total mode separates the two series with independent focused axes and a shared date selection", () => {
+  const fixture = data(), before = JSON.stringify(fixture), callbacks = [];
+  const app = harness({ data: fixture, onVersion: () => callbacks.push("version"), onDays: () => callbacks.push("days") });
+  let tree = app.render();
+  descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
+  const charts = descendants(tree, node => node.type === "svg");
+  assert.equal(charts.length, 2);
+  assert.deepEqual(descendants(tree, node => node.type === "figcaption").map(nodeText), ["预计结转收入", "截至当日实际结转收入"]);
+  charts.forEach((chart, index) => {
+    const paths = descendants(chart, node => node.type === "path"); assert.equal(paths.length, 1);
+    assert.equal(paths[0].props.className, `forecast-trend-line ${index === 0 ? "is-forecast" : "is-actual"}`);
+    assert.match(nodeText(chart), /独立刻度，共用选中日期/);
+  });
+  assert.notEqual(charts[0].props["aria-labelledby"], charts[1].props["aria-labelledby"]);
+  const forecast = forecastTrendGeometry(fixture.points, "全年", 438, "total", ["forecast_revenue"]);
+  const actual = forecastTrendGeometry(fixture.points, "全年", 438, "total", ["actual_revenue"]);
+  assert.ok(forecast.min > 0); assert.ok(actual.min > 0); assert.ok(forecast.max > actual.max);
+  assert.equal(descendants(charts[0], node => node.type === "path")[0].props.d, forecast.series("forecast_revenue"));
+  assert.equal(descendants(charts[1], node => node.type === "path")[0].props.d, actual.series("actual_revenue"));
+  for (const chartIndex of [0, 1]) {
+    tree = app.render();
+    const chart = descendants(tree, node => node.type === "svg")[chartIndex];
+    chart.props.onPointerDown({ clientX: forecast.x(chartIndex) + 20, currentTarget: { getBoundingClientRect: () => ({ left: 20, width: 438 }) } });
+    tree = app.render();
+    assert.equal(descendants(tree, node => node.type === "input" && node.props.type === "range")[0].props.value, chartIndex);
+    const cursors = descendants(tree, node => node.props?.className === "forecast-trend-cursor");
+    assert.equal(cursors.length, 2);
+    assert.equal(cursors[0].props.x1, forecast.x(chartIndex)); assert.equal(cursors[1].props.x1, actual.x(chartIndex));
+  }
+  descendants(tree, node => node.type === "button" && nodeText(node) === "秋季")[0].props.onClick(); tree = app.render();
+  assert.equal(descendants(tree, node => node.type === "svg").length, 2);
+  descendants(tree, node => node.type === "svg").forEach(chart => assert.match(nodeText(chart), /秋季/));
+  assert.deepEqual(callbacks, []); assert.equal(JSON.stringify(fixture), before);
+});
+
+test("total axes fit each series' observed range with padding, not zero or the other series", () => {
+  const fixture = data();
+  const forecastValues = ["107000000", "107020000", "106980000"], actualValues = ["72000000", "72001000", "71999500"];
+  fixture.points.forEach((point, index) => { point.periods["全年"] = { forecast_revenue: forecastValues[index], actual_revenue: actualValues[index], actual_status: "AVAILABLE" }; });
+  const before = JSON.stringify(fixture);
+  for (const key of ["forecast_revenue", "actual_revenue"]) {
+    const geometry = forecastTrendGeometry(fixture.points, "全年", 438, "total", [key]);
+    const values = fixture.points.map((_, index) => geometry.valueAt(index, key));
+    const low = Math.min(...values), high = Math.max(...values), span = high - low;
+    assert.ok(Math.abs(geometry.min - (low - span * .1)) < 1e-9);
+    assert.ok(Math.abs(geometry.max - (high + span * .1)) < 1e-9);
+    assert.ok(geometry.min > 0); assert.ok(geometry.y(low) - geometry.y(high) > (geometry.bottom - geometry.top) * .8);
+    const narrow = forecastTrendGeometry(fixture.points, "全年", 240, "total", [key]);
+    assert.equal(narrow.min, geometry.min); assert.equal(narrow.max, geometry.max);
+    values.forEach(value => assert.ok(geometry.y(value) > geometry.top && geometry.y(value) < geometry.bottom));
+  }
+  const forecast = forecastTrendGeometry(fixture.points, "全年", 438, "total", ["forecast_revenue"]);
+  const actual = forecastTrendGeometry(fixture.points, "全年", 438, "total", ["actual_revenue"]);
+  assert.ok(forecast.max - forecast.min > (actual.max - actual.min) * 20);
+  assert.equal(JSON.stringify(fixture), before);
+});
+
+test("flat, single-point, zero, negative and missing total ranges remain finite without inventing variation", () => {
+  for (const value of ["107000000", "0", "-50000"]) {
+    const fixture = data(); fixture.points.forEach(point => { point.periods["全年"].forecast_revenue = value; });
+    for (const points of [fixture.points, fixture.points.slice(0, 1)]) {
+      const geometry = forecastTrendGeometry(points, "全年", 240, "total", ["forecast_revenue"]);
+      const numeric = Number(value) / 10000;
+      assert.ok(geometry.min < numeric && geometry.max > numeric);
+      assert.ok(Math.abs(geometry.y(numeric) - (geometry.top + geometry.bottom) / 2) < 1e-7);
+      assert.doesNotMatch(geometry.series("forecast_revenue"), /NaN|Infinity/);
+      points.forEach((_, index) => assert.equal(geometry.valueAt(index, "forecast_revenue"), numeric));
+    }
+  }
+  const fixture = data(); fixture.points.forEach(point => { point.periods["全年"].forecast_revenue = null; });
+  const missing = forecastTrendGeometry(fixture.points, "全年", 240, "total", ["forecast_revenue"]);
+  assert.ok(Number.isFinite(missing.min) && missing.max > missing.min); assert.equal(missing.series("forecast_revenue"), "");
+});
+
+test("focused total axes retain distinguishable fractional ticks and enough label space", () => {
+  const fixture = data(); fixture.points.forEach((point, index) => { point.periods["全年"].forecast_revenue = String(107000000 + index * .01); });
+  const geometry = forecastTrendGeometry(fixture.points, "全年", 240, "total", ["forecast_revenue"]);
+  const labels = geometry.ticks.map(tick => tick.toLocaleString("zh-CN", { maximumFractionDigits: geometry.axisDigits }));
+  assert.equal(new Set(labels).size, 5); assert.ok(geometry.axisDigits >= 6);
+  assert.ok(geometry.left >= Math.max(...labels.map(label => label.length)) * 7 + 12);
+  assert.ok(geometry.left < geometry.right); assert.doesNotMatch(geometry.series("forecast_revenue"), /NaN|Infinity/);
+});
+
+test("separate total charts keep unknown series empty, real zeros and signed observations", () => {
+  const fixture = data(); fixture.points.forEach(point => { point.periods["全年"].actual_revenue = null; });
+  const app = harness({ data: fixture }); let tree = app.render();
+  descendants(tree, node => node.type === "button" && nodeText(node) === "看总量")[0].props.onClick(); tree = app.render();
+  assert.equal(descendants(tree, node => node.type === "figure").length, 2);
+  assert.equal(descendants(tree, node => node.type === "svg").length, 1);
+  assert.match(nodeText(tree), /这些历史快照未提供截至当日实际结转收入，不补零或编造曲线/);
+  fixture.points[0].periods["全年"].actual_revenue = "0";
+  fixture.points[2].periods["全年"].actual_revenue = "-50000";
+  tree = app.render(); assert.equal(descendants(tree, node => node.type === "svg").length, 2);
+  const geometry = forecastTrendGeometry(fixture.points, "全年", 438, "total", ["actual_revenue"]);
+  assert.ok(geometry.min < -5); assert.ok(geometry.max > 0);
+  assert.equal((geometry.series("actual_revenue").match(/M/g) ?? []).length, 2);
+  assert.doesNotMatch(geometry.series("actual_revenue"), /NaN|Infinity/);
 });
 
 test("selected amounts compare to the ledger's direct previous version, including an earlier same-day version", () => {

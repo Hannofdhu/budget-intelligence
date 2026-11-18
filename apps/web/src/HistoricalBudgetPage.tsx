@@ -6,7 +6,7 @@ import { BudgetPageNavigation, useBudgetPagePosition } from "./BudgetPageNavigat
 import { budgetRowsInScope } from "./budgetBrowse";
 import { BudgetAnalysisView } from "./BudgetAnalysisView";
 import { normalizeHistoricalFacts, readAnalysisState, writeAnalysisState } from "./budgetAnalysis";
-import { historicalExportColumns } from "./historicalBudgetExport";
+import { historicalExportColumns, historicalExportRows, historicalRenewalExport } from "./historicalBudgetExport";
 import { BudgetScopeBar } from "./BudgetScopeBar";
 import { BudgetDataSection } from "./BudgetDataSection";
 import { skuIdentityCells, skuIdentityHeaders } from "./SkuIdentity";
@@ -44,6 +44,11 @@ const quarterlyRecruitmentMetrics: QuarterlyBusinessColumn<Line>[] = [
   { key: "share", label: "新生占比", format: "rate", value: row => row.share, render: row => shown(row.share, "share") },
   ...(["old", "new", "total"] as const).map((key, index) => ({ key, label: ["老生人次", "新生人次", "总人次"][index], format: "count" as const,
     value: (row: Line) => row[key], render: (row: Line) => shown(row[key], key) })),
+];
+const quarterlyRecruitmentExportMetrics: QuarterlyBusinessColumn<Line>[] = [
+  { key: "renewal", label: "续班率", format: "rate", value: row => historicalRenewalExport(row.renewal).value },
+  { key: "renewal_status", label: "续班率状态", value: row => historicalRenewalExport(row.renewal).status },
+  ...quarterlyRecruitmentMetrics.filter(column => column.key !== "renewal"),
 ];
 const quarterlyFinanceMetrics: QuarterlyBusinessColumn<Line>[] = [
   { key: "minimum", label: "班均", format: "count", value: row => row.minimum },
@@ -93,7 +98,15 @@ export function HistoricalBudgetPage() {
   const detailRows = step === 1 ? scope : step === 2 ? entries : filtered;
   const facts = useMemo(() => normalizeHistoricalFacts(data?.rows ?? []), [data]);
   const pageRows = detailRows.slice(page * 25, (page + 1) * 25);
-  const tableTransfer = { columns: historicalExportColumns(step), rows: detailRows, filename: `FY27-${steps[step - 1]}明细` };
+  const tableTransfer = { columns: historicalExportColumns(step), rows: historicalExportRows(step, detailRows), filename: `FY27-${steps[step - 1]}明细` };
+  const annualTargets = [["部门合计", 113000000], ["智慧伴学", 37000000], ["智慧空间", 76000000]].map(([track, target]) => {
+    const actual = sum((data?.rows ?? []).filter(row => track === "部门合计" || row.track === track), "revenue");
+    return { scope: String(track), target: Number(target), actual, gap: actual - Number(target) };
+  });
+  const annualTargetTransfer = { filename: "FY27-全年目标与定版结转收入", rows: annualTargets, columns: [
+    { key: "scope", label: "范围" }, { key: "target", label: "结转收入目标（元）", format: "money" as const },
+    { key: "actual", label: "定版结转收入（元）", format: "money" as const }, { key: "gap", label: "差额（元）", format: "money" as const },
+  ] };
   const stat = (label: string, value: string) => <div><span>{label}</span><strong>{value}</strong></div>;
   const detailTable = <ActionTable exportData={tableTransfer} keyboardNavigation tableLabel={step === 1 ? "SKU" : steps[step - 1]}
     aria-label={step === 1 ? "FY27 SKU明细表" : "FY27预算明细表"} className="history-detail-table" scrollClassName="budget-data-section__scroll">
@@ -102,6 +115,7 @@ export function HistoricalBudgetPage() {
   </ActionTable>;
   const detailContent = <>{step >= 3 && quarterLayout === "wide" ? <QuarterlyBusinessTable rows={detailRows} rowKey={row => String(row.row)} season={row => row.season}
     businessColumns={quarterlyBusinessColumns} metrics={step === 3 ? quarterlyRecruitmentMetrics : quarterlyFinanceMetrics}
+    exportMetrics={step === 3 ? quarterlyRecruitmentExportMetrics : undefined}
     filename={`FY27-${steps[step - 1]}跨季度对照`} tableLabel={step === 3 ? "招生参数跨季度对照" : "财务跨季度对照"} /> : <>
     {detailTable}{!detailRows.length && <p className="history-empty" role="status">当前筛选下没有明细。清除筛选可查看全部。</p>}
     <div className="budget-data-section__pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>上一页</button><span>{detailRows.length ? page + 1 : 0} / {Math.ceil(detailRows.length / 25)} 页</span><button disabled={(page + 1) * 25 >= detailRows.length} onClick={() => setPage(page + 1)}>下一页</button></div>
@@ -115,7 +129,7 @@ export function HistoricalBudgetPage() {
       <BudgetPageNavigation labels={steps} current={step} onChange={changeStep} label="预算拆解导航"/>
       {error ? <section className="decision-question" role="alert"><p>{error}</p><button onClick={() => location.reload()}>重新读取</button></section> : !data ? <p role="status">正在读取 FY27 预算…</p> : <>
         <header className="history-heading"><h1 ref={heading} tabIndex={-1}>{steps[step - 1]}</h1></header>
-        {step === 1 && <BudgetDataSection id="history-annual-target" title="全年目标与定版结转收入 · 全部预算"><ActionTable tableLabel="全年目标与定版结转收入" aria-label="全年目标与定版结转收入表" scrollClassName="budget-data-section__scroll" className="history-target-table"><thead><tr><th scope="col">范围</th>{["结转收入目标（元）", "定版结转收入（元）", "差额（元）"].map(label => <th scope="col" className="budget-cell-number" key={label}>{label}</th>)}</tr></thead><tbody>{[["部门合计", 113000000], ["智慧伴学", 37000000], ["智慧空间", 76000000]].map(([track, target]) => { const actual = sum(data.rows.filter(row => track === "部门合计" || row.track === track), "revenue"); return <tr key={track}><th scope="row">{track}</th><td className="budget-cell-number">{fmt(Number(target))}</td><td className="budget-cell-number">{fmt(actual)}</td><td className="budget-cell-number">{fmt(actual - Number(target))}</td></tr>; })}</tbody></ActionTable></BudgetDataSection>}
+        {step === 1 && <BudgetDataSection id="history-annual-target" title="全年目标与定版结转收入 · 全部预算"><ActionTable exportData={annualTargetTransfer} exportLabel="导出当前表格" tableLabel="全年目标与定版结转收入" aria-label="全年目标与定版结转收入表" scrollClassName="budget-data-section__scroll" className="history-target-table"><thead><tr><th scope="col">范围</th>{["结转收入目标（元）", "定版结转收入（元）", "差额（元）"].map(label => <th scope="col" className="budget-cell-number" key={label}>{label}</th>)}</tr></thead><tbody>{annualTargets.map(({ scope: track, target, actual }) => { return <tr key={track}><th scope="row">{track}</th><td className="budget-cell-number">{fmt(Number(target))}</td><td className="budget-cell-number">{fmt(actual)}</td><td className="budget-cell-number">{fmt(actual - Number(target))}</td></tr>; })}</tbody></ActionTable></BudgetDataSection>}
         {step !== 5 && <BudgetScopeBar filters={filters} count={detailRows.length} countLabel={step === 1 ? "条 SKU" : step === 2 ? "条入口明细" : "条季度明细"}
           dimensions={Object.entries({ season: "季度", ...dimensions }).filter(([key]) => key !== "season" || step >= 3).map(([key, label]) => ({ key: key as keyof typeof filters, label,
             options: key === "season" ? seasons : [...new Set(data.rows.map(row => String(row[key as keyof Line])))].sort((a, b) => a.localeCompare(b, "zh-CN")) }))}

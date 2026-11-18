@@ -331,6 +331,64 @@ def test_diagnostic_context_isolated_and_stored_json_revalidated() -> None:
     )
 
 
+async def test_data_rejection_preserves_bounded_issue_counts_in_durable_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from packages.forecast.daily_diagnostics import blocking_issue_summary
+
+    issues = blocking_issue_summary(
+        {
+            "issues": [
+                {
+                    "code": "FINALIZED_ACTUAL_MISSING",
+                    "season": "暑假",
+                    "severity": "BLOCKING",
+                    "message": "private-source-data",
+                },
+                {"code": "FINALIZED_ACTUAL_MISSING", "season": "暑假", "severity": "BLOCKING"},
+                {"code": "BASELINE_NEGATIVE_VALUE", "severity": "WARNING"},
+                {"code": "FINALIZED_ACTUAL_MISSING", "season": "暑假", "severity": "INFO"},
+            ]
+        }
+    )
+    assert issues == [{"code": "FINALIZED_ACTUAL_MISSING", "count": 2, "season": "暑假"}]
+    assert (
+        safe_diagnostic(
+            {
+                "blocking_issues": [
+                    {"code": "raw SQL secret", "count": 3},
+                    {"code": "VALID", "count": True},
+                    {"code": "VALID", "count": -1},
+                    {"code": "VALID", "count": 1_000_001},
+                ]
+            }
+        )
+        == {}
+    )
+    statements: list[dict[str, Any]] = []
+    repository = SimpleNamespace(session_factory=lambda: Session(statements), worker_id="test-worker")
+
+    async def fail(*_args: Any) -> Any:
+        mark_stage("calculation")
+        raise HTTPException(
+            409,
+            {
+                "code": "FORECAST_DAILY_DATA_INCOMPLETE",
+                "blocking_issues": issues,
+                "message": "private-source-data",
+            },
+        )
+
+    monkeypatch.setattr(daily, "_generate", fail)
+    diagnostic = await daily.execute_job(job_for_today(), cast(JobRepository, repository), configured())
+    assert diagnostic["blocking_issues"] == issues
+    assert diagnostic["stage"] == "calculation" and diagnostic["retry"] is False
+    assert statements[-1]["result"]["diagnostics"]["blocking_issues"] == issues
+    assert "private-source-data" not in repr(statements)
+
+
 async def test_success_outcome_is_reported_only_after_own_lease_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

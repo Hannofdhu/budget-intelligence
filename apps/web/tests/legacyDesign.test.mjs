@@ -114,3 +114,91 @@ test("real publication route uses page/section/group/check hierarchy while confi
   assert.ok(find(error, node => node.props?.role === "alert").length);
   const loading = publicationHarness({ loading: true }).render(); assert.match(text(loading), /正在读取发布状态/);
 });
+
+test("rate detail exports split source dimensions, bounds, reasons and states without formatting raw ppm", () => {
+  const h = hooks(), { RateTableEditor } = rate(h.react);
+  const value = { items: Array.from({ length: 61 }, (_, index) => ({ rate_reference_id: `r-${index}`,
+    current_value_ppm: index ? 812345 : 0, lower_bound_ppm: index ? 600001 : null, upper_bound_ppm: 900001,
+    boundary_reason: "边界 / 原样保留", manual_reason: "调整说明" })) };
+  const referenceRows = value.items.map((item, index) => ({ rate_reference_id: item.rate_reference_id, campus: index % 2 ? "他校" : "校区 / 名称",
+    track: "赛道", product: "产品", grade: "八年级", subject: "数学", fiscal_year: 2028, quarter_name: "暑假", target_fiscal_season: 20281,
+    rate_type: "RENEWAL_RATE", system_value_ppm: index ? 654321 : null, locked: false, boundary_confirmed: true }));
+  const before = JSON.stringify([value, referenceRows]);
+  const render = () => { h.reset(); return RateTableEditor({ value, referenceRows, dirty: false, onChange() {}, onAction() {} }); };
+  let table = find(render(), node => node.type?.name === "ActionTable")[0], data = table.props.exportData;
+  assert.equal(data.rows.length, 61);
+  assert.deepEqual(data.columns.slice(0, 5).map(column => column.key), ["campus", "track", "product", "grade", "subject"]);
+  assert.equal(data.rows[0].campus, "校区 / 名称"); assert.equal(data.rows[0].system_value_ppm, null);
+  assert.equal(data.rows[0].current_value_ppm, 0); assert.equal(data.rows[0].lower_bound_ppm, null);
+  assert.equal(data.rows[1].current_value_ppm, 812345); assert.equal(data.rows[1].upper_bound_ppm, 900001);
+  assert.equal(data.rows[1].boundary_reason, "边界 / 原样保留"); assert.equal(data.rows[1].manual_reason, "调整说明");
+  assert.equal(data.rows[1].locked, false); assert.equal(data.rows[1].boundary_confirmed, true);
+  assert.ok(data.columns.filter(column => column.key.endsWith("_ppm")).every(column => column.label.endsWith("（ppm）")));
+  find(table.props.toolbarStart, node => node.type === "input")[0].props.onChange({ target: { value: "校区 / 名称" } });
+  table = find(render(), node => node.type?.name === "ActionTable")[0];
+  assert.equal(table.props.exportData.rows.length, 31);
+  assert.ok(table.props.exportData.rows.every(row => row.campus === "校区 / 名称"));
+  assert.equal(JSON.stringify([value, referenceRows]), before);
+});
+
+test("read result exports use raw nullable leaves and split nested version fields without changing compact rendering", () => {
+  const { readResultDetailExport } = business(hooks().react);
+  const rows = [{ campus: "校区 / 名称", track: "赛道", product: "产品", grade: "七年级", subject: "数学",
+    quarter_recognized_revenue_yuan: "-12.345678", current_value_ppm: 812345, integer_total_students: 0,
+    enabled: false, missing_value: null, version: { sequence: 26, status: "DRAFT", created_at: "2026-11-16T01:02:03Z", reason: "保留 / 说明" },
+    internal_id: "not-displayed", current_season_revenue_yuan: "1234", next_season_carryover_revenue_yuan: "5678" }];
+  const before = JSON.stringify(rows), data = readResultDetailExport(rows);
+  assert.deepEqual(data.columns.slice(0, 5).map(column => column.key), ["campus", "track", "product", "grade", "subject"]);
+  assert.equal(data.rows[0].quarter_recognized_revenue_yuan, "-12.345678");
+  assert.equal(data.rows[0].current_value_ppm, 812345); assert.equal(data.rows[0].integer_total_students, 0);
+  assert.equal(data.rows[0].enabled, false); assert.equal(data.rows[0].missing_value, null);
+  assert.equal(data.rows[0]["version.sequence"], 26); assert.equal(data.rows[0]["version.status"], "DRAFT");
+  assert.equal(data.rows[0]["version.created_at"], "2026-11-16T01:02:03Z"); assert.equal(data.rows[0]["version.reason"], "保留 / 说明");
+  assert.ok(data.rows.every(row => !Object.values(row).some(value => value !== null && typeof value === "object")));
+  assert.ok(data.columns.every(column => !["internal_id", "current_season_revenue_yuan", "next_season_carryover_revenue_yuan"].includes(column.key)));
+  assert.equal(data.columns.find(column => column.key === "quarter_recognized_revenue_yuan").format, "money");
+  assert.match(data.columns.find(column => column.key === "current_value_ppm").label, /ppm/);
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test("rate XLSX keeps invalid editor inputs out of numeric ppm columns and preserves their separate raw/status evidence", async () => {
+  const h = hooks(), exports = rate(h.react), referenceRows = [
+    { rate_reference_id: "invalid", system_value_ppm: "unknown" },
+    { rate_reference_id: "numeric", system_value_ppm: 0 },
+    { rate_reference_id: "nonfinite", system_value_ppm: -Infinity },
+    { rate_reference_id: "empty", system_value_ppm: null },
+  ];
+  let value = { items: [
+    { rate_reference_id: "invalid", current_value_ppm: 650000, lower_bound_ppm: "bad-bound", upper_bound_ppm: "" },
+    { rate_reference_id: "numeric", current_value_ppm: 0, lower_bound_ppm: -12.345678, upper_bound_ppm: 812345.6789 },
+    { rate_reference_id: "nonfinite", current_value_ppm: "812345.00001", lower_bound_ppm: NaN, upper_bound_ppm: Infinity },
+    { rate_reference_id: "empty", current_value_ppm: null, lower_bound_ppm: undefined, upper_bound_ppm: 0 },
+  ] };
+  const render = () => { h.reset(); return exports.RateTableEditor({ value, referenceRows, dirty: true, onChange: next => { value = next; }, onAction() {} }); };
+  const editor = find(render(), node => node.type?.name === "PercentInput" && node.props.label === "当前比例")[0];
+  editor.props.onCommit(exports.parsePercent("abc"));
+  assert.equal(value.items[0].current_value_ppm, "abc", "the original edit/parse path remains unchanged");
+  const before = structuredClone({ value, referenceRows }), data = find(render(), node => node.type?.name === "ActionTable")[0].props.exportData;
+  assert.equal(data.rows[0].current_value_ppm, null); assert.equal(data.rows[0].current_value_ppm_status, "无效输入");
+  assert.equal(data.rows[0].current_value_ppm_raw_input, "abc"); assert.equal(data.rows[0].lower_bound_ppm, null);
+  assert.equal(data.rows[0].system_value_ppm, null); assert.equal(data.rows[0].system_value_ppm_raw_input, "unknown");
+  assert.equal(data.rows[0].upper_bound_ppm_status, "未填写");
+  assert.equal(data.rows[1].current_value_ppm, 0); assert.equal(data.rows[1].lower_bound_ppm, -12.345678);
+  assert.equal(data.rows[2].lower_bound_ppm, null); assert.equal(data.rows[2].lower_bound_ppm_raw_input, "NaN");
+  assert.equal(data.rows[2].upper_bound_ppm, null); assert.equal(data.rows[2].system_value_ppm_raw_input, "-Infinity");
+  const { budgetWorkbook } = await import("../src/budgetExport.ts"), { default: ExcelJS } = await import("exceljs");
+  const workbook = await budgetWorkbook(data.columns, data.rows), reopened = new ExcelJS.Workbook();
+  await reopened.xlsx.load(await workbook.xlsx.writeBuffer());
+  const sheet = reopened.worksheets[0], cell = (row, key) => sheet.getCell(row + 2, data.columns.findIndex(column => column.key === key) + 1);
+  for (let row = 0; row < data.rows.length; row++) for (const key of ["system_value_ppm", "current_value_ppm", "lower_bound_ppm", "upper_bound_ppm"]) {
+    const projected = data.rows[row][key];
+    assert.ok(cell(row, key).value === null || typeof cell(row, key).value === "number");
+    assert.equal(cell(row, key).value, projected === null ? null : Number(projected));
+  }
+  assert.equal(cell(0, "current_value_ppm_raw_input").value, "abc"); assert.equal(cell(0, "lower_bound_ppm_raw_input").value, "bad-bound");
+  assert.equal(cell(1, "current_value_ppm").type, ExcelJS.ValueType.Number); assert.equal(cell(1, "current_value_ppm").value, 0);
+  assert.equal(cell(1, "lower_bound_ppm").value, -12.345678); assert.equal(cell(1, "upper_bound_ppm").value, 812345.6789);
+  assert.equal(cell(2, "current_value_ppm").value, 812345.00001); assert.equal(cell(2, "current_value_ppm_raw_input").value, "812345.00001");
+  assert.equal(cell(2, "lower_bound_ppm_raw_input").value, "NaN"); assert.equal(cell(2, "upper_bound_ppm_raw_input").value, "Infinity");
+  assert.deepEqual({ value, referenceRows }, before);
+});
